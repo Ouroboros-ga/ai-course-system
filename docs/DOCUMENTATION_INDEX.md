@@ -4,6 +4,7 @@
 > - [Current Architecture + Roadmap v1.3](phase1/CodeNexus_转型设计与实施方案_v1.3.md)：A 产品冻结、B 当前实现/版本证据、C 目标架构、D 主线、E 原则、F 历史。
 > - [P2 / NX 开发计划](phase1/CodeNexus_P2开发计划.md)：当前 4/7 工具面，NX-G1–G3 安全优先任务与 A/H/R/S/P/E 主线、验收、授权。
 > - [前端规格 v3.0](phase1/Nexus_AI_前端开发规格与UX落地说明.md)：Mode/effective capability/Hard Approval、附件/视觉、Console、Session；初始调查/缺陷/UX 演进移至历史附录。
+> - [NX-H1/R1a 本地开发回执](phase1/验收记录/NX-H1_R1a_本地开发回执_2026-09-07.md)：Todo 计划链与上传论文证据薄链本地完成（线上待人工复验）；另有 NX-E2E3 验收与审查记录（2026-09-06/07）。
 >
 > 原 [v1.2](phase1/CodeNexus_转型设计与实施方案_v1.2.md) 仅迁移入口。三篇清理前完整快照以 `_历史快照_2026-09-05.md` 保存；验收记录未改。CURRENT/NEXT/TARGET/OPTIONAL 统一使用，未提交工作区修正不等于 HEAD 或线上完成。
 > [转型落地计划](phase1/CodeNexus转型落地计划.md) 保留 S0–S3/P1 迁移历史，后续以 NX 计划为准。旧设计板仅视觉演进参考，design.md 仍为前端视觉权威。

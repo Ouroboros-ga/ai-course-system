@@ -22,9 +22,10 @@
 
 | 能力 | 实现 | 失败语义 |
 |---|---|---|
-| 主智能体 | Deep Agents / LangGraph；当前 Todo 未产品化，后续显式接中间件与状态投影 | LLM Key 缺失 → 503 `LLM_NOT_CONFIGURED` |
+| 主智能体 | Deep Agents / LangGraph；**NX-H1（2026-09-07）：已安装 `langchain.agents.middleware.TodoListMiddleware` 显式启用**——`write_todos` 两模式同置（提示词约束使用频率），todos 经真实 state 投影为 `plan` SSE 事件/同步 `plan` 字段，`GET /api/v1/nexus/plan/{session_id}` 只读恢复（thread 命名空间隔离） | LLM Key 缺失 → 503 `LLM_NOT_CONFIGURED` |
 | Web Search | `web_search` 工具：SearXNG 主通道（47.99.97.154 自部署）+ 本机 DuckDuckGo 降级 | 双通道失败 → `WEB_SEARCH_UNAVAILABLE`，不编造 |
 | 论文检索 | `search_arxiv_papers` 工具：arXiv Atom API，3s 限速 + 1 天缓存 | 上游失败 → `ARXIV_UNAVAILABLE` |
+| 论文证据（NX-R1a） | `collect_paper_evidence`：绑定会话的上传 PDF（≤3 篇）全文块 → 证据（evidence_id/locator/excerpt/coverage，进程内登记 owner+session）；`write_research_report`：服务端按登记渲染引用并写 Markdown Artifact（模型只可引用登记 id，最多 1 次修正）。Research-only | 附件不可用/非 PDF/预算触顶 → 逐项错误码；引用伪造 → `EVIDENCE_ID_INVALID`；全文不可得提示上传，不冒充读过 |
 | 复现规划 | `plan_reproduction` 工具：nanoGPT 预设（MIT 已核验，官方 CPU 命令） | 无预设 → 返回调研指引，不编造命令 |
 | 复现执行 | `run_reproduction` 工具：提交 Repro Worker | 未配置 → `REPRO_WORKER_UNAVAILABLE`，绝不假造执行 |
 | LLM | DeepSeek（`deepseek-chat`，OpenAI 兼容端点） | — |

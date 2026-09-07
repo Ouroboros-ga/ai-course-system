@@ -253,3 +253,121 @@ def test_report_requires_ownership(client, session, nexus_student_token):
         headers=_auth(nexus_student_token),
     )
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 边界修复批次（2026-09-07，审查 F1/F2）
+# ---------------------------------------------------------------------------
+
+
+def _owned_job(session, student_user, job_id: str) -> None:
+    nexus_repro_job_service.record_job(
+        session, job_id=job_id, user_id=str(student_user.id), preset_id="nanogpt"
+    )
+
+
+def _worker_factory(status_code: int, payload=None, raw: str = None):
+    """返回替换 nexus_proxy.httpx.AsyncClient 的工厂：Worker 恒定回给定响应。
+
+    注意必须在打补丁**前**捕获原始 AsyncClient——monkeypatch 的是全局
+    httpx 模块属性，工厂体内再取 _httpx.AsyncClient 会命中工厂自身递归。
+    """
+    import httpx as _httpx
+
+    original_client = _httpx.AsyncClient
+
+    def factory(**kwargs):
+        def handler(request) -> Response:
+            if raw is not None:
+                return Response(status_code, text=raw)
+            return Response(status_code, json=payload if payload is not None else {})
+
+        kwargs["transport"] = _httpx.MockTransport(handler)
+        return original_client(**kwargs)
+
+    return factory
+
+
+@pytest.mark.parametrize("upstream_status", [401, 500, 502, 503])
+def test_cancel_maps_worker_http_errors_to_502(
+    client, session, nexus_student_token, student_user, internal_configured, monkeypatch,
+    upstream_status,
+):
+    """F1：Worker 任何非成功 HTTP 响应一律 502 上抛，不得包装成"已接受取消"。"""
+    monkeypatch.setattr(nexus_proxy.settings, "REPRO_WORKER_URL", "http://127.0.0.1:8400")
+    monkeypatch.setattr(nexus_proxy.settings, "REPRO_WORKER_TOKEN", "wtok")
+    job_id = f"cancelerrjob{upstream_status:02d}"
+    _owned_job(session, student_user, job_id)
+    monkeypatch.setattr(nexus_proxy.httpx, "AsyncClient", _worker_factory(upstream_status, {"job_id": job_id}))
+    response = client.post(
+        f"/api/v1/nexus/repro/jobs/{job_id}/cancel", headers=_auth(nexus_student_token)
+    )
+    assert response.status_code == 502
+    assert response.json()["message"] == "REPRO_CANCEL_UPSTREAM_ERROR"
+
+
+def test_cancel_rejects_malformed_json_and_identity_or_status_anomalies(
+    client, session, nexus_student_token, student_user, internal_configured, monkeypatch
+):
+    """F1：200 但畸形 JSON / job_id 不一致 / 状态缺失或未知 → 502，绝不默认 cancelling。"""
+    monkeypatch.setattr(nexus_proxy.settings, "REPRO_WORKER_URL", "http://127.0.0.1:8400")
+    monkeypatch.setattr(nexus_proxy.settings, "REPRO_WORKER_TOKEN", "wtok")
+    job_id = "canceloddjob01"
+    _owned_job(session, student_user, job_id)
+
+    cases = [
+        (_worker_factory(200, raw="not-json{"), 502, "Worker 返回非 JSON"),
+        (_worker_factory(200, {"job_id": "other-job-99", "status": "cancelling"}), 502, "REPRO_CANCEL_IDENTITY_MISMATCH"),
+        (_worker_factory(200, {"job_id": job_id}), 502, "REPRO_CANCEL_UNKNOWN_STATUS"),
+        (_worker_factory(200, {"job_id": job_id, "status": "weird-state"}), 502, "REPRO_CANCEL_UNKNOWN_STATUS"),
+    ]
+    for factory, want_status, want_detail in cases:
+        monkeypatch.setattr(nexus_proxy.httpx, "AsyncClient", factory)
+        response = client.post(
+            f"/api/v1/nexus/repro/jobs/{job_id}/cancel", headers=_auth(nexus_student_token)
+        )
+        assert response.status_code == want_status, factory
+        assert response.json()["message"] == want_detail, factory
+
+
+def test_cancel_success_passthrough_terminal_status(
+    client, session, nexus_student_token, student_user, internal_configured, monkeypatch
+):
+    """F1：Worker 成功响应（已知状态 + 身份一致）原样透传。"""
+    monkeypatch.setattr(nexus_proxy.settings, "REPRO_WORKER_URL", "http://127.0.0.1:8400")
+    monkeypatch.setattr(nexus_proxy.settings, "REPRO_WORKER_TOKEN", "wtok")
+    job_id = "cancelokjob001"
+    _owned_job(session, student_user, job_id)
+    monkeypatch.setattr(
+        nexus_proxy.httpx, "AsyncClient",
+        _worker_factory(200, {"job_id": job_id, "status": "cancelled", "already_terminal": True}),
+    )
+    response = client.post(
+        f"/api/v1/nexus/repro/jobs/{job_id}/cancel", headers=_auth(nexus_student_token)
+    )
+    assert response.status_code == 200
+    assert response.json() == {"job_id": job_id, "status": "cancelled", "already_terminal": True}
+
+
+def test_sanitize_log_redacts_credentials_and_ansi():
+    """F2：Bearer/Authorization/键值密钥/URL 用户信息/ANSI 在代理出口脱敏；
+    普通训练指标不受损。"""
+    dirty = (
+        "step 1 ok, loss=0.1234, tokens: 99999\n"
+        "Authorization: Basic dXNlcjpwYXNz\n"
+        "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc123def456\n"
+        "password=hunter2 api_key=abcd1234efgh5678\n"
+        "clone https://user:secretpw@example.com/org/repo.git\n"
+        "\x1b[32mtrain done\x1b[0m\n"
+    )
+    clean = nexus_proxy._sanitize_log(dirty)
+    assert "dXNlcjpwYXNz" not in clean
+    assert "eyJhbGciOiJIUzI1NiJ9" not in clean
+    assert "hunter2" not in clean
+    assert "abcd1234efgh5678" not in clean
+    assert "secretpw" not in clean
+    assert "\x1b" not in clean
+    assert "loss=0.1234" in clean
+    assert "tokens: 99999" in clean
+    assert "train done" in clean
+    assert "example.com/org/repo.git" in clean

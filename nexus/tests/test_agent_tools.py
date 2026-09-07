@@ -24,7 +24,9 @@ import nexus.agent
 from nexus.agent import NEXUS_EXCLUDED_TOOLS, _register_tool_surface_profile, build_agent
 from nexus.tools import NEXUS_TOOLS
 
-EXPECTED_SURFACE = sorted(["read_file"] + [t.name for t in NEXUS_TOOLS])
+# NX-H1：TodoListMiddleware 显式启用后，write_todos 进入执行器与模型可见面
+# （两模式同置，使用频率由提示词约束）；execute/task 仍被排除。
+EXPECTED_SURFACE = sorted(["read_file", "write_todos"] + [t.name for t in NEXUS_TOOLS])
 
 
 class _SpyChatOpenAI(ChatOpenAI):

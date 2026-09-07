@@ -36,9 +36,11 @@ export const NEXUS_MODE_CONFIG = {
     badge: 'Research',
     desc: '论文研究、学术检索、研究比较与 NexusLab 复现',
     icon: 'Microscope',
-    // NX-G1：Research = 全部 7 产品工具（含 research-only 三工具）。
-    // NX-A1：+ read_attachment（附件共用入口），共 8 产品工具。
-    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'search_arxiv_papers', 'plan_reproduction', 'run_reproduction', 'read_attachment'],
+    // NX-G1：Research = 全部产品工具（含 research-only 工具）。
+    // NX-A1：+ read_attachment（附件共用入口）。
+    // NX-R1a：+ collect_paper_evidence / write_research_report（上传论文
+    // 全文证据薄链，Research-only）。
+    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'search_arxiv_papers', 'plan_reproduction', 'run_reproduction', 'read_attachment', 'collect_paper_evidence', 'write_research_report'],
   },
 }
 

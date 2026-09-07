@@ -972,12 +972,13 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   assert.match(agentSrc, /InvalidNexusModel/)
   assert.match(runtime, /_require_model\(request\.model\)/)
   assert.match(runtime, /"models": llm_models_manifest\(settings\)/)
-  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",?\s*\}\s*\)/)
+  // NX-R1a：Research-only 集合扩展至 5 工具（新增上传论文证据薄链两工具）。
+  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",[\s\S]*?"collect_paper_evidence",[\s\S]*?"write_research_report",\s*\}\s*\)/)
   const cfgSrc = read('frontend/src/api/nexusAdapter.js')
   assert.match(cfgSrc, /model = null,/)
   assert.match(cfgSrc, /model,/)
   assert.match(cfgSrc, /\[NEXUS_MODES\.GENERAL\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'read_attachment'\]/)
-  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment'\]/)
+  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment',\s*'collect_paper_evidence',\s*'write_research_report'\]/)
 
   assert.match(main, /nexus_proxy\.router, prefix="\/api\/v1\/nexus"/)
 })
@@ -1047,7 +1048,8 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   assert.match(page, /暂无 Nexus AI 使用权限/)
   // 后端是真正的强制点：全部端点（health/chat/chat-stream/sessions/messages/artifacts×2/repro×3/approvals×2/repro-execute/attachments×6/runs×2）都走 require_nexus_use
   assert.match(backend, /require_platform_permission\(session, current_user, PlatformPermission\.NEXUS_USE\)/)
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 21)
+  // NX-H1：+计划快照反代（plan）→ 22 个受权限门端点。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 22)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })
@@ -1066,7 +1068,7 @@ test('S2 切换期：旧科研工作台页面、路由与 API client 已删除�
   assert.doesNotMatch(courseLayout, /^\s*\{ key: 'research'/m)
 })
 
-test('S2 切换期：旧 research 接口 410 Gone，路由注册保留至 S3', () => {
+test('S3 下线完成：旧 research-agent 路由已注销，web-research 仍注册且 410 废弃头不变', () => {
   const middleware = read('backend/app/core/deprecation_middleware.py')
   const main = read('backend/app/main.py')
 
@@ -1076,8 +1078,10 @@ test('S2 切换期：旧 research 接口 410 Gone，路由注册保留至 S3', (
   assert.match(middleware, /"\/api\/v1\/research-agent"/)
   assert.match(middleware, /"\/api\/v1\/web-research"/)
   assert.match(main, /DeprecationHeaderMiddleware/)
-  // 路由注册与 bootstrap 保留（S3 才删），保证 revert 一个提交即可恢复双轨。
-  assert.match(main, /include_router\(research_agent\.router/)
+  // S3 已完成下线（d2c694a0 线上实证）：research-agent 路由不再注册，
+  // revert 恢复语义由 git 历史承担；web-research 仍注册（内部任务链仍用
+  // 其 service），HTTP 层由中间件 410。
+  assert.doesNotMatch(main, /include_router\(research_agent\.router/)
   assert.match(main, /include_router\(web_research\.router/)
 })
 

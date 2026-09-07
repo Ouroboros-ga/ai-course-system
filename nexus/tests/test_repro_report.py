@@ -177,3 +177,82 @@ async def test_report_endpoint_rejects_unfinished_job(monkeypatch: pytest.Monkey
     assert response.status_code == 409
     assert "JOB_NOT_FINISHED" in response.json()["detail"]
 
+
+# ---------------------------------------------------------------------------
+# F6（审查 2026-09-07）：报告判定回写 Worker metric 阶段
+# ---------------------------------------------------------------------------
+
+
+async def test_report_endpoint_writes_back_metric_verdict(monkeypatch: pytest.MonkeyPatch):
+    """F6：真实比较完成后，判定 verdict best-effort 回写 Worker（含摘要）。"""
+    calls: list[tuple[str, str, str]] = []
+
+    async def spy_writeback(job_id: str, verdict: str, summary: str) -> None:
+        calls.append((job_id, verdict, summary))
+
+    monkeypatch.setattr(main_module, "_writeback_metric_verdict", spy_writeback)
+    response = await _report_response(monkeypatch, _succeeded_job())
+    assert response.status_code == 200
+    assert response.json()["verdict"] == "PASS"
+    assert calls and calls[0][0] == "abc123def456"
+    assert calls[0][1] == "PASS"
+    assert "PASS" in calls[0][2]
+
+
+async def test_metric_writeback_helper_posts_to_worker(monkeypatch: pytest.MonkeyPatch):
+    """F6：回写助手向 Worker /jobs/{id}/metric 发送 verdict+summary 与 Bearer。"""
+    monkeypatch.setenv("NEXUS_REPRO_WORKER_URL", "http://127.0.0.1:8400")
+    monkeypatch.setenv("NEXUS_REPRO_WORKER_TOKEN", "wtok")
+    get_settings.cache_clear()
+    seen: dict = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"job_id": "j1", "metric": "done", "already_final": False}
+
+    class _MetricClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            seen["url"] = url
+            seen["payload"] = json
+            seen["auth"] = (headers or {}).get("Authorization")
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _MetricClient())
+    try:
+        await main_module._writeback_metric_verdict("j1", "FAIL", "报告链判定 FAIL（1 项可比对指标）")
+    finally:
+        get_settings.cache_clear()
+    assert seen["url"] == "http://127.0.0.1:8400/jobs/j1/metric"
+    assert seen["payload"] == {"verdict": "FAIL", "summary": "报告链判定 FAIL（1 项可比对指标）"}
+    assert seen["auth"] == "Bearer wtok"
+
+
+async def test_metric_writeback_failure_does_not_raise(monkeypatch: pytest.MonkeyPatch):
+    """F6：回写失败只记日志，不阻断报告链（best-effort 边界）。"""
+    monkeypatch.setenv("NEXUS_REPRO_WORKER_URL", "http://127.0.0.1:8400")
+    get_settings.cache_clear()
+
+    class _BoomClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            raise RuntimeError("worker down")
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _BoomClient())
+    try:
+        await main_module._writeback_metric_verdict("j1", "PASS", "")
+    finally:
+        get_settings.cache_clear()
+

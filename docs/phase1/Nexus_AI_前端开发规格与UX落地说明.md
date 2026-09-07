@@ -88,7 +88,26 @@ CURRENT localStorage+remote merge，mode/course/pin 未全在服务端，remote-
 
 ## 9. Harness / Paper / 复现目标投影
 
-NX-H1：简单 General 不强制 Todo，复杂 General 按需，Research 长任务真实计划事件和修改/取消/恢复。NX-R1：候选、全文可用性、证据/比较/Citation 可见；当前列表只称 Paper Search。
+**NX-H1——✅ 本地开发/验证完成（2026-09-07，线上部署后待人工复验）**：
+`write_todos`（已安装 TodoListMiddleware，两模式同置，简单 General 由提示词
+约束不强制建计划）→ 真实 state 投影 `plan` SSE 事件/同步 plan 字段 →
+折叠**计划卡**（原生三态 pending/in_progress/completed，无百分比/定时推进，
+渲染于消息列尾）。恢复：`GET /nexus/plan/{session_id}`（权限门同链），
+planState 状态机两条语义——流事件只接受严格更大 revision（乱序/重复忽略），
+恢复读取无条件替换并重置基线（Runtime 重启计数器从 1 重来不粘死）；
+服务端显式 plan:null 才清空本地；读取失败可重试。Chat Stop 不改写计划
+（pending 保持 pending），继续聊天由新的真实执行更新。
+[回执](验收记录/NX-H1_R1a_本地开发回执_2026-09-07.md)。
+
+**NX-R1a 限定薄链——✅ 本地开发/验证完成（2026-09-07，同上）**：
+Research-only `collect_paper_evidence`（绑定会话的上传 PDF ≤3 篇 → 证据
+evidence_id/locator/excerpt/coverage）→ **证据卡**（来源为上传文件标签、
+locator 缺失如实标注、abstract_only 提示补验）→ `write_research_report`
+（模型只能引用登记 id，服务端渲染引用附录，伪造 → `EVIDENCE_ID_INVALID`
+可修复错误，最多 1 次修正）→ Markdown Artifact 下载。搜索候选（arXiv/Web
+元数据）与已读全文证据严格区分；候选无全文提示上传。**整体 Paper Research
+（自动全文获取、PaperQA 选型、大规模综述）保持 NEXT**；证据登记为进程内存
+属已知限制。
 
 NX-P1/P2：论文/仓库→One Claim/计划→批准→A→冻结→B→指标/报告，明确区别 CURRENT preset。TARGET Subagent 显示真实父子任务，不放静态假卡；DOCX/PPTX 输出不能混为当前 P0。
 

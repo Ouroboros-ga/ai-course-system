@@ -371,6 +371,38 @@ async def nexus_session_messages(
     return _passthrough(response)
 
 
+@router.get("/plan/{session_id}")
+async def nexus_plan_snapshot(
+    session_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-H1 计划快照反代：鉴权/身份注入与 messages 同链（require_nexus_use
+    + 反代注入用户身份，Runtime 侧 thread_for 命名空间隔离）。只读投影，
+    不触发执行。"""
+    base = _runtime_base_url()
+    if not base:
+        return _not_configured()
+
+    timeout = httpx.Timeout(
+        settings.NEXUS_RUNTIME_TIMEOUT_S,
+        connect=settings.NEXUS_RUNTIME_CONNECT_TIMEOUT_S,
+    )
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                f"{base}/api/v1/nexus/plan/{session_id}",
+                headers=_upstream_headers(current_user, request),
+            )
+    except httpx.TimeoutException as error:
+        logger.warning("Nexus runtime plan snapshot timeout: %s", error)
+        return _timeout(str(error))
+    except httpx.HTTPError as error:
+        logger.warning("Nexus runtime plan snapshot unreachable: %s", error)
+        return _unavailable(str(error))
+    return _passthrough(response)
+
+
 # ---------------------------------------------------------------------------
 # M3 Artifact：Backend 原生路由（非透传）——元数据在 nexus_checkpoints
 # schema（P1 验收后 ai_course_app 可读写），文件字节经对象存储直出，
@@ -439,13 +471,60 @@ async def nexus_artifact_download(
 _LOG_TAIL_MAX = 2000
 _STEP_MAX = 10
 _STAGE_EVENTS_MAX = 60
-# NX-E2：日志控制符/ANSI 转义在代理层清洗——Worker 回传原样文本，前端只做纯文本转义。
+# NX-E2：日志控制符清洗；审查 F2（2026-09-07）补齐真实脱敏——仅删控制字符
+# 不等于脱敏，凭据类内容必须在进入外发/持久化路径前遮蔽。
 _LOG_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# ANSI 转义序列：CSI / OSC（含终止符；未终止的 OSC 不吞正文）/ 其余 C1。
+# 必须在控制符删除**之前**执行，否则 ESC 被删后序列残骸（如 [0;31m）会留在日志里。
+_LOG_ANSI_ESCAPE = re.compile(
+    r"\x1b(?:"
+    r"\[[0-9;?<>=!]*[ -/]*[@-~]"
+    r"|\][^\x07\x1b]{0,256}(?:\x07|\x1b\\)"
+    r"|[@-Z\\-_]"
+    r")"
+)
+_LOG_URL_USERINFO = re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)([^\s/@:]+):([^\s/@]+)@")
+_LOG_URL_USER = re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)([^\s/@]+)@")
+_LOG_BEARER = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/_\-]{8,}")
+_LOG_AUTH_HEADER = re.compile(r"(?i)\b(authorization|proxy-authorization|cookie)(\s*[:=]\s*)[^\n]{0,512}")
+# 键值型密钥：token 用 (?!s) 排除复数 tokens（训练日志常见计数指标），\b 排除
+# token_xxx/max_token 等复合词；值需 ≥4 连续非空白字符，普通指标不受影响。
+_LOG_KV_SECRET = re.compile(
+    r"(?i)\b(api[-_]?key|apikey|access[-_]?token|auth[-_]?token|secret[-_]?key|"
+    r"client[-_]?secret|private[-_]?key|passphrase|password|passwd|pwd|secret|token)(?!s)"
+    r"(\s*[:=]\s*)([\"']?)[^\s\"',;]{4,}"
+)
+_LOG_KNOWN_TOKEN = re.compile(
+    r"(?i)\b(sk-[a-z0-9]{16,}|gh[pousrn]_[a-z0-9]{20,}|github_pat_[a-z0-9_]{20,}|"
+    r"hf_[a-z0-9]{20,}|xox[baprs]-[a-z0-9-]{10,}|akia[0-9a-z]{16}|"
+    r"eyJ[a-z0-9_-]{10,}\.[a-z0-9_-]{10,}\.[a-z0-9_-]{5,})"
+)
+
+
+def _redact_secrets(text: str) -> str:
+    """遮蔽凭据类内容与 ANSI 转义序列。
+
+    Worker 侧（deploy/repro-worker/worker.py `_redact_secrets`）为同源独立
+    实现——独立容器不共享代码，模式修改须两处同步。
+    """
+    text = _LOG_ANSI_ESCAPE.sub("", text)
+    text = _LOG_BEARER.sub("Bearer ***", text)
+    text = _LOG_AUTH_HEADER.sub(lambda m: f"{m.group(1)}{m.group(2)}***", text)
+    text = _LOG_KV_SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}***", text)
+    text = _LOG_KNOWN_TOKEN.sub("***", text)
+    text = _LOG_URL_USERINFO.sub(r"\1***:***@", text)
+    return _LOG_URL_USER.sub(r"\1***@", text)
 
 
 def _sanitize_log(text: Any, limit: int = _LOG_TAIL_MAX) -> str:
-    cleaned = _LOG_CONTROL_CHARS.sub("", str(text or ""))
+    # 先脱敏（ANSI 正则依赖完整转义序列），再删残留控制符，最后截尾。
+    cleaned = _redact_secrets(str(text or ""))
+    cleaned = _LOG_CONTROL_CHARS.sub("", cleaned)
     return cleaned[-limit:]
+
+
+# F1：Worker cancel 端点可能返回的状态词；缺失/未知一律 502，不默认 cancelling。
+_CANCEL_KNOWN_STATUSES = {"cancelling", "cancelled", "succeeded", "failed", "rejected"}
 
 
 def _worker_base() -> str:
@@ -553,9 +632,10 @@ async def nexus_repro_job_cancel(
 ):
     """NX-E3 取消代理：发起人鉴权（归属 = nexus_runs 登记）后转发 Worker。
 
-    本层不解析取消语义：幂等/竞争终态由 Worker 裁决；本层只保证跨用户
-    404（防枚举）与 Worker 不可达 503。返回 Worker 的 {"job_id","status"}，
-    cancelled 之前状态为 cancelling——前端据此显示"取消中"。
+    审查 F1（2026-09-07）：本层对 Worker 的任何**非成功**响应如实上抛——
+    404 透传、401/5xx/非 JSON 一律 502，绝不把上游失败包装成"已接受取消"；
+    成功响应还必须校验作业身份（job_id 一致）与已知状态词，缺失/未知状态
+    不默认 cancelling。取消语义（幂等/竞争终态）仍由 Worker 裁决。
     """
     _owned_job_or_404(session, current_user, job_id)
     base = _worker_base()
@@ -579,15 +659,31 @@ async def nexus_repro_job_cancel(
         ) from error
     if response.status_code == 404:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="复现作业不存在")
+    if response.status_code != 200:
+        logger.warning(
+            "repro worker cancel http %s for job %s", response.status_code, job_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="REPRO_CANCEL_UPSTREAM_ERROR"
+        )
     try:
         payload = response.json()
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="Worker 返回非 JSON"
         ) from exc
+    if not isinstance(payload, dict) or payload.get("job_id") != job_id:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="REPRO_CANCEL_IDENTITY_MISMATCH"
+        )
+    cancel_status = payload.get("status")
+    if cancel_status not in _CANCEL_KNOWN_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="REPRO_CANCEL_UNKNOWN_STATUS"
+        )
     return JSONResponse(status_code=200, content={
-        "job_id": payload.get("job_id", job_id),
-        "status": payload.get("status", "cancelling"),
+        "job_id": job_id,
+        "status": cancel_status,
         "already_terminal": bool(payload.get("already_terminal")),
     })
 

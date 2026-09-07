@@ -59,7 +59,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -76,6 +76,9 @@ import {
   isReproductionExecutable,
   resolveEffectiveCapabilities
 } from '@/api/nexusCapabilities.js'
+import { applyPlanEvent, applyRestoredPlan, createPlanState } from './planState.js'
+import NexusPlanCard from './components/NexusPlanCard.vue'
+import NexusEvidenceCard from './components/NexusEvidenceCard.vue'
 
 // ── 0. 使用权限（转型决策 D10：platform.nexus.use 显式授予）──
 const counter = useCounterStore()
@@ -138,7 +141,10 @@ function initSessions() {
   refreshRemoteSessions()
   // NX-E1：初次加载即恢复当前会话的 runs（刷新后找回原实验，不重新提交）。
   const initial = sessions.value.find((s) => s.id === activeSessionId.value)
-  if (initial) void restoreSessionRuns(initial)
+  if (initial) {
+    void restoreSessionRuns(initial)
+    void restoreSessionPlan(initial)
+  }
 }
 
 /**
@@ -287,7 +293,10 @@ function switchSession(id) {
     loadRemoteHistory(target)
   }
   // NX-E1：切会话即恢复该会话的 runs（只读恢复轮询，绝不重新提交）。
-  if (target) void restoreSessionRuns(target)
+  if (target) {
+    void restoreSessionRuns(target)
+    void restoreSessionPlan(target)
+  }
 }
 
 // ── NX-A1 附件：会话级引用（服务端验主＋绑定，会话隔离）──
@@ -383,21 +392,36 @@ function readyAttachmentIds(session) {
 // 序列化进 localStorage，刷新后恢复逻辑被脏标记永久跳过（2026-09-06 线上验收）。
 const _runsRestoredIds = new Set()
 
+// F4（审查 2026-09-07）：终态作业恢复时的一次性详情补齐——拉取完整
+// steps_result/日志历史填充 Console；Worker 无记录（重启丢内存，NX-E4
+// 范畴）时保持清单快照。不触发自动报告，不重新提交。
+async function backfillRestoredRunDetail(turn, jobId) {
+  let record
+  try {
+    record = await getNexusReproJob(jobId)
+  } catch {
+    return
+  }
+  if (!record?.status || !turn?.reproRun) return
+  applyReproRecord(turn, record)
+  persistSessions()
+}
+
 async function restoreSessionRuns(session) {
   if (!session || _runsRestoredIds.has(session.id) || nexusDataSourceMode.value !== 'real') return
-  _runsRestoredIds.add(session.id)
   let runs = []
   try {
     const res = await listNexusRuns(session.id)
     runs = Array.isArray(res?.items) ? res.items : []
   } catch {
-    return
+    return // F4：拉取失败不进去重标记，下次恢复触发可重试
   }
+  _runsRestoredIds.add(session.id)
   if (!Array.isArray(session.turns)) session.turns = []
   for (const run of runs) {
     if (!run?.job_id) continue
     const liveStatus = run.live?.status || run.status || 'unknown'
-    const terminal = ['succeeded', 'failed', 'rejected', 'cancelled'].includes(liveStatus)
+    const terminal = REPRO_TERMINAL_STATUSES.includes(liveStatus)
     const existing = session.turns.find((t) => t.reproRun?.job_id === run.job_id)
     if (existing) {
       // 本地 turn 状态落后于远端（如轮询断档期间作业已终态）→ 也恢复一次轮询：
@@ -410,6 +434,7 @@ async function restoreSessionRuns(session) {
     }
     // 孤儿 run（换设备/刷新丢本地 turn）：建恢复 turn 展示，不重新提交；
     // reportRequested=true 抑制自动补报告（避免重复产物），用户可手动补领。
+    const known = REPRO_RESTORE_KNOWN.includes(liveStatus)
     const turn = {
       question: `（已恢复）${run.preset_id || '实验'}复现`,
       answer: '',
@@ -424,8 +449,7 @@ async function restoreSessionRuns(session) {
       createdAt: null,
       reproRun: {
         job_id: run.job_id,
-        status: ['queued', 'running', 'cancelling', 'succeeded', 'failed', 'rejected', 'cancelled'].includes(liveStatus)
-          ? liveStatus : 'unknown',
+        status: known ? liveStatus : 'unknown',
         stages: [],
         stageEvents: Array.isArray(run.live?.stage_events) ? run.live.stage_events : [],
         currentStep: run.live?.current_step ?? null,
@@ -445,11 +469,34 @@ async function restoreSessionRuns(session) {
       },
     }
     session.turns.push(turn)
-    if (['queued', 'running'].includes(liveStatus)) {
+    // F4：恢复时为所有已知作业补齐详情——queued/running/**cancelling** 持续
+    // 轮询；终态（succeeded/failed/rejected/cancelled）一次性拉取历史步骤
+    // 与日志，不因"清单只给状态"而停在空 Console。
+    if (REPRO_RESTORE_NONTERMINAL.includes(liveStatus)) {
       startReproPolling(turn, run.job_id)
+    } else if (known) {
+      void backfillRestoredRunDetail(turn, run.job_id)
     }
   }
   persistSessions()
+}
+
+// ── NX-H1 计划恢复：首次进入/刷新拉取最近快照（checkpoint 真值） ──
+// 成功后才进去重标记；失败不标记，下次进入/切换可重试（不永久置 restored）。
+const _planRestoredSessions = new Set()
+
+async function restoreSessionPlan(session) {
+  if (!session || nexusDataSourceMode.value !== 'real') return
+  if (_planRestoredSessions.has(session.id)) return
+  if (!session.planState) session.planState = createPlanState()
+  let payload
+  try {
+    payload = await getNexusPlan(session.id)
+  } catch {
+    return // 网络失败：不标记，可重试
+  }
+  _planRestoredSessions.add(session.id)
+  if (applyRestoredPlan(session.planState, payload)) persistSessions()
 }
 
 function togglePinSession(s) {
@@ -687,6 +734,10 @@ const REPRO_STATUS_LABELS = {
 }
 
 const REPRO_TERMINAL_STATUSES = ['succeeded', 'failed', 'rejected', 'cancelled']
+// F4：恢复分类。注意必须声明在 REPRO_TERMINAL_STATUSES 之后——模块级
+// 展开引用，放前面会触发 TDZ ReferenceError 使整个 chunk 崩掉（线上实测）。
+const REPRO_RESTORE_NONTERMINAL = ['queued', 'running', 'cancelling']
+const REPRO_RESTORE_KNOWN = [...REPRO_RESTORE_NONTERMINAL, ...REPRO_TERMINAL_STATUSES]
 
 function reproStatusLabel(run) {
   return REPRO_STATUS_LABELS[run?.status] || run?.status || '未知'
@@ -717,6 +768,29 @@ function stopAllReproPolling() {
   for (const id of reproPollTimers.keys()) stopReproPolling(id)
 }
 
+// Console 轮询与恢复共用的记录投影：把 Worker job 记录写入 turn.reproRun。
+function applyReproRecord(turn, record) {
+  if (!turn?.reproRun || !record) return
+  turn.reproRun.status = record.status
+  turn.reproRun.code = record.code || null
+  turn.reproRun.detail = record.detail || null
+  turn.reproRun.seedUsed = !!record.seed_used
+  turn.reproRun.startedAt = record.started_at ?? null
+  turn.reproRun.finishedAt = record.finished_at ?? null
+  // NX-E2：真实边界 Stage 事件 / 当前步骤 / 运行中增量日志（代理已脱敏）。
+  turn.reproRun.stageEvents = Array.isArray(record.stage_events) ? record.stage_events : []
+  turn.reproRun.currentStep = record.current_step ?? null
+  turn.reproRun.liveLog = record.live_log_tail || ''
+  turn.reproRun.stages = (record.steps_result || []).map((s, i) => ({
+    index: i + 1,
+    command: s.command,
+    exit_code: s.exit_code,
+    timed_out: s.timed_out,
+    duration_s: s.duration_s,
+    log_tail: s.log_tail || ''
+  }))
+}
+
 function startReproPolling(turn, jobId) {
   if (!jobId || reproPollTimers.has(jobId)) return
   let polls = 0
@@ -735,24 +809,7 @@ function startReproPolling(turn, jobId) {
       return
     }
     if (!record || !turn?.reproRun) return
-    turn.reproRun.status = record.status
-    turn.reproRun.code = record.code || null
-    turn.reproRun.detail = record.detail || null
-    turn.reproRun.seedUsed = !!record.seed_used
-    turn.reproRun.startedAt = record.started_at ?? null
-    turn.reproRun.finishedAt = record.finished_at ?? null
-    // NX-E2：真实边界 Stage 事件 / 当前步骤 / 运行中增量日志（代理已脱敏）。
-    turn.reproRun.stageEvents = Array.isArray(record.stage_events) ? record.stage_events : []
-    turn.reproRun.currentStep = record.current_step ?? null
-    turn.reproRun.liveLog = record.live_log_tail || ''
-    turn.reproRun.stages = (record.steps_result || []).map((s, i) => ({
-      index: i + 1,
-      command: s.command,
-      exit_code: s.exit_code,
-      timed_out: s.timed_out,
-      duration_s: s.duration_s,
-      log_tail: s.log_tail || ''
-    }))
+    applyReproRecord(turn, record)
     persistSessions()
     if (REPRO_TERMINAL_STATUSES.includes(record.status)) {
       stopReproPolling(jobId)
@@ -1396,8 +1453,16 @@ function renderedAnswer(turn) {
   return cached?.html || ''
 }
 
-function handleEvent(turn, { event, data }) {
-  if (event === 'token') {
+function handleEvent(turn, { event, data }, session = null) {
+  if (event === 'plan') {
+    // NX-H1：计划快照（真实 state 投影）。会话级状态——经 planState 状态机
+    // 去重/排序，旧 revision 忽略；session 缺省时（历史调用方）不消费。
+    const target = session || currentSession.value
+    if (target) {
+      if (!target.planState) target.planState = createPlanState()
+      if (applyPlanEvent(target.planState, data)) persistSessions()
+    }
+  } else if (event === 'token') {
     turn.answer += data?.content ?? ''
   } else if (event === 'tool_call') {
     turn.toolEvents.push({
@@ -1426,6 +1491,23 @@ function handleEvent(turn, { event, data }) {
         }
       } catch (e) {
         // truncated json fallback（运行时缺陷 D2 哨兵）
+      }
+    }
+
+    // NX-R1a：论文证据卡（上传 PDF 全文薄链；搜索候选不进此卡）
+    if (data?.name === 'collect_paper_evidence' && data?.status !== 'error') {
+      let evidences = Array.isArray(data?.items) ? data.items : []
+      if (!evidences.length && data?.content) {
+        try {
+          const parsed = JSON.parse(data.content)
+          if (Array.isArray(parsed?.evidences)) evidences = parsed.evidences
+        } catch (e) {
+          // 结构化兜底失败：证据卡暂缺，但结果本身如实留存在轨迹里
+        }
+      }
+      if (evidences.length) {
+        turn.evidences = evidences
+        persistSessions()
       }
     }
 
@@ -1498,7 +1580,8 @@ function handleEvent(turn, { event, data }) {
     }
 
     // M3：write_artifact 成功 → turn.artifacts（消息流产物卡 + 本机资料计数）
-    if (data?.name === 'write_artifact' && data?.status !== 'error') {
+    // NX-R1a：write_research_report 同样产出 Markdown Artifact，共用产物卡。
+    if ((data?.name === 'write_artifact' || data?.name === 'write_research_report') && data?.status !== 'error') {
       let artifact = Array.isArray(data?.items) && data.items[0] ? data.items[0] : null
       if (!artifact && data?.content) {
         try {
@@ -1552,6 +1635,7 @@ async function runTurn(message) {
     answer: '',
     toolEvents: [],
     papers: [],
+    evidences: [],
     artifacts: [],
     reproductionPreset: null,
     tokenCount: null,
@@ -1594,7 +1678,7 @@ async function runTurn(message) {
       // NX-A1：仅发送就绪附件 id；绑定与验主在服务端完成。
       attachmentIds: readyAttachmentIds(currentSession.value),
       signal: abortController.signal,
-      onEvent: (evt) => handleEvent(turn, evt),
+      onEvent: (evt) => handleEvent(turn, evt, currentSession.value),
     })
   } catch (err) {
     if (err?.name === 'AbortError') {
@@ -2363,6 +2447,9 @@ const emptySuggestions = computed(() =>
                 </div>
               </div>
 
+              <!-- NX-R1a：论文证据卡（Research-only 工具产出；General 无此工具不渲染） -->
+              <NexusEvidenceCard :evidences="turn.evidences" />
+
               <!-- 实验复现规划卡片（入口走 Approval Gate） -->
               <div v-if="turn.reproductionPreset" class="nx-repro-card">
                 <div class="nx-rc-header">
@@ -2638,6 +2725,9 @@ const emptySuggestions = computed(() =>
           </div>
         </article>
       </div>
+
+      <!-- NX-H1：会话当前计划卡（write_todos 快照投影；无计划不渲染） -->
+      <NexusPlanCard :plan="currentSession?.planState?.plan" />
 
       <!-- 底部 Composer -->
       <footer class="nx-composer-box">

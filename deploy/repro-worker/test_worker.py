@@ -372,8 +372,9 @@ async def test_stage_events_success_sequence(tmp_path: Path, monkeypatch: pytest
         ("building", "skipped"),
         ("running", "started"),
         ("running", "done"),
-        ("metric", "started"),
-        ("metric", "done"),
+        # F6：Worker 只完成产物收集，metric 置 pending；真实判定由报告链
+        # 经 /jobs/{id}/metric 回写（见 test_metric_writeback_after_report）。
+        ("metric", "pending"),
         ("verifying", "not_applicable"),
         ("completed", "done"),
     ]
@@ -485,3 +486,147 @@ async def test_health_reports_e2e3_capabilities():
     assert body["stage_events_enabled"] is True
     assert body["cancel_enabled"] is True
     assert body["step_log_max_chars"] > 0
+
+
+# ---------------------------------------------------------------------------
+# 边界修复批次（2026-09-07，审查 F2/F3/F5/F6）
+# ---------------------------------------------------------------------------
+
+
+def test_redact_secrets_patterns():
+    """F2：Bearer/Authorization/键值密钥/已知令牌/URL 用户信息/ANSI 遮蔽；
+    普通训练指标（loss/step/tokens 计数）不受损。"""
+    secret_ghp = "ghp_" + "a" * 30
+    text = (
+        "loss=0.1234 step=100 tokens: 12345\n"
+        "Authorization: Bearer abc123def.gh_i-j\n"
+        "api_key=abcd1234efgh\n"
+        f"clone https://user:pass123@github.com/org/repo\n"
+        "\x1b[31mERROR\x1b[0m model loading\n"
+        f"remote: {secret_ghp}\n"
+        "token='abcd1234'\n"
+    )
+    red = worker._redact_secrets(text)
+    assert "abc123def.gh_i-j" not in red
+    assert "abcd1234" not in red
+    assert "pass123" not in red and "user:" not in red
+    assert "\x1b" not in red and "[31m" not in red
+    assert "a" * 30 not in red
+    # 普通指标与正文不损坏
+    assert "loss=0.1234" in red
+    assert "step=100" in red
+    assert "tokens: 12345" in red
+    assert "model loading" in red
+    assert "github.com/org/repo" in red
+
+
+async def test_subprocess_env_whitelisted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """F2：Worker 自身凭据不进入不可信子进程环境；白名单变量正常透传。"""
+    monkeypatch.setenv("REPRO_WORKER_TOKEN", "super-secret-token")
+    monkeypatch.setenv("REPRO_WORKER_GITHUB_TOKEN", "ghp_supersecretvalue123456")
+    result = await worker._run_step(
+        'echo "T=$REPRO_WORKER_TOKEN G=$REPRO_WORKER_GITHUB_TOKEN P=${PATH:+set}"',
+        tmp_path,
+    )
+    log = result["log_tail"]
+    assert result["exit_code"] == 0
+    assert "super-secret" not in log
+    assert "ghp_" not in log
+    assert "P=set" in log, "白名单变量（PATH）必须透传"
+
+
+async def test_long_line_output_preserves_exit_code(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """F3：9KB / 70KB 超长单行与无换行输出——readline 行长限制曾导致整行
+    丢失或 ValueError 把成功步骤记成执行器异常；块读下退出码与尾部如实。"""
+    monkeypatch.setattr(worker, "SEEDS_DIR", _seed_tar(tmp_path))
+    with respx.mock:
+        respx.get("https://api.github.com/repos/a/mit/license").mock(
+            return_value=httpx.Response(200, json={"license": {"spdx_id": "MIT"}})
+        )
+        async with _client() as client:
+            response = await client.post("/jobs", json={
+                "preset_id": "testpreset", "repo_url": "https://github.com/a/mit",
+                "repo_license": "MIT",
+                "steps": [
+                    "head -c 9000 /dev/zero | tr '\\0' 'x'; echo END9K",
+                    "head -c 70000 /dev/zero | tr '\\0' 'y'; echo END70K",
+                    "head -c 5000 /dev/zero | tr '\\0' 'z'; printf NOMORE",
+                ],
+            })
+            assert response.status_code == 200
+            record = await _wait_status(response.json()["job_id"], {"succeeded"})
+
+    assert record["status"] == "succeeded", record
+    assert record.get("code") is None, "采集异常不得把成功作业记为 REPRO_FAILED"
+    steps = record["steps_result"]
+    assert all(step["exit_code"] == 0 and not step["timed_out"] for step in steps)
+    assert "END9K" in steps[0]["log_tail"]
+    assert "END70K" in steps[1]["log_tail"]
+    assert "NOMORE" in steps[2]["log_tail"], "无换行收尾输出必须进入日志尾部"
+
+
+async def test_spawn_window_cancel_lands(tmp_path: Path):
+    """F5：cancel 先到、句柄后登记的 spawn 窗口——句柄登记后立即重查
+    cancel_requested，窗口内取消直接回收进程组，命令不得照常执行完。"""
+    slot: dict = {"cancel_requested": True, "live_log_tail": ""}
+    result = await worker._run_step("echo raced && sleep 5", tmp_path, live_log_slot=slot)
+    assert slot.get("cancel_landed") is True, "窗口内取消应记 cancel_landed 留证"
+    assert result["exit_code"] != 0, "spawn 窗口取消后步骤不得以成功退出码结束"
+    assert result["timed_out"] is False
+
+
+async def test_metric_writeback_after_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """F6：成功作业 metric 阶段只置 pending（不再因产物扫描宣称完成）；
+    报告链回写 PASS/FAIL → done、INCOMPLETE → not_applicable，幂等不覆盖，
+    未完成作业 409、非法 verdict 422。"""
+    monkeypatch.setattr(worker, "SEEDS_DIR", _seed_tar(tmp_path))
+    with respx.mock:
+        respx.get("https://api.github.com/repos/a/mit/license").mock(
+            return_value=httpx.Response(200, json={"license": {"spdx_id": "MIT"}})
+        )
+        async with _client() as client:
+            # 未完成作业：metric 回写 409
+            pending_job = await client.post("/jobs", json={
+                "preset_id": "testpreset", "repo_url": "https://github.com/a/mit",
+                "repo_license": "MIT", "steps": ["sleep 2"],
+            })
+            too_early = await client.post(
+                f"/jobs/{pending_job.json()['job_id']}/metric", json={"verdict": "PASS"}
+            )
+            assert too_early.status_code == 409
+            assert too_early.json()["detail"].startswith("JOB_NOT_FINISHED")
+            await client.post(f"/jobs/{pending_job.json()['job_id']}/cancel")
+
+            response = await client.post("/jobs", json={
+                "preset_id": "testpreset", "repo_url": "https://github.com/a/mit",
+                "repo_license": "MIT", "steps": ["echo hello"],
+            })
+            job_id = response.json()["job_id"]
+            record = await _wait_status(job_id, {"succeeded"})
+            metric_events = [e for e in record["stage_events"] if e["stage"] == "metric"]
+            assert [(e["stage"], e["status"]) for e in metric_events] == [("metric", "pending")], (
+                "产物扫描完成不得宣称 Metric 完成"
+            )
+
+            invalid = await client.post(f"/jobs/{job_id}/metric", json={"verdict": "MAYBE"})
+            assert invalid.status_code == 422
+
+            writeback = await client.post(
+                f"/jobs/{job_id}/metric",
+                json={"verdict": "PASS", "summary": "报告链判定 PASS（2 项可比对指标）"},
+            )
+            assert writeback.status_code == 200
+            assert writeback.json() == {"job_id": job_id, "metric": "done", "already_final": False}
+
+            final = await client.get(f"/jobs/{job_id}")
+            metric_events = [e for e in final.json()["stage_events"] if e["stage"] == "metric"]
+            assert metric_events[-1]["status"] == "done"
+            assert "PASS" in metric_events[-1]["note"]
+
+            again = await client.post(f"/jobs/{job_id}/metric", json={"verdict": "FAIL"})
+            assert again.status_code == 200
+            assert again.json()["already_final"] is True
+            incomplete = await client.post(
+                f"/jobs/{job_id}/metric", json={"verdict": "INCOMPLETE"}
+            )
+            assert incomplete.json()["already_final"] is True
