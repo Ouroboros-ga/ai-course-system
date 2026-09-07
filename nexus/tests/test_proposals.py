@@ -73,11 +73,22 @@ def test_compiler_deterministic_and_matches_preset_defaults():
 
 def test_compiler_lr_decay_floor_avoids_warmup_division_by_zero():
     """线上 E2E 回归：max_iters<=100 时 lr_decay_iters 至少 101，
-    否则 train.py get_lr 除零（warmup 默认 100）。"""
+    否则 train.py get_lr 除零（warmup 默认 100）"""
     params = proposals.validate_parameters("nanogpt", {"max_iters": 100})
     steps = proposals.compile_steps("nanogpt", params)
     assert "--max_iters=100" in steps[3]
     assert "--lr_decay_iters=101" in steps[3]
+
+
+def test_compiler_eval_interval_clamped_for_checkpoint():
+    """线上 E2E 回归：ckpt 只在整除步写盘，eval_interval 钳到 <= max_iters，
+    否则小步数运行无 ckpt 可采样；默认值不拼 flag（预设逐字一致）。"""
+    params = proposals.validate_parameters("nanogpt", {"max_iters": 100})
+    steps = proposals.compile_steps("nanogpt", params)
+    assert "--eval_interval=100" in steps[3]
+    default_steps = proposals.compile_steps(
+        "nanogpt", proposals.validate_parameters("nanogpt", {}))
+    assert "--eval_interval" not in default_steps[3]
 
 
 def test_metric_basis_verified_only_on_defaults():

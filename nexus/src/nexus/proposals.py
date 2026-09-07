@@ -49,6 +49,9 @@ NANOGPT_PARAM_SCHEMA: dict[str, dict[str, Any]] = {
                    "metric_sensitive": True, "help": "每步 batch"},
     "eval_iters": {"type": "int", "min": 5, "max": 200, "default": 20,
                    "metric_sensitive": False, "help": "评估迭代数（仅测量）"},
+    "eval_interval": {"type": "int", "min": 1, "max": 5000, "default": 2000,
+                      "metric_sensitive": True,
+                      "help": "评估/存档间隔（ckpt 只在整除步写盘）"},
     "block_size": {"type": "int", "min": 16, "max": 256, "default": 64,
                    "metric_sensitive": True, "help": "上下文长度"},
     "n_layer": {"type": "int", "min": 1, "max": 12, "default": 4,
@@ -132,6 +135,11 @@ def compile_nanogpt_steps(parameters: dict[str, Any]) -> list[str]:
     """
     p = parameters
     lr_decay_iters = max(int(p["max_iters"]), 101)
+    # ckpt 只在 iter % eval_interval == 0 时写盘：钳到 <= max_iters，
+    # 否则小步数运行无 ckpt 可采样。等于默认值 2000 时不拼 flag，
+    # 保持默认编译与预设命令逐字一致。
+    eval_iv = min(int(p["eval_interval"]), int(p["max_iters"]))
+    eval_flag = "" if eval_iv == 2000 else f" --eval_interval={eval_iv}"
     return [
         "git clone https://github.com/karpathy/nanoGPT && cd nanoGPT",
         "pip install numpy transformers datasets tiktoken tqdm "
@@ -142,7 +150,7 @@ def compile_nanogpt_steps(parameters: dict[str, Any]) -> list[str]:
         f"--block_size={p['block_size']} --batch_size={p['batch_size']} "
         f"--n_layer={p['n_layer']} --n_head={p['n_head']} --n_embd={p['n_embd']} "
         f"--max_iters={p['max_iters']} "
-        f"--lr_decay_iters={lr_decay_iters} --dropout={p['dropout']}",
+        f"--lr_decay_iters={lr_decay_iters} --dropout={p['dropout']}{eval_flag}",
         "python sample.py --out_dir=out-shakespeare-char --device=cpu",
     ]
 
