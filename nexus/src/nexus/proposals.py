@@ -124,8 +124,14 @@ def validate_parameters(preset_id: str, parameters: dict[str, Any] | None) -> di
 
 
 def compile_nanogpt_steps(parameters: dict[str, Any]) -> list[str]:
-    """由参数确定性生成冻结命令（固定顺序/格式；lr_decay_iters 跟随 max_iters）。"""
+    """由参数确定性生成冻结命令（固定顺序/格式）。
+
+    lr_decay_iters 跟随 max_iters，但必须大于 train.py 默认 warmup_iters=100，
+    否则 get_lr 除零（线上 E2E 实证：max_iters=100 + decay=100 必炸）。
+    取 max(max_iters, 101)——默认值 2000 不受影响（与预设命令逐字一致）。
+    """
     p = parameters
+    lr_decay_iters = max(int(p["max_iters"]), 101)
     return [
         "git clone https://github.com/karpathy/nanoGPT && cd nanoGPT",
         "pip install numpy transformers datasets tiktoken tqdm "
@@ -136,7 +142,7 @@ def compile_nanogpt_steps(parameters: dict[str, Any]) -> list[str]:
         f"--block_size={p['block_size']} --batch_size={p['batch_size']} "
         f"--n_layer={p['n_layer']} --n_head={p['n_head']} --n_embd={p['n_embd']} "
         f"--max_iters={p['max_iters']} "
-        f"--lr_decay_iters={p['max_iters']} --dropout={p['dropout']}",
+        f"--lr_decay_iters={lr_decay_iters} --dropout={p['dropout']}",
         "python sample.py --out_dir=out-shakespeare-char --device=cpu",
     ]
 
