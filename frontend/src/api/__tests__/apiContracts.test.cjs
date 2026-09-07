@@ -1043,6 +1043,15 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   assert.match(runtime, /SESSION_BUSY/)
   assert.match(runtime, /client_request_id/)
   assert.match(runtime, /def _run_context_note/)
+  // v6 实验名后端接线：显示名以后端 display_title 为准，本地回退保留。
+  const reproShared = read('frontend/src/app/pages/nexus/reproShared.js')
+  assert.match(reproShared, /export function experimentName\(run, seq = 1\)/)
+  assert.match(reproShared, /run\?\.display_title \|\| run\?\.title/)
+  const nxPage = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  assert.match(nxPage, /backendRunNames = ref\(\{\}\)/)
+  assert.match(nxPage, /async function refreshBackendRunNames\(\)/)
+  assert.match(nxPage, /experimentName\(\{ \.\.\.t\.reproRun, \.\.\.backend \}, seq\)/)
+  assert.match(nxPage, /stampBackendRunName\(existing\.reproRun, backend\)/)
 
   // M1-F3 + NX-G1/NX-A1：前端模式工具声明与 Runtime 双 Profile 工具面同源（防漂移）。
   // Runtime：general 结构性排除 research-only 三工具；read_attachment 双模式共用。

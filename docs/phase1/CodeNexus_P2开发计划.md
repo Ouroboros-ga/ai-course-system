@@ -125,7 +125,7 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | 运行详情/取消/报告 | `GET /repro/jobs/{job_id}`、`POST /repro/jobs/{job_id}/cancel`、`POST /repro/jobs/{job_id}/report` | 复用已有端点；报告生成不是 GET。缺模型侧运行查询/取消工具，不能把 HTTP API 存在等同于 Agent 会用 |
 | 浮窗继承研究会话 | chat/stream 已有 session_id、mode、checkpoint 和附件 scope | 缺受验证的 run/step 引用、服务端有界日志注入、同会话多窗口写入协调 |
 | 口述改参数再运行 | ✅ LB2：参数 schema/校验、计划快照、配置→命令确定性映射、指标基线（verified/exploratory）已交付 | ~~缺参数 schema/校验、计划快照、配置→命令确定性映射、与参数匹配的指标基线~~ |
-| 实验名、运行备注 | ✅ LB1：`title` 持久化＋`PATCH /runs/{id}`（归属校验＋乐观锁）；备注 API 列批次 D | 运行备注追加式 API＋Agent 备注标记（批次 D）；实验名已随 LB1 交付 |
+| 实验名、运行备注 | ✅ LB1：`title` 持久化＋`PATCH /runs/{id}`（归属校验＋乐观锁）；前端显示已接线（2026-09-08：`display_title` 优先＋本地回退，恢复/执行路径打标）；备注 API 列批次 D | 运行重命名 UI（后端 PATCH 已就绪，前端入口待设计）；运行备注追加式 API＋Agent 备注标记（批次 D） |
 
 代码依据：`backend/app/services/nexus_run_service.py`、`backend/app/api/v1/endpoints/nexus_proxy.py`、`nexus/src/nexus/approvals.py`、`nexus/src/nexus/tools/reproduction.py`、`nexus/src/nexus/main.py`、`nexus/src/nexus/tools/__init__.py`。执行前重新核对 HEAD/工作区，不能覆盖现有前端改动。
 
