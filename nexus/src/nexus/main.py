@@ -394,7 +394,8 @@ def _acquire_thread_writer(
 
     返回 None = 获得写者资格（调用方继续执行）；
     返回 {"status": "running"} = 同键重试且原请求进行中（调用方 409）；
-    返回 {"status": "done"/"failed", ...} = 同键重试且原请求已结束。
+    返回 {"status": "done", ...} = 同键重试且原请求已结束。
+    failed 条目在此直接丢弃并视为新执行（见 P1-C），不会返回给调用方。
     """
     if not request_id:
         if thread_id in _active_threads:
@@ -404,7 +405,16 @@ def _acquire_thread_writer(
     key = (thread_id, request_id)
     existing = _request_registry.get(key)
     if existing is not None:
-        return existing
+        if existing.get("status") == "failed":
+            # NX-N0/P1-C：失败不毒化注册表——同键重试视为新执行（重建 running
+            # 条目），而不是回放空结果或永久 409；调用方仍受单写者门约束。
+            _request_registry.pop(key, None)
+            try:
+                _registry_order.remove(key)
+            except ValueError:
+                pass
+        else:
+            return existing
     if thread_id in _active_threads:
         raise _session_busy(request_id)
     _active_threads.add(thread_id)
@@ -825,6 +835,7 @@ async def chat(
         ]
     }
     final_status = "done"
+    result: dict[str, Any] | None = None
     # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
     # 列表模式才产出 (mode, payload) 元组（与 _agent_stream 一致）。
     try:
@@ -841,6 +852,22 @@ async def chat(
                         tool_events.append(
                             {"name": msg.name or "", "status": msg.status or "success"}
                         )
+        state = await agent.aget_state(config)
+        final_message = ""
+        for msg in reversed(state.values.get("messages", [])):
+            if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
+                final_message = msg.content if isinstance(msg.content, str) else str(msg.content)
+                break
+        # NX-H1：同步响应同样携带计划快照（真实 state 投影；无计划为 null）。
+        plan = _project_plan(session_id, thread_id, state.values.get("todos"))
+        await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
+        result = {
+            "session_id": session_id,
+            "request_id": request_id,
+            "message": final_message,
+            "tool_events": tool_events,
+            "plan": plan,
+        }
     except Exception:
         final_status = "failed"
         raise
@@ -848,23 +875,9 @@ async def chat(
         reset_scope(scope_tokens)
         reset_execution_scope(exec_tokens)
         reset_attachments(attach_token)
-    state = await agent.aget_state(config)
-    final_message = ""
-    for msg in reversed(state.values.get("messages", [])):
-        if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
-            final_message = msg.content if isinstance(msg.content, str) else str(msg.content)
-            break
-    # NX-H1：同步响应同样携带计划快照（真实 state 投影；无计划为 null）。
-    plan = _project_plan(session_id, thread_id, state.values.get("todos"))
-    await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
-    result = {
-        "session_id": session_id,
-        "request_id": request_id,
-        "message": final_message,
-        "tool_events": tool_events,
-        "plan": plan,
-    }
-    _release_thread_writer(thread_id, request_id, status=final_status, result=result)
+        # NX-N0/P1-C：写者获取后的全部路径统一释放——模型异常、状态读取、
+        # 计划投影、线程触达任一失败都不泄漏门锁；失败记 failed 供同键重试。
+        _release_thread_writer(thread_id, request_id, status=final_status, result=result)
     return result
 
 
@@ -923,17 +936,23 @@ async def session_messages(
     session_id: str,
     x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
 ) -> dict[str, Any]:
-    """单会话历史消息（C2/C3）：从 checkpoint 投影 user/assistant 文本。"""
+    """单会话历史消息（C2/C3）：从 checkpoint 投影 user/assistant 文本。
+
+    NX-N0/H2：读取失败是明确错误（503 CHECKPOINT_READ_FAILED），不是"无
+    历史"——调用方保留缓存并标恢复失败、可重试；真正无历史才返回空列表。
+    """
     agent = get_agent()
     user_id = sanitize_user_id(x_nexus_user_id)
     session_id = sanitize_session_id(session_id)
     config = _config_for(session_id, user_id)
     try:
         state = await agent.aget_state(config)
-    except Exception as error:  # noqa: BLE001 - 无 checkpoint/读取失败都视为空历史
+    except Exception as error:  # noqa: BLE001 - 读取失败必须显式失败
         logger.warning("session_messages aget_state failed: %s", error)
-        state = None
-    values = (state.values if state is not None else None) or {}
+        raise HTTPException(
+            status_code=503, detail="CHECKPOINT_READ_FAILED"
+        ) from error
+    values = state.values or {}
     return {
         "session_id": session_id,
         "messages": _serialize_history(list(values.get("messages") or [])),
@@ -953,6 +972,8 @@ async def plan_snapshot_endpoint(
     复用 sessions/messages 的鉴权链（require_api_key + 反代注入的用户身份
     → thread_for 命名空间）；只返回最小白名单字段（plan_snapshot），不暴露
     checkpoint 原文。纯读取，不触发任何执行；无 checkpoint/无计划 → plan=null。
+    NX-N0/H2：读取失败是明确错误（503 CHECKPOINT_READ_FAILED），不是
+    plan:null——调用方保留缓存并标恢复失败、可重试；真正无计划才清空。
     """
     agent = get_agent()
     user_id = sanitize_user_id(x_nexus_user_id)
@@ -960,10 +981,12 @@ async def plan_snapshot_endpoint(
     config = _config_for(session_id, user_id)
     try:
         state = await agent.aget_state(config)
-    except Exception as error:  # noqa: BLE001 - 无 checkpoint/读取失败都视为无计划
+    except Exception as error:  # noqa: BLE001 - 读取失败必须显式失败
         logger.warning("plan_snapshot aget_state failed: %s", error)
-        state = None
-    values = (state.values if state is not None else None) or {}
+        raise HTTPException(
+            status_code=503, detail="CHECKPOINT_READ_FAILED"
+        ) from error
+    values = state.values or {}
     snapshot = _project_plan(
         session_id, config["configurable"]["thread_id"], values.get("todos")
     )
@@ -997,17 +1020,21 @@ async def _fetch_repro_job(job_id: str) -> dict[str, Any]:
 
 async def _fetch_run_linkage(
     job_id: str, user_id: str | None
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, str]:
     """NX-LB2：经 Backend 内部端点取 run linkage（含冻结配置快照）。
 
-    无 linkage（老作业/他人/内部未配置）→ None，调用方回退 legacy preset
-    判定，不伪造基线。
+    返回 (linkage, status)，status ∈ ok / not_found / unavailable：
+    - ok：读到 linkage 行；
+    - not_found：Backend 明确无此 linkage（老直批作业/他人/内部未配置的
+      本地开发态）→ 调用方走 legacy preset 判定；
+    - unavailable：已配置但读取失败（超时/非 200/坏 JSON）→ 调用方不得
+      回退默认基线（NX-N0/P1-B），只能给无比较结论。
     """
     from nexus.artifact_client import _settings_ready
 
     ready = _settings_ready()
     if ready is None or not user_id:
-        return None
+        return None, "not_found"
     url, token = ready
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -1020,13 +1047,19 @@ async def _fetch_run_linkage(
             )
     except Exception as error:  # noqa: BLE001
         logger.warning("run linkage fetch failed: %s", type(error).__name__)
-        return None
+        return None, "unavailable"
+    if response.status_code == 404:
+        return None, "not_found"
     if response.status_code != 200:
-        return None
+        logger.warning("run linkage unexpected status: %s", response.status_code)
+        return None, "unavailable"
     try:
-        return response.json().get("data") or {}
+        data = response.json().get("data")
     except ValueError:
-        return None
+        return None, "unavailable"
+    if not isinstance(data, dict) or not data:
+        return None, "unavailable"
+    return data, "ok"
 
 
 class ReproJobError(Exception):
@@ -1094,14 +1127,27 @@ async def repro_job_report(
         )
     preset = REPRO_PRESETS.get(str(job.get("preset_id", "")).lower())
     # NX-LB2：有 linkage 且冻结快照声明 exploratory → 探索性结论（只记实测，
-    # 不做通过判定）；无 linkage 走 legacy preset 判定（行为不变）。
-    linkage = await _fetch_run_linkage(job_id, user_id)
-    metric_policy = ((linkage or {}).get("config_snapshot") or {}).get("metric_policy")
-    report = repro_report.build_report(job=job, preset=preset, metric_policy=metric_policy)
+    # 不做通过判定）；明确无 linkage 走 legacy preset 判定（行为不变）。
+    # NX-N0/P1-B：linkage 不可读（unavailable）≠ 无 linkage——缺配置时不得
+    # 回退 verified 默认基线，只能给无比较结论，且不回写任何判定。
+    linkage, linkage_status = await _fetch_run_linkage(job_id, user_id)
+    if linkage_status == "unavailable":
+        report = repro_report.build_report(
+            job=job, preset=preset,
+            metric_policy={"basis": "unknown",
+                           "reason": "配置快照不可读（linkage 读取失败）"})
+        logger.info("linkage unreadable for job %s: no-comparison report", job_id)
+    else:
+        metric_policy = ((linkage or {}).get("config_snapshot") or {}).get("metric_policy")
+        report = repro_report.build_report(job=job, preset=preset, metric_policy=metric_policy)
     if report["verdict"] == "EXPLORATORY":
         # Worker /metric 只接受 PASS/FAIL/INCOMPLETE：探索性无可比基线，
         # 不回写（metric 停留 pending 属诚实降级），报告产物照常生成。
         logger.info("exploratory report for job %s: skip metric writeback", job_id)
+    elif report["verdict"] == "INCOMPLETE" and linkage_status == "unavailable":
+        # P1-B：不可读不是"未达标"，回写 INCOMPLETE 会伪装成一次真实比较；
+        # metric 停留 pending，报告正文已说明原因。
+        logger.info("unavailable-linkage report for job %s: skip metric writeback", job_id)
     else:
         # F6：真实比较已完成，best-effort 回写 Worker metric 阶段（失败不阻断报告）。
         await _writeback_metric_verdict(

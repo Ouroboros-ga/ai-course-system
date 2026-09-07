@@ -357,6 +357,9 @@ async def test_report_renders_citations_and_writes_artifact(monkeypatch, researc
     import nexus.artifact_client as artifact_client
 
     monkeypatch.setattr(artifact_client, "write_artifact_via_backend", fake_write)
+    # NX-N0/R2：撤销重验需要来源可读（本用例来源正常）。
+    _patch_backend(monkeypatch, lambda request: _resp(_pdf_payload(
+        "方法A.pdf", [{"text": "方法A在数据集X上达到SOTA。", "locator": "p2"}])))
     try:
         result = await _run_report(
             title="方法比较报告", question="A 与 B 有何异同", body_markdown="## 比较\n- 相同点 [1]\n- 差异 [2]",
@@ -385,9 +388,13 @@ async def test_report_fails_closed_when_artifact_write_fails(monkeypatch, resear
     import nexus.artifact_client as artifact_client
 
     monkeypatch.setattr(artifact_client, "write_artifact_via_backend", fake_write)
+    # NX-N0/R2：撤销重验需要来源可读——本用例来源正常，走到写入失败分支。
+    _patch_backend(monkeypatch, lambda request: _resp(_pdf_payload(
+        "方法A.pdf", [{"text": "方法A在数据集X上达到SOTA。", "locator": "p2"}])))
     try:
         result = await _run_report(
-            title="t", question="q", body_markdown="b", cited_evidence_ids=["ev-ok"],
+            # NX-N0/R1：正文须带合法 [n] 引用（本用例测写入失败路径，引用合规）。
+            title="t", question="q", body_markdown="b [1]", cited_evidence_ids=["ev-ok"],
         )
     finally:
         await _teardown(tokens)

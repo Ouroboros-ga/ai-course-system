@@ -516,11 +516,15 @@ async def _record_run_linkage(
     preset: dict[str, Any], approval_id: str, job_id: str,
     proposal_ref: dict[str, Any] | None = None,
     effective_preset: dict[str, Any] | None = None,
+    frozen_snapshot: dict[str, Any] | None = None,
 ) -> bool:
     """NX-E1：向 Backend 登记 run linkage（恢复查询依据）。
 
-    NX-LB2：提案票据附带 proposal 引用＋冻结配置快照（含 metric_policy），
-    供报告链判定基线与恢复视图展示；普通票据快照为空（legacy preset 判定）。
+    NX-N0/P1-A：提案票据的冻结配置快照只取核销时冻结体（frozen_snapshot，
+    调用方 execute_approved_reproduction 在 consume 返回中携带）——本函数
+    不再读取可变现行提案。frozen 缺失属内部不一致：保留提案 id/version
+    引用但快照置空（恢复视图按 unknown 历史展示），并记 error 日志。
+    普通票据快照为空（legacy preset 判定）。
     best-effort：失败不阻断提交结果（审批记录仍是权威归属），仅记日志。
     """
     from nexus import approvals as approvals_module
@@ -532,26 +536,25 @@ async def _record_run_linkage(
     if ready is None or not uid:
         return False
     url, token = ready
-    effective = effective_preset or preset
     config_snapshot: dict[str, Any] = {}
     if proposal_ref:
-        from nexus import proposals as proposals_module
-
-        proposal = proposals_module.get_proposal(proposal_ref.get("proposal_id", ""))
-        if proposal is not None:
+        if isinstance(frozen_snapshot, dict) and frozen_snapshot.get("steps"):
             config_snapshot = {
-                "proposal_id": proposal["proposal_id"],
-                "proposal_version": proposal["version"],
-                "preset_id": proposal["preset_id"],
-                "parameters": proposal["parameters"],
-                "environment": proposal["environment"],
-                "repo_revision": proposal["repo_revision"],
-                "revision_status": proposal["revision_status"],
-                "data": proposal["data"],
-                "steps": list(effective.get("steps") or []),
-                "budget": proposal["budget"],
-                "metric_policy": proposal["metric_policy"],
+                "proposal_id": frozen_snapshot.get("proposal_id", ""),
+                "proposal_version": int(frozen_snapshot.get("version", 0) or 0),
+                "preset_id": frozen_snapshot.get("preset_id", ""),
+                "parameters": frozen_snapshot.get("parameters", {}),
+                "environment": frozen_snapshot.get("environment", {}),
+                "repo_revision": frozen_snapshot.get("repo_revision", ""),
+                "revision_status": frozen_snapshot.get("revision_status", ""),
+                "data": frozen_snapshot.get("data", {}),
+                "steps": list(frozen_snapshot.get("steps") or []),
+                "budget": frozen_snapshot.get("budget", {}),
+                "metric_policy": frozen_snapshot.get("metric_policy", {}),
             }
+        else:
+            logger.error("run linkage missing frozen snapshot for proposal %s",
+                         (proposal_ref or {}).get("proposal_id", ""))
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
@@ -726,20 +729,24 @@ async def execute_approved_reproduction(
             "repo_license": preset["repo_license"],
             "is_supplementary": True,
         }
-    # NX-LB2：提案绑定票据用冻结步骤提交（请求审批时快照，不读提案现行值，
-    # 杜绝"核验后修改"竞态）；普通票据用预设 steps。
+    # NX-N0/P1-A：提案绑定票据只消费核销时冻结的快照（approval.frozen_proposal，
+    # consume 内 CAS 锁定行内 full body）。不再读取可变现行提案——核销后任何
+    # PATCH（锁拒绝）或绕过锁的修改都进不了执行载荷与登记快照；快照缺失则
+    # fail-closed 拒绝执行。普通票据用预设 steps。
     effective = dict(preset)
     proposal_ref: dict[str, Any] = {}
+    frozen_snapshot: dict[str, Any] | None = None
     if approval.get("proposal_id"):
-        frozen = approval.get("frozen_steps") or []
-        if not frozen:
+        frozen = approval.get("frozen_proposal")
+        if not isinstance(frozen, dict) or not frozen.get("steps"):
             raise approvals.ApprovalError(
-                "APPROVAL_PROPOSAL_CHANGED", "批准绑定的冻结步骤缺失，请重新走审批")
-        effective = {**preset, "steps": list(frozen)}
+                "APPROVAL_PROPOSAL_CHANGED", "批准绑定的冻结快照缺失，请重新走审批")
+        effective = {**preset, "steps": list(frozen["steps"])}
         proposal_ref = {
-            "proposal_id": approval["proposal_id"],
-            "proposal_version": approval["proposal_version"],
+            "proposal_id": frozen["proposal_id"],
+            "proposal_version": int(frozen.get("version", 0) or 0),
         }
+        frozen_snapshot = dict(frozen)
     try:
         result = await _submit_to_worker(effective)
         # M4-B1：提交成功（拿到 job_id）后登记归属，进度查询按发起人鉴权。
@@ -755,6 +762,7 @@ async def execute_approved_reproduction(
                     run_id=approval_id, user_id=user_id, session_id=session_id,
                     preset=preset, approval_id=approval_id, job_id=job_id,
                     proposal_ref=proposal_ref, effective_preset=effective,
+                    frozen_snapshot=frozen_snapshot,
                 )
                 # 提案票据执行成功→冻结提案版本（后续修改须走新提案；best-effort）。
                 if proposal_ref:

@@ -1043,6 +1043,18 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   assert.match(runtime, /SESSION_BUSY/)
   assert.match(runtime, /client_request_id/)
   assert.match(runtime, /def _run_context_note/)
+  // NX-N0 可信度收尾：核销冻结快照＋linkage 三态＋锁释放＋恢复错误语义。
+  assert.match(proposals, /def lock_proposal_for_execution/)
+  assert.match(approvals, /frozen_proposal/)
+  assert.match(reproTool, /frozen_snapshot/)
+  assert.match(runtime, /linkage_status == "unavailable"/)
+  assert.match(report, /"unknown"/)
+  assert.match(report, /INCOMPLETE/)
+  assert.match(runtime, /CHECKPOINT_READ_FAILED/)
+  const paperResearch = read('nexus/src/nexus/tools/paper_research.py')
+  assert.match(paperResearch, /CITATION_NUMBER_INVALID/)
+  assert.match(paperResearch, /CITATION_BODY_MISSING/)
+  assert.match(paperResearch, /EVIDENCE_SOURCE_REVOKED/)
   // v6 实验名后端接线：显示名以后端 display_title 为准，本地回退保留。
   const reproShared = read('frontend/src/app/pages/nexus/reproShared.js')
   assert.match(reproShared, /export function experimentName\(run, seq = 1\)/)

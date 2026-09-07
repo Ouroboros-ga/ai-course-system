@@ -366,8 +366,40 @@ def consume_approval(
         )
     if _is_expired(current):
         raise ApprovalError("APPROVAL_EXPIRED", "审批已过期，请重新提案")
+    # NX-N0/P1-A：提案绑定票据在核验通过后立即 CAS 锁定原提案，并把锁定
+    # 行的完整执行体冻结进本次核销返回值。后续提交/登记/报告只消费该快照，
+    # 不再读取可变现行提案——核销后任何 PATCH 都进不了执行载荷。
+    frozen_proposal: dict[str, Any] | None = None
     if current.get("proposal_id"):
-        _verify_proposal_binding(current)
+        verified = _verify_proposal_binding(current)
+        from nexus import proposals as proposals_module
+
+        locked = proposals_module.lock_proposal_for_execution(
+            verified["proposal_id"], user_id=user_id,
+            expected_version=int(verified["version"]),
+            expected_hash=verified["plan_hash"],
+        )
+        if locked is None:
+            raise ApprovalError(
+                "APPROVAL_PROPOSAL_CHANGED",
+                "提案在核销时被修改或锁定，旧批准失效，请重新走审批",
+            )
+        frozen_proposal = {
+            "proposal_id": locked["proposal_id"],
+            "version": locked["version"],
+            "preset_id": locked["preset_id"],
+            "parent_run_id": locked.get("parent_run_id", ""),
+            "objective": locked.get("objective", ""),
+            "parameters": locked["parameters"],
+            "environment": locked["environment"],
+            "repo_revision": locked.get("repo_revision", ""),
+            "revision_status": locked.get("revision_status", ""),
+            "data": locked["data"],
+            "steps": list(locked["steps"]),
+            "budget": locked["budget"],
+            "metric_policy": locked["metric_policy"],
+            "plan_hash": locked["plan_hash"],
+        }
     elif plan_hash_for(preset) != current["plan_hash"]:
         raise ApprovalError(
             "APPROVAL_PLAN_CHANGED",
@@ -377,17 +409,22 @@ def consume_approval(
         approval_id, "approved", "status = 'consumed'", ()
     )
     if transitioned is not None:
-        return transitioned
-    stored = _memory_approvals.get(approval_id)
-    if stored is None:
-        raise ApprovalError("APPROVAL_NOT_FOUND", "审批已不可恢复")
-    if stored["status"] == "consumed":
-        return _row_to_dict(stored)
-    if stored["status"] != "approved":
-        # 并发竞争：重读裁决。
-        return consume_approval(approval_id, user_id=user_id, session_id=session_id, preset=preset)
-    stored["status"] = "consumed"
-    return _row_to_dict(stored)
+        consumed = transitioned
+    else:
+        stored = _memory_approvals.get(approval_id)
+        if stored is None:
+            raise ApprovalError("APPROVAL_NOT_FOUND", "审批已不可恢复")
+        if stored["status"] == "consumed":
+            consumed = _row_to_dict(stored)
+        elif stored["status"] != "approved":
+            # 并发竞争：重读裁决。
+            return consume_approval(approval_id, user_id=user_id, session_id=session_id, preset=preset)
+        else:
+            stored["status"] = "consumed"
+            consumed = _row_to_dict(stored)
+    if frozen_proposal is not None:
+        consumed["frozen_proposal"] = frozen_proposal
+    return consumed
 
 
 def _verify_proposal_binding(approval: dict[str, Any]) -> dict[str, Any]:

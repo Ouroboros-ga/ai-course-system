@@ -635,12 +635,13 @@ def patch_proposal(
 def mark_proposal_executed(proposal_id: str, version: int) -> bool:
     """执行成功后冻结提案版本（best-effort；后续修改须走新提案）。
 
-    仅当行仍为该 draft 版本时转换；返回是否成功标记。
+    行仍为该版本且状态为 draft（直批兼容）或 approved（核销锁定）时转换；
+    返回是否成功标记。
     """
     current = get_proposal(proposal_id)
     if current is None:
         return False
-    if int(current["version"]) != int(version) or current["status"] != "draft":
+    if int(current["version"]) != int(version) or current["status"] not in ("draft", "approved"):
         return False
     current["status"] = "executed"
     current["updated_at"] = _now()
@@ -651,6 +652,63 @@ def mark_proposal_executed(proposal_id: str, version: int) -> bool:
         return False
     _memory_proposals[current["proposal_id"]] = dict(current)
     return True
+
+
+_LOCK_SELECT = (
+    "proposal_id, user_id, session_id, version, preset_id, "
+    "parent_run_id, objective, parameters, environment, "
+    "repo_revision, revision_status, data, steps, budget, "
+    "metric_policy, plan_hash, status, client_request_id, "
+    "history, created_at, updated_at"
+)
+
+
+def lock_proposal_for_execution(
+    proposal_id: str, *, user_id: str, expected_version: int, expected_hash: str,
+) -> dict[str, Any] | None:
+    """NX-N0/P1-A：核销时 CAS 锁定提案（draft→approved），返回锁定后行。
+
+    版本＋hash＋归属＋draft 四重匹配才转换；任何失配返回 None（调用方按
+    旧批准失效拒绝——核验与锁定之间被修改即落入此分支）。内存路径单进程
+    check-set；PG 路径单条 UPDATE ... WHERE ... RETURNING 原子转换。
+    PG 异常 fail-closed 返回 None（不回退内存，避免双写脑裂）。
+    """
+    pg = _pg_settings()
+    if pg is not None:
+        dsn, schema = pg
+        try:
+            import psycopg
+
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"UPDATE {schema}.nexus_proposals SET status='approved', updated_at=%s "
+                        f"WHERE proposal_id=%s AND user_id=%s AND version=%s "
+                        f"AND plan_hash=%s AND status='draft' "
+                        f"RETURNING {_LOCK_SELECT}",
+                        (_now(), proposal_id, user_id or "",
+                         int(expected_version), expected_hash or ""),
+                    )
+                    found = cur.fetchone()
+            if found is None:
+                return None
+            return _row_from_pg(found)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("proposal lock pg failed: %s", error)
+            return None
+    row = _memory_proposals.get(proposal_id)
+    if row is None:
+        return None
+    if ((row.get("user_id") or "") != (user_id or "")
+            or int(row.get("version", 0)) != int(expected_version)
+            or (row.get("plan_hash") or "") != (expected_hash or "")
+            or row.get("status") != "draft"):
+        return None
+    row = dict(row)
+    row["status"] = "approved"
+    row["updated_at"] = _now()
+    _memory_proposals[proposal_id] = row
+    return _row_to_dict(row)
 
 
 def clear_memory_store() -> None:

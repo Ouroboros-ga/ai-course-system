@@ -78,17 +78,49 @@ async def _fetch_blocks(url: str, token: str, aid: str) -> tuple[dict[str, Any] 
     return data, None
 
 
+def _question_terms(question: str) -> list[str]:
+    """研究问题分词（确定性词频排序用）：英文数字下划线 ≥2 字符、CJK ≥2 字。
+
+    无分词器依赖；排序只影响块选择顺序，不改变读取预算与范围。
+    """
+    import re as _re
+
+    return sorted({_t for _t in _re.findall(
+        r"[A-Za-z0-9_]{2,}|[\u4e00-\u9fff]{2,}", (question or "").lower())})
+
+
+def _rank_blocks(
+    blocks: list[dict[str, Any]], terms: list[str]
+) -> list[dict[str, Any]]:
+    """NX-N0/R3：问题相关块优先（稳定排序：分数降序＋原序号升序）。
+
+    无命中时退化为原文顺序（行为不变）；预算/截断语义不受影响。
+    """
+    scored = []
+    for index, block in enumerate(blocks):
+        text = ""
+        if isinstance(block, dict):
+            raw = block.get("text")
+            text = str(raw).lower() if isinstance(raw, str) else ""
+        score = sum(text.count(term) for term in terms) if terms else 0
+        scored.append((index, block, score))
+    scored.sort(key=lambda item: (-item[2], item[0]))
+    return [block for _, block, _ in scored]
+
+
 @tool
 async def collect_paper_evidence(question: str, attachment_ids: list[str]) -> dict[str, Any]:
     """读取用户上传的论文 PDF（≤3 篇）全文块，建立带可核对定位的证据清单。
 
     参数：
-    - question：当前研究问题（用于组织证据，不改变读取范围）；
+    - question：当前研究问题（参与证据排序：问题相关块优先；不改变读取
+      预算与范围，无命中时保持原文顺序）；
     - attachment_ids：要读取的附件 id（仅本次对话已绑定的上传 PDF 可用）。
 
-    返回 evidences（每条含 evidence_id/locator/excerpt/coverage），后续
-    write_research_report 只能引用这些 evidence_id；引用时必须使用原文
-    locator。只有摘要级内容会标记 abstract_only，不会冒充读过全文。
+    返回 evidences（每条含 evidence_id/locator/excerpt/coverage，超长块带
+    truncated 标记），后续 write_research_report 只能引用这些 evidence_id；
+    引用时必须使用原文 locator。只有摘要级内容会标记 abstract_only，
+    不会冒充读过全文。
     """
     from nexus.request_scope import current_attachments as scope_ids
 
@@ -150,7 +182,10 @@ async def collect_paper_evidence(question: str, attachment_ids: list[str]) -> di
         if data.get("truncated"):
             truncated_any = True
         added_for_this_attachment = 0
-        for block in blocks:
+        # NX-N0/R3：问题相关块优先进入预算（确定性排序，无命中保持原文顺序）。
+        ranked = _rank_blocks(
+            [b for b in blocks if isinstance(b, dict)], _question_terms(q))
+        for block in ranked:
             if len(evidences) >= MAX_EVIDENCES_PER_CALL or total_chars >= EVIDENCE_TOTAL_CHARS_MAX:
                 budget_hit = True
                 break
@@ -260,6 +295,56 @@ async def write_research_report(
             "detail": "研究报告必须至少引用一条已建立证据；无证据时不得写报告，"
                       "应提示用户上传论文全文。",
         }
+    # NX-N0/R1：正文 [n] 编号必须映射到已解析证据（按 cited 顺序 1..N）。
+    # 只验 id 合法不代表引用合法——[999]、错位编号、无正文引用都拒绝。
+    import re as _re
+
+    used_numbers = sorted({int(n) for n in _re.findall(r"\[(\d+)\]", body)})
+    out_of_range = [n for n in used_numbers if n < 1 or n > len(resolved)]
+    if out_of_range:
+        return {
+            "status": "rejected",
+            "code": "CITATION_NUMBER_INVALID",
+            "detail": (
+                f"正文引用编号越界：{out_of_range}（本次有效范围 1–{len(resolved)}，"
+                "按 cited_evidence_ids 顺序编号）。请修正后重试（最多一次），"
+                "仍失败则如实输出证据缺口。"
+            ),
+        }
+    if not used_numbers:
+        return {
+            "status": "rejected",
+            "code": "CITATION_BODY_MISSING",
+            "detail": "正文没有任何 [n] 引用标记，不能只交引用附录；请在论述处"
+                      "标注引用编号后重试。",
+        }
+    # NX-N0/R2：写入前重验来源附件当前可用性。登记时校验过 owner/session，
+    # 但附件可能随后被删除/过期/改绑——旧 evidence_id 不得继续产生新报告
+    # （已生成报告按 Artifact 生命周期保留，本条不静默删除）。
+    # 后端未配置时无法重验（此时 collect 本就不可用，登记只可能来自测试）。
+    backend = _backend_ready()
+    if backend is not None:
+        url, token = backend
+        revoked: list[str] = []
+        checked: set[str] = set()
+        for _, evidence in resolved:
+            aid = str(evidence.get("attachment_id") or "")
+            if not aid or aid in checked:
+                continue
+            checked.add(aid)
+            _, fetch_error = await _fetch_blocks(url, token, aid)
+            if fetch_error is not None:
+                revoked.append(f"{aid}({fetch_error})")
+        if revoked:
+            return {
+                "status": "rejected",
+                "code": "EVIDENCE_SOURCE_REVOKED",
+                "detail": (
+                    "以下证据来源当前不可用（删除/过期/改绑/越权）："
+                    f"{', '.join(revoked)}。请重新读取可用来源后再写报告；"
+                    "不得用旧摘录生成新报告。"
+                ),
+            }
 
     lines = [f"# {clean_title}", "", f"**研究问题**：{question.strip()[:300]}", "", body, ""]
     lines.append("## 引用")
