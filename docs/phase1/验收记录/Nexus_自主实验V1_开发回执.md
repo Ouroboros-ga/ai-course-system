@@ -94,3 +94,12 @@
   同模式，线上核验待部署后）。
 - 真实 Worker/LLM 行为：合成覆盖冻结/判定/锁语义；真实执行质量属 T7。
 - 前端 H1/H2 消费侧：待页面_owner_按上述契约实现（503/事件 session_id）。
+
+## 线上验证（2026-09-08，部署 0b6c2633，一次性验证账号 `nx_verify_t0_*`）
+
+- 发布＋Runtime rsync（diff 干净）＋重启＋健康检查（Research 18 工具，四项全 ok）。
+- T0 冒烟 17/17：提案 v1→改 v2→批复→批准→执行→成功→报告 EXPLORATORY→
+  详情快照自洽（proposal_version==2、parameters.batch_size==8、
+  冻结步骤含 `--batch_size=8`、metric_policy exploratory）——P1-A 冻结链
+  走真实 PG 生效；P1-B linkage-ok 路径 intact。
+- P1-B unavailable 与 P1-C 500 路径无法在线上确定性触发，以离线合成为准（如上）。
