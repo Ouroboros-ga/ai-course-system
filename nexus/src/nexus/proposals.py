@@ -658,6 +658,64 @@ def clear_memory_store() -> None:
     _memory_proposals.clear()
 
 
+def request_approval_for_proposal(
+    proposal_id: str, *, user_id: str, expected_version: int,
+) -> dict[str, Any]:
+    """NX-LB4 共享核心：pin 住版本+hash 生成/复用审批（不直接执行）。
+
+    main.py 的 HTTP 端点与工具路径（request_reproduction_approval）共用；
+    成功返回 {"approval": 公开投影, "deduped": 是否复用同版本待办}，
+    失败抛 ProposalError（NOT_FOUND/FORBIDDEN/LOCKED/VERSION_CONFLICT/
+    PRESET_UNSUPPORTED）。模型只准备执行材料，批准永远由用户发起。
+    """
+    from nexus import approvals
+    from nexus.tools.reproduction import _approval_ttl_s, _public_approval
+
+    row = get_proposal(proposal_id)
+    if row is None or (user_id or "") != row["user_id"]:
+        raise ProposalError("PROPOSAL_NOT_FOUND", "提案不存在或不可恢复")
+    if row["status"] != "draft":
+        raise ProposalError(
+            "PROPOSAL_LOCKED", f"提案已{row['status']}，不可请求审批")
+    if int(row["version"]) != int(expected_version):
+        raise ProposalError(
+            "PROPOSAL_VERSION_CONFLICT",
+            f"版本冲突：当前版本={row['version']}",
+        )
+    preset = _preset_for(row["preset_id"])
+    if preset is None:
+        raise ProposalError("PROPOSAL_PRESET_UNSUPPORTED", "预设已不可用")
+    # 幂等：同版本已有 pending 审批则复用。
+    for approval in approvals.list_approvals(
+            user_id=user_id, status="pending", session_id=row["session_id"]):
+        if (approval.get("proposal_id") == row["proposal_id"]
+                and int(approval.get("proposal_version", 0)) == int(row["version"])):
+            return {"approval": _public_approval(approval, preset), "deduped": True}
+    try:
+        created = approvals.create_approval(
+            user_id=user_id, session_id=row["session_id"],
+            tool="run_reproduction", preset=preset, ttl_s=_approval_ttl_s(),
+            proposal_binding={
+                "proposal_id": row["proposal_id"],
+                "proposal_version": row["version"],
+                "proposal_hash": row["plan_hash"],
+                "frozen_steps": list(row["steps"]),
+            },
+        )
+    except Exception as error:  # noqa: BLE001
+        raise ProposalError(
+            "PROPOSAL_APPROVAL_CREATE_FAILED",
+            f"审批创建失败：{type(error).__name__}",
+        ) from error
+    return {"approval": _public_approval(created, preset), "deduped": False}
+
+
+def _preset_for(preset_id: str) -> dict[str, Any] | None:
+    from nexus.tools.reproduction import REPRO_PRESETS
+
+    return REPRO_PRESETS.get(str(preset_id or "").strip().lower())
+
+
 # ---------------------------------------------------------------------------
 # NX-LB1：preset 可见投影（Backend /repro/presets 经内部 HTTP 拉取，不跨
 # Python 环境 import）。只读：无凭据、内部路径、任意命令入口。

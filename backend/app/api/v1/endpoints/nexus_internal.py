@@ -150,11 +150,16 @@ async def nexus_internal_cs_knowledge(
 
 
 class NexusArtifactWriteRequest(BaseModel):
-    """Runtime write_artifact → Backend 写入请求（M3-A，与工具侧同源校验）。"""
+    """Runtime write_artifact → Backend 写入请求（M3-A，与工具侧同源校验）。
+
+    NX-LB5：run_id 可选——报告链/工具写入时可关联运行，供 run 详情投影
+    已授权产物引用。
+    """
 
     artifact_type: str = Field(min_length=1, max_length=16)
     title: str = Field(min_length=1, max_length=120)
     content: str = Field(min_length=1)
+    run_id: str = Field(default="", max_length=64)
 
 
 class NexusReproJobRecordRequest(BaseModel):
@@ -312,6 +317,7 @@ async def nexus_internal_write_artifact(
         artifact_type=payload.artifact_type,
         title=payload.title,
         content=payload.content,
+        run_id=payload.run_id,
     )
     return unified_response(
         code=200,
@@ -385,3 +391,148 @@ async def nexus_internal_run_detail(
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RUN_NOT_FOUND")
     return unified_response(code=200, message="run", data=run)
+
+
+# ---------------------------------------------------------------------------
+# NX-LB4/LB5：运行操作（查询/取消/备注）的 Runtime 工具消费入口。
+# 身份三重来源：service token + X-Nexus-User-Id（登录态注入）+
+# X-Nexus-Session-Id（会话绑定）。归属校验同主代理链，跨会话引用一律拒绝。
+# ---------------------------------------------------------------------------
+
+
+def _internal_run_scope(
+    session: Session, user_id: str, run_id: str, x_session_id: str | None,
+) -> dict[str, Any]:
+    """归属 + 会话绑定校验；失败按码抛 HTTPException（调用方透传给工具）。"""
+    from app.services import nexus_run_service
+
+    run = nexus_run_service.get_owned_run(
+        session, user_id=user_id, run_id=(run_id or "").strip()[:64])
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RUN_NOT_FOUND")
+    session_id = (x_session_id or "").strip()[:128]
+    if not session_id or (run["session_id"] or "") != session_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="RUN_SESSION_MISMATCH")
+    return run
+
+
+@router.get("/runs/{run_id}/status")
+async def nexus_internal_run_status(
+    run_id: str,
+    step_id: int | None = Query(default=None, ge=0),
+    authorization: str | None = Header(default=None),
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    x_nexus_session_id: str | None = Header(default=None, alias="X-Nexus-Session-Id"),
+    session: Session = Depends(get_session),
+):
+    """NX-LB4：get_reproduction_run 工具的消费入口——有界状态投影。
+
+    复用主代理链的 LB3 白名单投影（归属/脱敏/≤40 行 ≤8000 字符日志）；
+    只读，不触发任何执行。
+    """
+    from app.api.v1.endpoints.nexus_proxy import _build_run_context
+
+    _require_service_token(authorization)
+    user_id = str(_require_user_identity(x_nexus_user_id))
+    run = _internal_run_scope(session, user_id, run_id, x_nexus_session_id)
+    context = await _build_run_context(
+        session, {"user_id": user_id}, run["session_id"],
+        {"run_id": run["run_id"], **({"step_id": step_id} if step_id is not None else {})},
+    )
+    return unified_response(code=200, message="run status", data=context)
+
+
+class NexusInternalRunCancelRequest(BaseModel):
+    """NX-LB4：内部取消（无 body 字段；保留给未来受限参数）。"""
+
+
+@router.post("/runs/{run_id}/cancel")
+async def nexus_internal_run_cancel(
+    run_id: str,
+    authorization: str | None = Header(default=None),
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    x_nexus_session_id: str | None = Header(default=None, alias="X-Nexus-Session-Id"),
+    session: Session = Depends(get_session),
+):
+    """NX-LB4：cancel_reproduction_run 工具的消费入口——授权门控取消。
+
+    无有效一次性授权 → 200 confirmation_required（模型据此引导用户确认，
+    授权由用户在登录态下经 /nexus/runs/{id}/cancel-grant 显式签发）；
+    有授权 → 原子核销后走与用户取消代理相同的 Worker 取消核心。
+    """
+    from app.api.v1.endpoints.nexus_proxy import _worker_cancel
+    from app.services import nexus_action_grant_service, nexus_run_service
+
+    _require_service_token(authorization)
+    user_id = str(_require_user_identity(x_nexus_user_id))
+    run = _internal_run_scope(session, user_id, run_id, x_nexus_session_id)
+    if run["status"] in nexus_run_service.TERMINAL_RUN_STATUSES:
+        return unified_response(code=200, message="run 已终态", data={
+            "run_id": run["run_id"], "status": run["status"],
+            "already_terminal": True,
+            "note": "运行已结束（无需也无法取消）；此为登记快照状态。",
+        })
+    if not run["job_id"]:
+        return unified_response(code=200, message="run 无关联作业", data={
+            "run_id": run["run_id"], "status": "unknown", "already_terminal": False,
+            "note": "该运行没有已登记的执行作业，无进程可取消。",
+        })
+    grant = nexus_action_grant_service.consume_grant(
+        session, user_id=user_id, run_id=run["run_id"], action="cancel_run")
+    if grant is None:
+        return unified_response(code=200, message="需要用户确认", data={
+            "run_id": run["run_id"], "status": "confirmation_required",
+            "code": "CANCEL_CONFIRMATION_REQUIRED",
+            "detail": (
+                "取消是破坏性停止动作，需要用户本次明确确认。请向用户说明将取消"
+                "哪个运行，并请其在界面上确认取消（确认后服务端签发一次性授权）。"
+            ),
+        })
+    result = await _worker_cancel(run["job_id"])
+    # best-effort 回写快照（终态由列表合并路径权威化，此处只加速可见性）。
+    if result["status"] == "cancelled":
+        try:
+            nexus_run_service.update_run_status(
+                session, user_id=user_id, run_id=run["run_id"],
+                status="cancelled", detail="用户确认后取消")
+        except Exception as error:  # noqa: BLE001
+            logger.warning("run cancel snapshot writeback failed: %s", error)
+    return unified_response(code=200, message="取消已受理", data={
+        "run_id": run["run_id"], "job_id": run["job_id"],
+        "status": result["status"], "already_terminal": result["already_terminal"],
+    })
+
+
+class NexusInternalRunNoteRequest(BaseModel):
+    """NX-LB5：Agent 运行备注写入（author_kind 服务端强制 agent）。"""
+
+    content: str = Field(min_length=1, max_length=4000)
+    request_id: str = Field(default="", max_length=64)
+
+
+@router.post("/runs/{run_id}/notes")
+async def nexus_internal_run_note_create(
+    run_id: str,
+    payload: NexusInternalRunNoteRequest,
+    authorization: str | None = Header(default=None),
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    x_nexus_session_id: str | None = Header(default=None, alias="X-Nexus-Session-Id"),
+    session: Session = Depends(get_session),
+):
+    """NX-LB5：add_reproduction_note 工具的消费入口（备注标记为 Agent 解释/建议）。"""
+    from app.services import nexus_run_service
+
+    _require_service_token(authorization)
+    user_id = str(_require_user_identity(x_nexus_user_id))
+    run = _internal_run_scope(session, user_id, run_id, x_nexus_session_id)
+    try:
+        note = nexus_run_service.add_run_note(
+            session, user_id=user_id, run_id=run["run_id"], content=payload.content,
+            author_kind="agent", request_id=payload.request_id,
+        )
+    except nexus_run_service.NoteError as error:
+        code_status = {"RUN_NOT_FOUND": 404, "NOTE_CONTENT_INVALID": 422}
+        raise HTTPException(
+            status_code=code_status.get(error.code, 422), detail=error.code) from error
+    return unified_response(code=200, message="note added", data=note)

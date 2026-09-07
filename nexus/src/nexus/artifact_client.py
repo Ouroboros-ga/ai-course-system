@@ -27,7 +27,8 @@ def _settings_ready() -> tuple[str, str] | None:
 
 
 async def write_artifact_via_backend(
-    *, artifact_type: str, title: str, content: str, user_id: str | None
+    *, artifact_type: str, title: str, content: str, user_id: str | None,
+    run_id: str = "",
 ) -> dict[str, Any]:
     """调用 Backend 内部写端点；返回统一形态：
     status=success + artifact{...}，或 status=unavailable + code/detail。"""
@@ -47,7 +48,12 @@ async def write_artifact_via_backend(
         async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
             response = await client.post(
                 f"{url}/api/v1/nexus-internal/artifacts",
-                json={"artifact_type": artifact_type, "title": title, "content": content},
+                json={
+                    "artifact_type": artifact_type,
+                    "title": title,
+                    "content": content,
+                    **({"run_id": run_id} if run_id else {}),
+                },
                 headers=headers,
             )
     except Exception as error:  # noqa: BLE001 - fail-closed

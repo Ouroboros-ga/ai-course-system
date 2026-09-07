@@ -1,8 +1,10 @@
 # CodeNexus 开发计划：Current MVP → NX 必要主线
 
-> **版本**：2026-09-06 状态刷新版；基线 dev-liu，核查 HEAD=d54b444a（a18d4f40 前端闪现修复与 d54b444a nginx 对齐与本计划无功能交集）。上一版：2026-09-05 v1.3 对齐清理版（基线 d2c694a0）。
+> **版本**：2026-09-08 批次规划刷新版；基线 dev-liu，核查 HEAD=e1c6483c（LB1/LB2 部署线 6eb8b361→96a2b30f→fa4bceed→e1c6483c，线上 E2E 31/31）。上一版：2026-09-06 状态刷新版（基线 d54b444a）。
 > **设计依据**：[v1.3 Current Architecture + Roadmap](CodeNexus_转型设计与实施方案_v1.3.md)；[前端规格](Nexus_AI_前端开发规格与UX落地说明.md)。
 > **2026-09-07 后端规划增补**：依据 [NexusLab v6 设计板](2026-09-07_NexusLab_研究与实验一体化设计板_v6.html) 核查本地 `bb10d313` 的实际接口，新增 §9「研究与实验一体化后端批次」。仅规划，不代表实现或部署完成；v6 的示例值与按钮不作为服务已具备能力的证据。
+> **2026-09-08 批次交付与规划刷新**：批次 A/B（NX-LB1/LB2）已提交部署（6eb8b361→96a2b30f→fa4bceed，途中线上 E2E 发现并修复两处编译器缺陷：lr_decay 下限、eval_interval 钳制），完成线上 PG 迁移验证与真实 Worker 端到端验证（31/31）；§9.4–§9.6 转为批次 C/D 冻结规划，待实施。
+> **2026-09-08 批次 C/D 本地完成**：NX-LB3/LB4/LB5 已实现＋离线合成测试（未提交未部署），证据见[验收记录](验收记录/NX-LB3_LB4_LB5_验收_2026-09-08.md)；部署与线上 Worker E2E 待明确授权。
 > **历史**：原文件名保留以兼容链接。M0–M5 原任务、验收和工具数量完整移至[历史快照](CodeNexus_P2开发计划_历史快照_2026-09-05.md)，不代表当前工具面或未来排期。2026-09-06 刷新依据：git 历史 b34ea2d9/b080e269（首批 P0 提交部署与线上只读验证）、[NX-G1G2G3 验收](验收记录/NX-G1G2G3_验收_2026-09-05.md)、[NX-A1E1 验收](验收记录/NX-A1E1_验收_2026-09-05.md)。
 
 ## 1. Current / Next / Target / Optional
@@ -18,6 +20,8 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | 服务端执行审批（NX-G2）＋mode 严格化（NX-G1）＋effective capability（NX-G3） | CURRENT  | b34ea2d9 上线、b080e269 线上只读验证；真实审批全链已于 09-06 浏览器验收通过（NX-E2E3 记录） |
 | 附件/视觉（NX-A1）、run 恢复（NX-E1）、模型网关                          | CURRENT  | 随 b34ea2d9 上线；PG 方言/OCR 回填/附件 E2E/真实恢复链已于 09-06 浏览器验收通过 |
 | **Experiment Console（NX-E2）、作业取消（NX-E3）**                       | CURRENT  | 09-06 上线（9cdbf8a8 线），Worker v0.2.0；浏览器真实链验收含取消/恢复/真实审批；09-07 边界修复批次 F1–F6 全量修复并线上复验（Worker v0.3.0，见[审查记录](NX-E2E3_质量与产品符合性审查_2026-09-07.md)修复回执） |
+| **v6 后端批次 A/B（NX-LB1/LB2）**                                | CURRENT  | 09-08 部署（6eb8b361→fa4bceed 线）：运行元数据/稳定命名/分页/重命名/presets 投影，结构化提案/审批恢复/执行冻结/指标基线；线上 PG 迁移＋真实 Worker E2E 31/31；v6 前端联调未接，批次 C/D 后端继续（§9） |
+| **v6 后端批次 C/D（NX-LB3/LB4/LB5）**                           | NEXT     | 09-08 本地完成（未提交未部署）：运行引用/有界上下文/单写者门/幂等、查询·取消·备注·提案工具、取消一次性授权、备注/产物关联；离线全绿（见[验收记录](验收记录/NX-LB3_LB4_LB5_验收_2026-09-08.md)），部署＋线上 E2E 待授权 |
 | Todo、Paper Research、SandboxProvider、受控 A/B、Session                 | NEXT     | 下表独立验收，不一次翻转全线 ready；批次建议见 §7                   |
 | Subagent/Workspace、广泛任意论文/仓库、DOCX/PPTX 输出                        | TARGET   | 门槛到位后另排批次                                         |
 | Personal Context、GPU/多云、额外模型选择器                                  | OPTIONAL | 按需评估；图片视觉模型配置仍是 NX-A1 必需项                         |
@@ -26,11 +30,11 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 | 层次               | 工具                                                                          |
 | ---------------- | --------------------------------------------------------------------------- |
-| General 产品工具（5）  | web\_search、search\_course\_materials、search\_cs\_knowledge、write\_artifact、read\_attachment |
-| Research 产品工具（8） | 全部 General + search\_arxiv\_papers、plan\_reproduction、run\_reproduction     |
-| 两模式内部 Harness    | read\_file（StateBackend 历史读回，不是宿主通用文件）                                      |
+| General 产品工具（7）  | web\_search、search\_course\_materials、search\_cs\_knowledge、write\_artifact、read\_attachment、write\_todos（NX-H1 计划）、read\_file（StateBackend 历史读回，不是宿主通用文件） |
+| Research 产品工具（12） | 全部 General + search\_arxiv\_papers、plan\_reproduction、run\_reproduction、collect\_paper\_evidence、write\_research\_report（NX-R1a） |
+| 两模式内部 Harness    | StateBackend 历史读回等内部能力（read\_file 已计入上方注册面口径）                              |
 
-代码源为 `nexus/src/nexus/tools/__init__.py` 与 `agent.py`。注册不等于可执行：`effective = manifest ∩ mode ∩ tool surface ∩ health/config ∩ user/scope policy`，提交另需 approval。聚合与强审批已随 b34ea2d9 部署上线（2026-09-05）；附件与恢复同批上线（PG 方言与真实链路验收待补，§7 清单）。
+代码源为 `nexus/src/nexus/tools/__init__.py` 与 `agent.py`。注册不等于可执行：`effective = manifest ∩ mode ∩ tool surface ∩ health/config ∩ user/scope policy`，提交另需 approval。聚合与强审批已随 b34ea2d9 部署上线（2026-09-05）；附件与恢复同批上线，真实链已于 09-06 浏览器验收。工具计数为 /health tool_surface 口径（fa4bceed 线实证：General 7/Research 12，含 NX-H1/R1a 注册）。
 
 ## 3. 首批 P0：NX-G1–G3
 
@@ -78,7 +82,7 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 1. ✅ NX-G1/G2/G3、NX-A1、NX-E1 已随 b34ea2d9 上线（2026-09-05，b080e269 线上只读验证）；§7 前置清单五项交互式验收已全部通过（2026-09-06 浏览器真实链，见 [NX-E2E3 验收](验收记录/NX-E2E3_验收_2026-09-06.md)）。
 2. ✅ 下一批次 NX-E2+E3 已上线并通过浏览器真实链验收（2026-09-06，Worker v0.2.0）；验收发现并修复 4 个集成缺陷（归属断层/code 键信封冲突/恢复标记误持久化/附件清单未注入），详见验收记录。
 3. ✅ NX-E2/E3 边界修复批次（2026-09-07，`5f989495`+`c89ee487`，Worker v0.3.0）：审查记录六项发现（F1 取消失败被包装成功/F2 日志真脱敏/F3 长行采集/F4 冷恢复/F5 spawn 窗口取消/F6 Metric 真实判定）全量修复；测试矩阵 Worker 20＋Nexus 102＋后端 nexus 域 59＋前端契约 89 全绿；浏览器复验通过（含 Metric pending→报告回写 done 全链、冷恢复补齐、取消链）；详见[审查记录修复回执](NX-E2E3_质量与产品符合性审查_2026-09-07.md)。
-4. NX-H1/R1a 后先核实[质量审查](验收记录/NX-H1_R1a_质量审查_2026-09-07.md)收尾；面向 v6 的下一后端批次按 §9 执行（运行元数据→结构化提案/审批→上下文与工具操作）。NX-S1＋NX-E4、NX-P1/P2 按依赖继续，不能因工作台外壳接好就宣称完整实验平台完成。
+4. NX-H1/R1a 已于 09-07 部署（0ea84612 线，线上烟雾验证见 bb10d313 回执）；面向 v6 的后端批次 A/B（运行元数据、结构化提案/审批）已于 09-08 部署并完成线上 E2E（31/31），下一批按 §9.4–§9.5 批次 C（上下文与工具操作）执行，随后批次 D＝LB5（§9.6）。NX-S1＋NX-E4、NX-P1/P2 按依赖继续，不能因工作台外壳接好就宣称完整实验平台完成。
 5. 回退保留 preset，但不能绕过已启用强审批；关闭新 Provider 时保留状态/报告可读，不自动重放命令。
 6. 测试覆盖 Mode、恶意跨模式调用、无批准 Worker 零调用、过期/跨用户/计划篡改/并发重试、health 失联、八格式/视觉、取消、恢复、A/B 与日志脱敏。隔离 fixture/mock 不调真实付费服务；Mock 不能称线上安全验收。
 7. 既有两项域测试失败与 Compact 全图边界单独跟进，不能删除断言制造全绿。每任务写 commit/工作区、环境、实际链路、命令/结果和未验证项。
@@ -111,9 +115,8 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 ### 9.1 范围及真实基线
 
-状态：NX-LB1/LB2 已于 2026-09-08 本地实现＋离线合成测试（未提交未部署），
-证据见[验收记录](验收记录/NX-LB1_LB2_验收_2026-09-08.md)；LB3–LB5 仍为 NEXT
-（规划）。本批后端包括 Backend API/领域服务、Nexus Runtime/工具、必要的 Worker 参数契约及迁移测试；不开发页面、切换器、拖动、sessionStorage 布局记忆。保留同一研究会话、同一 Agent 的设计，不另建“浮窗助手”或科研工作台大脑。
+状态：批次 A/B（NX-LB1/LB2）已于 2026-09-08 提交部署（6eb8b361→96a2b30f
+→fa4bceed），完成线上 PG 迁移验证与真实 Worker 端到端验证（31/31，途中修复两处编译器缺陷：lr_decay 下限、eval_interval 钳制），证据见[验收记录](验收记录/NX-LB1_LB2_验收_2026-09-08.md)；批次 C＝LB3＋LB4（§9.4/§9.5）、批次 D＝LB5（§9.6）**已本地完成（未提交未部署）**，证据见[验收记录](验收记录/NX-LB3_LB4_LB5_验收_2026-09-08.md)。后端批次覆盖 Backend API/领域服务、Nexus Runtime/工具、必要的 Worker 参数契约及迁移测试；不开发页面、切换器、拖动、sessionStorage 布局记忆。保留同一研究会话、同一 Agent 的设计，不另建“浮窗助手”或科研工作台大脑。
 
 | v6 行为 | 本地代码已有 | 真正缺口 |
 | --- | --- | --- |
@@ -122,13 +125,13 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | 运行详情/取消/报告 | `GET /repro/jobs/{job_id}`、`POST /repro/jobs/{job_id}/cancel`、`POST /repro/jobs/{job_id}/report` | 复用已有端点；报告生成不是 GET。缺模型侧运行查询/取消工具，不能把 HTTP API 存在等同于 Agent 会用 |
 | 浮窗继承研究会话 | chat/stream 已有 session_id、mode、checkpoint 和附件 scope | 缺受验证的 run/step 引用、服务端有界日志注入、同会话多窗口写入协调 |
 | 口述改参数再运行 | ✅ LB2：参数 schema/校验、计划快照、配置→命令确定性映射、指标基线（verified/exploratory）已交付 | ~~缺参数 schema/校验、计划快照、配置→命令确定性映射、与参数匹配的指标基线~~ |
-| 实验名、运行备注 | ✅ LB1：`title` 持久化＋`PATCH /runs/{id}`（归属校验＋乐观锁）；备注 API 列 LB5 | 运行名/备注持久化及受归属校验的更新接口 |
+| 实验名、运行备注 | ✅ LB1：`title` 持久化＋`PATCH /runs/{id}`（归属校验＋乐观锁）；备注 API 列批次 D | 运行备注追加式 API＋Agent 备注标记（批次 D）；实验名已随 LB1 交付 |
 
 代码依据：`backend/app/services/nexus_run_service.py`、`backend/app/api/v1/endpoints/nexus_proxy.py`、`nexus/src/nexus/approvals.py`、`nexus/src/nexus/tools/reproduction.py`、`nexus/src/nexus/main.py`、`nexus/src/nexus/tools/__init__.py`。执行前重新核对 HEAD/工作区，不能覆盖现有前端改动。
 
 ### 9.2 NX-LB1：运行元数据、稳定命名与配置查询
 
-> ✅ 本地完成（2026-09-08，未提交未部署），证据见[验收记录](验收记录/NX-LB1_LB2_验收_2026-09-08.md)。以下为冻结规格（已实现）。
+> ✅ 已提交部署（2026-09-08，批次 A）：fa4bceed 线上实证 presets 投影、会话内稳定序号、重命名乐观锁、分页与 config_status 均走真实 PG。证据见[验收记录](验收记录/NX-LB1_LB2_验收_2026-09-08.md)。以下为冻结规格（已实现）。
 
 **首批交付，自定义实验名一起立项。** 不新建实验项目层；当前一条 run 表示一次批准执行，修改后再运行通过 parent_run_id 关联。
 
@@ -143,7 +146,7 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 ### 9.3 NX-LB2：结构化实验提案、参数修改与审批恢复
 
-> ✅ 本地完成（2026-09-08，未提交未部署），证据见[验收记录](验收记录/NX-LB1_LB2_验收_2026-09-08.md)。以下为冻结规格（已实现）。
+> ✅ 已提交部署（2026-09-08，批次 B）：线上真实 Worker E2E 31/31——提案→审批→执行→冻结命令逐字生效→报告 EXPLORATORY→旧票失效 409 全链实证；途中修复 lr_decay 下限与 eval_interval 钳制两处编译器缺陷。证据见[验收记录](验收记录/NX-LB1_LB2_验收_2026-09-08.md)。以下为冻结规格（已实现）。
 
 这是“在输入框提出修改”能够真实落地的核心，不是改一段展示文本。
 
@@ -171,6 +174,8 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 ### 9.4 NX-LB3：同会话实验上下文及并发协议
 
+> 📋 **批次 C（一）已本地完成（2026-09-08，未提交未部署）**，证据见[验收记录](验收记录/NX-LB3_LB4_LB5_验收_2026-09-08.md)。批次 C＝LB3＋LB4，交付后浮窗即可“继承研究上下文”；以下为实施规格，任务分解见节末。
+
 扩展已有 chat/chat-stream 请求（不是新聊天端点）：
 
 ```json
@@ -191,7 +196,16 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 验收：两个窗口共享历史但不并发污染 checkpoint；跨用户、跨会话或不存在 step 引用被拒；恶意日志不能变成工具指令；Worker 不可达仍可解释“状态未知”；刷新/断流/重复发送不重复执行；旧请求事件仍属于原 session。
 
+**任务分解（批次 C 一）**：
+1. 请求扩展：Backend 代理与 Runtime 端点同步接收 `client_request_id`（幂等键）与 `context.run_ref {run_id, step_id?}`；旧客户端缺省字段不破坏（改动入口 `nexus_proxy.py`、`main.py`）。
+2. 运行上下文投影服务：登录身份＋session＋run 归属验证→解析 job_id→经已有 job/报告服务生成白名单上下文（当前/指定 step、阶段、退出码、指标与 Artifact 引用、≤40 行且 ≤8000 字符有界日志、observed_at/stale/truncated/actual_lines）；复用服务端脱敏（改动入口 `nexus_run_service.py` 或新增 `nexus_run_context_service.py`、`nexus_internal.py`）。
+3. Runtime 注入与隔离：白名单投影进入同一 user/session namespace 的 Research profile，实验资料按不可信数据处理；不注入完整历史日志、完整 Trace、环境变量或宿主路径（改动入口 `request_scope.py`、`agent.py`）。
+4. 并发/幂等控制：同 (user, session) 线程单写者门；`client_request_id` 重试返回现有状态/可恢复结果，不重复调模型或工具；竞争 `409 SESSION_BUSY`；断流≠失败，提供有限状态恢复；plan/tool/result/error 事件携带 session_id/request_id，作业事件再带 run_id/job_id；checkpoint 读取故障明确失败。
+5. 测试与交接：跨用户/跨会话/不存在 step 引用拒绝、注入日志不成工具指令、Worker 失联“状态未知”、重复发送不重复执行、事件归属原 session；OpenAPI/请求响应样例与错误码随批交接前端可消费。
+
 ### 9.5 NX-LB4：Agent 操作运行与方案的受限工具
+
+> 📋 **批次 C（二）已本地完成（2026-09-08，未提交未部署）**；与 §9.4 同批实施与验收，交付后浮窗可“操作指定实验”（查询/取消/改方案）。以下为实施规格，任务分解见节末。
 
 当前 HTTP cancel 已存在，但 Runtime 产品工具面没有相应操作工具；仅在提示词说“可以取消”不构成接线。
 
@@ -203,19 +217,33 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 验收：General 看不到且不能调用上述工具；解释日志不会自动取消；合法取消命中指定 job；跨会话引用/伪造 grant 被拒；取消超时不显示成功；改方案绝不触发无审批执行。
 
+**任务分解（批次 C 二）**：
+1. Research-only 工具 `get_reproduction_run(run_id)`、`cancel_reproduction_run(run_id)` 注册进工具面与 effective capability；显式 run_id 与已选上下文冲突、无目标或目标歧义时拒绝并要求澄清，绝不“最新运行”猜测（改动入口 `tools/__init__.py`、`tools/reproduction.py`）。
+2. 取消授权：取消意图→服务端受限 action grant（绑定 user/session/request/run/action/有效期，一次性核销，不由模型参数伪造）→复用现有 Backend cancel 核心；HTTP 失败原样映射，cancelling 不提前转 cancelled，重复取消幂等，终态如实 already_terminal。
+3. 提案工具：创建/修改统一调 LB2 服务，返回真实 proposal/approval 引用供浮窗展示；模型只提出参数变更，不决定批准（改动入口 `approvals.py`、`tools/reproduction.py`）。
+4. 测试：General 不可见不可调、解释日志不自动取消、合法取消命中指定 job、跨会话引用/伪造 grant 拒绝、取消超时不显示成功、改方案不触发无审批执行。
+
 ### 9.6 NX-LB5：运行备注与产物可核对性（后续小批次）
+
+> 📋 **批次 D 已本地完成（2026-09-08，未提交未部署）**；交付“保存解释、查看和下载结果”的后端能力。以下为实施规格，任务分解见节末。
 
 - v6 出现“写进本次运行备注”，当前没有相应 API。拟增 `GET/POST /runs/{run_id}/notes`，使用追加式 note_id、author_kind、request_id、created_at、content，最多 4000 字符；幂等、owner/session 校验。Agent 备注标记为解释/建议，不修改原日志、指标或 PASS/FAIL。必要时注册同权限的 note 工具。
 - 扩展 run detail 的 artifacts 为已授权 Artifact 引用/可用下载能力，不能把 Worker 工作目录文件清单直接当成可下载链接。未收集或已过期的文件明确不可用。
 - 全量日志归档/下载、指标时序、批量下载、资料库归档动作分别列 TARGET，现有环形日志与终值不足时不伪造数据；若后续实施，复用对象存储、retention/owner 规则，不新建平行存储。
 
+**任务分解（批次 D）**：
+1. `GET/POST /runs/{run_id}/notes`：追加式 note（note_id、author_kind、request_id 幂等、created_at、content ≤4000 字符）；owner/session 校验；Agent 备注标记为解释/建议，不修改原日志、指标或 PASS/FAIL 结论（改动入口 `nexus_run_service.py`、`nexus_proxy.py`、`nexus_internal.py`）。
+2. 必要时注册同权限 note 工具；author_kind 区分用户与 Agent 备注。
+3. run detail 的 artifacts 扩展为已授权 Artifact 引用/可用下载能力；未收集或已过期如实不可用，不把 Worker 工作目录清单当下载链接。
+4. 全量日志归档/下载、指标时序、批量下载、资料库归档仍列 TARGET，另行排期；随后继续 NX-S1/E4/P1/P2。
+
 ### 9.7 后端实施顺序、模块和验收交接
 
-1. **准备/收尾**：核实 H1/R1a 审查项实际修复状态，尤其 checkpoint 恢复失败、引用对应关系和附件撤销；未关闭的不宣称完成。它们不阻止独立编写 LB1 契约，但相关缺陷未修复不得作为新链验收基线。
-2. **批次 A＝LB1** ✅ 本地完成（2026-09-08，未提交未部署）：preset 投影→显式数据迁移→运行名称/稳定序号/配置快照→列表详情扩展。给前端可消费契约，首版即可接固定切换器和运行标题。证据见[验收记录](验收记录/NX-LB1_LB2_验收_2026-09-08.md)。
-3. **批次 B＝LB2** ✅ 本地完成（2026-09-08，未提交未部署）：提案版本化→参数 schema/编译→审批待办恢复/失效→执行冻结→指标基线校验。先确定安全参数集，再接实际执行，不能先展示参数可改却继续跑原固定命令。同上验收记录。
-4. **批次 C＝LB3＋LB4**：运行引用→有界上下文→同线程并发/幂等→查询/取消/提案工具；以同一研究会话完整后端链验收。
-5. **批次 D＝LB5**：备注和真实 Artifact 关联；全量日志、时序数据另排。随后继续 NX-S1/E4/P1/P2，本次预置环境参数化不代表通用环境构建/A-B 已完成。
+1. **准备/收尾** ✅：H1/R1a 已于 09-07 部署（0ea84612 线），批次 A/B 已基于该基线完成离线测试与线上验收；批次 C/D 实施前仍须重新核对质量审查遗留项，未关闭的不宣称完成。
+2. **批次 A＝LB1** ✅ 已提交部署（2026-09-08，6eb8b361→fa4bceed 线上验证）：preset 投影→显式数据迁移→运行名称/稳定序号/配置快照→列表详情扩展。给前端可消费契约，首版即可接固定切换器和运行标题。证据见[验收记录](验收记录/NX-LB1_LB2_验收_2026-09-08.md)。
+3. **批次 B＝LB2** ✅ 已提交部署（2026-09-08，同上）：提案版本化→参数 schema/编译→审批待办恢复/失效→执行冻结→指标基线校验；线上真实 Worker E2E 31/31（提案→审批→执行→冻结命令逐字→报告 EXPLORATORY→旧票失效 409），途中修复 lr_decay 下限与 eval_interval 钳制。同上验收记录。
+4. **批次 C＝LB3＋LB4** ✅ 本地完成（2026-09-08，未提交未部署）：运行引用→有界上下文→同线程并发/幂等→查询/取消/提案工具（§9.4/§9.5 任务分解）；以同一研究会话完整后端链验收。证据见[验收记录](验收记录/NX-LB3_LB4_LB5_验收_2026-09-08.md)。
+5. **批次 D＝LB5** ✅ 本地完成（2026-09-08，未提交未部署）：备注和真实 Artifact 关联（§9.6 任务分解）；全量日志、时序数据另排。随后继续 NX-S1/E4/P1/P2，本次预置环境参数化不代表通用环境构建/A-B 已完成。
 
 改动入口：Backend `nexus_proxy.py`/`nexus_internal.py`/`nexus_run_service.py` 负责外部授权、引用解析、运行元数据；Runtime `main.py`/`request_scope.py`/`approvals.py`/`tools/reproduction.py` 负责会话、提案、票据与工具；必要新增职责单一的提案服务与运行上下文服务。Worker 仅在 LB2 参数契约需要时最小扩展，保持原 preset 与资源/网络边界。测试放对应现有 nexus 域，不创建新通用框架。
 

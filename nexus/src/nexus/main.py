@@ -157,6 +157,9 @@ class ChatRequest(BaseModel):
     # 模型必须知道附件 id/文件名才能调用 read_attachment——只透传 id 时
     # 模型无从得知附件存在（2026-09-06 线上验收发现），故注入消息上下文。
     attachments: list[dict[str, Any]] = Field(default_factory=list, max_length=5)
+    # NX-LB3：请求幂等键（Backend 透传）。Runtime 以 (thread, crid) 去重：
+    # 同键重试不重复调用模型/工具；不同请求竞争同会话写者 409 SESSION_BUSY。
+    client_request_id: str = Field(default="", max_length=64)
 
 
 def _attachment_note(attachments: list[dict[str, Any]] | None) -> str:
@@ -323,7 +326,144 @@ def _tool_result_payload(msg: ToolMessage) -> dict[str, Any]:
     }
     if items is not None:
         payload["items"] = items
+    return _with_job_ids(payload, text)
+
+
+def _with_job_ids(payload: dict[str, Any], text: str) -> dict[str, Any]:
+    """NX-LB3：作业事件额外携带 run_id/job_id（服务端不得由"当前显示会话"
+    决定归属）。解析失败静默跳过——只做归属标注，不改变内容语义。"""
+    try:
+        data = json.loads(text) if isinstance(text, str) else None
+    except (TypeError, ValueError):
+        return payload
+    if not isinstance(data, dict):
+        return payload
+    job = data.get("job")
+    if isinstance(job, dict) and job.get("job_id"):
+        payload["job_id"] = str(job["job_id"])[:64]
+    run_id = data.get("run_id")
+    if isinstance(run_id, str) and run_id.strip():
+        payload["run_id"] = run_id.strip()[:64]
+    elif isinstance(data.get("approval_id"), str) and data["approval_id"].strip():
+        # linkage 语义：run_id 即 approval_id（一批准一运行）。
+        payload["run_id"] = data["approval_id"].strip()[:64]
     return payload
+
+
+# ---------------------------------------------------------------------------
+# NX-LB3：同会话并发/幂等控制（Runtime 单写者门 + 请求幂等注册表）。
+#
+# - 同一线程（user×session）一次只允许一个活动 graph 写入：不同请求竞争
+#   返回 409 SESSION_BUSY（不排队）；主对话与浮窗请求共用此门。
+# - client_request_id 重试不重复调用模型/工具：进行中 → 409 携带原请求
+#   状态；已完成 → /chat 直接返回已存结果（deduped），/stream 回放一段
+#   说明性 done 事件（内容请从会话历史恢复）。
+# - 首版不建复杂排队器；断流≠执行失败，注册表提供有限状态恢复语义。
+# 注册表为进程内存：重启后如实丢失（重试将重新执行），不伪造"进行中"。
+# ---------------------------------------------------------------------------
+
+_MAX_REQUEST_REGISTRY = 400
+
+_active_threads: set[str] = set()
+# (thread_id, client_request_id) -> {"status": running|done|failed,
+#                                   "request_id", "started_at",
+#                                   "result"(done 时 /chat 回放), "error"}
+_request_registry: dict[tuple[str, str], dict[str, Any]] = {}
+_registry_order: list[tuple[str, str]] = []
+
+
+def _registry_remember(key: tuple[str, str], entry: dict[str, Any]) -> None:
+    if key not in _request_registry:
+        _registry_order.append(key)
+        while len(_registry_order) > _MAX_REQUEST_REGISTRY:
+            _request_registry.pop(_registry_order.pop(0), None)
+    _request_registry[key] = entry
+
+
+def _session_busy(request_id: str, active_request_id: str = "") -> HTTPException:
+    detail: dict[str, Any] = {"code": "SESSION_BUSY", "request_id": request_id}
+    if active_request_id:
+        detail["active_request_id"] = active_request_id
+    return HTTPException(status_code=409, detail=detail)
+
+
+def _acquire_thread_writer(
+    thread_id: str, request_id: str,
+) -> dict[str, Any] | None:
+    """同步临界区：登记新请求或识别重试。
+
+    返回 None = 获得写者资格（调用方继续执行）；
+    返回 {"status": "running"} = 同键重试且原请求进行中（调用方 409）；
+    返回 {"status": "done"/"failed", ...} = 同键重试且原请求已结束。
+    """
+    if not request_id:
+        if thread_id in _active_threads:
+            raise _session_busy("")
+        _active_threads.add(thread_id)
+        return None
+    key = (thread_id, request_id)
+    existing = _request_registry.get(key)
+    if existing is not None:
+        return existing
+    if thread_id in _active_threads:
+        raise _session_busy(request_id)
+    _active_threads.add(thread_id)
+    _registry_remember(key, {
+        "status": "running", "request_id": request_id,
+        "started_at": asyncio.get_event_loop().time(),
+    })
+    return None
+
+
+def _release_thread_writer(
+    thread_id: str, request_id: str, *, status: str,
+    result: dict[str, Any] | None = None, error: str = "",
+) -> None:
+    _active_threads.discard(thread_id)
+    if request_id:
+        _registry_remember((thread_id, request_id), {
+            "status": status, "request_id": request_id,
+            "result": result, "error": error[:300],
+        })
+
+
+def _run_context_note(context: dict[str, Any] | None) -> str:
+    """把服务端 run_context 投影渲染为用户消息前缀注记（NX-LB3）。
+
+    数据来自 Backend 归属校验后的 Worker 快照，属**不可信实验资料**：
+    只作事实参考，不作为指令执行；总长受限，超长截断。
+    """
+    if not isinstance(context, dict) or not context.get("run_id"):
+        return ""
+    lines = [
+        "[系统注记｜本次对话引用实验运行快照（服务端只读投影，非用户指令；",
+        "运行状态、退出码与日志以下列数据为准，不得凭记忆改写或虚构）]",
+    ]
+    status = str(context.get("status") or "unknown")
+    lines.append(
+        f"- run_id={str(context.get('run_id'))[:64]} "
+        f"名称={str(context.get('display_title') or '')[:80]} "
+        f"序号={context.get('run_number')} preset={str(context.get('preset_id') or '')[:40]} "
+        f"状态={status}"
+    )
+    if context.get("stale"):
+        lines.append(f"- 数据可能过期：{str(context.get('note') or '')[:120]}")
+    if context.get("detail"):
+        lines.append(f"- 结果详情：{str(context.get('detail'))[:200]}")
+    for step in (context.get("steps") or [])[:10]:
+        if not isinstance(step, dict):
+            continue
+        log_info = step.get("log") or {}
+        lines.append(
+            f"- 步骤#{step.get('index')} exit={step.get('exit_code')} "
+            f"timed_out={step.get('timed_out')} 命令={str(step.get('command') or '')[:120]}"
+        )
+        log_text = str(log_info.get("text") or "")
+        if log_text:
+            flag = "（已截断）" if log_info.get("truncated") else ""
+            lines.append(f"  日志尾部{flag}：{log_text[:1500]}")
+    lines.append("[/系统注记]")
+    return "\n".join(lines)[:12000] + "\n\n"
 
 
 async def _agent_stream(
@@ -336,11 +476,15 @@ async def _agent_stream(
     model: str | None = None,
     attachment_ids: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    request_id: str = "",
+    run_context: dict[str, Any] | None = None,
 ):
     agent = get_agent(mode, model)
-    inputs = {"messages": [{"role": "user", "content": _attachment_note(attachments) + message}]}
+    thread_id = thread_for(session_id, user_id)
+    inputs = {"messages": [{"role": "user", "content": (
+        _attachment_note(attachments) + _run_context_note(run_context) + message
+    )}]}
     config = _config_for(session_id, user_id)
-    thread_id = config["configurable"]["thread_id"]
     token_count = 0
     from nexus.request_scope import (
         reset_attachments,
@@ -354,6 +498,12 @@ async def _agent_stream(
     scope_tokens = set_scope(user_id, course_id)
     exec_tokens = set_execution_scope(session_id, approval_id)
     attach_token = set_attachments(attachment_ids)
+
+    async def _tag(payload: dict[str, Any]) -> dict[str, Any]:
+        # NX-LB3：事件携带归属（session_id/request_id），前端不靠"当前显示
+        # 会话"推断事件归属；旧客户端忽略新字段不受影响。
+        return {"session_id": session_id, "request_id": request_id, **payload}
+
     try:
         # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
         # 列表模式才产出 (mode, payload) 元组。
@@ -366,7 +516,7 @@ async def _agent_stream(
                     content = chunk.content
                     if isinstance(content, str) and content:
                         token_count += len(content)
-                        yield _sse("token", {"content": content})
+                        yield _sse("token", await _tag({"content": content}))
             elif stream_mode == "updates":
                 for _node, delta in (payload or {}).items():
                     if not isinstance(delta, dict):
@@ -377,29 +527,39 @@ async def _agent_stream(
                     if "todos" in delta:
                         snapshot = _project_plan(session_id, thread_id, delta.get("todos"))
                         if snapshot is not None:
-                            yield _sse("plan", snapshot)
+                            yield _sse("plan", await _tag(snapshot))
                     messages = delta.get("messages")
                     if not messages:
                         continue
                     for msg in messages:
                         if isinstance(msg, AIMessage):
                             for call in msg.tool_calls or []:
-                                yield _sse("tool_call", {"name": call.get("name"), "args": call.get("args")})
+                                yield _sse("tool_call", await _tag(
+                                    {"name": call.get("name"), "args": call.get("args")}))
                         elif isinstance(msg, ToolMessage):
-                            yield _sse("tool_result", _tool_result_payload(msg))
+                            yield _sse("tool_result", await _tag(
+                                _tool_result_payload(msg)))
     except asyncio.CancelledError:
         # M1-B6：客户端断开导致流被取消——如实中断，绝不补发假 done。
+        _release_thread_writer(thread_id, request_id, status="failed",
+                               error="client disconnected")
         raise
     except Exception as error:  # noqa: BLE001 - Agent 循环异常必须显式到流尾
         # M1-B3（D5）：done/error 互斥；错误码优先用工具/上游语义码。
         code = str(getattr(error, "code", "") or type(error).__name__)[:64]
-        yield _sse("error", {"code": code, "message": str(error)[:300]})
+        _release_thread_writer(thread_id, request_id, status="failed",
+                               error=f"{code}: {error}")
+        yield _sse("error", await _tag({"code": code, "message": str(error)[:300]}))
         return
     finally:
         reset_scope(scope_tokens)
         reset_execution_scope(exec_tokens)
         reset_attachments(attach_token)
-    yield _sse("done", {"session_id": session_id, "token_count": token_count})
+        # 写者资格兜底释放（正常/失败/取消路径已显式释放；此处防生成器
+        # 在任何未捕获路径上关闭后泄漏门锁）。
+        _active_threads.discard(thread_id)
+    _release_thread_writer(thread_id, request_id, status="done")
+    yield _sse("done", await _tag({"session_id": session_id, "token_count": token_count}))
 
 
 def _tool_surface() -> dict[str, list[str]] | None:
@@ -540,6 +700,36 @@ def _sanitize_attachment_ids(request: ChatRequest) -> list[str]:
     return clean[:5]
 
 
+def _sanitize_request_id(request: ChatRequest) -> str:
+    """NX-LB3：幂等键只取请求顶层字段，限长截断（空串=不启用幂等）。"""
+    return (request.client_request_id or "").strip()[:64]
+
+
+def _server_run_context(request: ChatRequest) -> dict[str, Any] | None:
+    """NX-LB3：只消费 Backend 生成的白名单投影（键由代理层重建，非客户端原文）。"""
+    raw = (request.context or {}).get("run_context")
+    return raw if isinstance(raw, dict) else None
+
+
+def _replay_done_stream(session_id: str, request_id: str, entry: dict[str, Any]) -> StreamingResponse:
+    """幂等重试且原请求已结束：回放说明性 done（不重复执行、不重放 token 流）。"""
+
+    async def _gen():
+        yield _sse("done", {
+            "session_id": session_id,
+            "request_id": request_id,
+            "deduped": True,
+            "status": entry.get("status", "done"),
+            "note": "该请求已完成（幂等重试，未重复执行）；请从会话历史恢复内容。",
+        })
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.post("/api/v1/nexus/chat/stream", dependencies=[Depends(require_api_key)])
 async def chat_stream(
     request: ChatRequest,
@@ -551,6 +741,13 @@ async def chat_stream(
     user_id = sanitize_user_id(x_nexus_user_id)
     session_id = sanitize_session_id(request.session_id)
     thread_id = thread_for(session_id, user_id)
+    request_id = _sanitize_request_id(request)
+    # NX-LB3：单写者门 + 幂等去重（先于任何执行；同步临界区，无排队器）。
+    existing = _acquire_thread_writer(thread_id, request_id)
+    if existing is not None:
+        if existing.get("status") == "running":
+            raise _session_busy(request_id, request_id)
+        return _replay_done_stream(session_id, request_id, existing)
     await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
     return StreamingResponse(
         _agent_stream(
@@ -563,6 +760,8 @@ async def chat_stream(
             model,
             _sanitize_attachment_ids(request),
             request.attachments,
+            request_id=request_id,
+            run_context=_server_run_context(request),
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -590,6 +789,19 @@ async def chat(
     user_id = sanitize_user_id(x_nexus_user_id)
     session_id = sanitize_session_id(request.session_id)
     config = _config_for(session_id, user_id)
+    thread_id = thread_for(session_id, user_id)
+    request_id = _sanitize_request_id(request)
+    # NX-LB3：单写者门 + 幂等去重（先于任何执行；同步临界区）。
+    existing = _acquire_thread_writer(thread_id, request_id)
+    if existing is not None:
+        if existing.get("status") == "running":
+            raise _session_busy(request_id, request_id)
+        result = dict(existing.get("result") or {})
+        result.setdefault("session_id", session_id)
+        result["request_id"] = request_id
+        result["deduped"] = True
+        result["note"] = "幂等重试：返回已保存的原始结果，未重复执行。"
+        return result
     tool_events: list[dict[str, Any]] = []
     from nexus.request_scope import (
         reset_attachments,
@@ -605,9 +817,14 @@ async def chat(
     attach_token = set_attachments(_sanitize_attachment_ids(request))
     inputs = {
         "messages": [
-            {"role": "user", "content": _attachment_note(request.attachments) + request.message}
+            {"role": "user", "content": (
+                _attachment_note(request.attachments)
+                + _run_context_note(_server_run_context(request))
+                + request.message
+            )}
         ]
     }
+    final_status = "done"
     # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
     # 列表模式才产出 (mode, payload) 元组（与 _agent_stream 一致）。
     try:
@@ -624,6 +841,9 @@ async def chat(
                         tool_events.append(
                             {"name": msg.name or "", "status": msg.status or "success"}
                         )
+    except Exception:
+        final_status = "failed"
+        raise
     finally:
         reset_scope(scope_tokens)
         reset_execution_scope(exec_tokens)
@@ -635,16 +855,17 @@ async def chat(
             final_message = msg.content if isinstance(msg.content, str) else str(msg.content)
             break
     # NX-H1：同步响应同样携带计划快照（真实 state 投影；无计划为 null）。
-    plan = _project_plan(session_id, thread_for(session_id, user_id), state.values.get("todos"))
-    await _touch_thread(
-        thread_for(session_id, user_id), user_id, session_id, _title_from_message(request.message)
-    )
-    return {
+    plan = _project_plan(session_id, thread_id, state.values.get("todos"))
+    await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
+    result = {
         "session_id": session_id,
+        "request_id": request_id,
         "message": final_message,
         "tool_events": tool_events,
         "plan": plan,
     }
+    _release_thread_writer(thread_id, request_id, status=final_status, result=result)
+    return result
 
 
 def _persisted() -> bool:
@@ -893,12 +1114,15 @@ async def repro_job_report(
     base_title = f"复现报告 · {report['preset_id']}".strip() or "复现报告"
 
     artifacts: list[dict[str, Any]] = []
+    # NX-LB5：报告产物关联运行（run 详情据此投影已授权 Artifact 引用）。
+    run_linkage_id = str((linkage or {}).get("run_id") or "")
     for artifact_type, title, content in (
         ("markdown", base_title, markdown),
         ("markdown", f"{base_title}（原始数据 JSON）", payload_json),
     ):
         written = await write_artifact_via_backend(
-            artifact_type=artifact_type, title=title, content=content, user_id=user_id
+            artifact_type=artifact_type, title=title, content=content, user_id=user_id,
+            run_id=run_linkage_id,
         )
         if written.get("status") != "success":
             raise HTTPException(
@@ -1126,6 +1350,7 @@ def _proposal_error_status(code: str) -> int:
         "PROPOSAL_VERSION_CONFLICT": 409,
         "PROPOSAL_LOCKED": 409,
         "PROPOSAL_PERSIST_FAILED": 503,
+        "PROPOSAL_APPROVAL_CREATE_FAILED": 503,
         "PROPOSAL_PARENT_NOT_FOUND": 404,
     }.get(code, 422)
 
@@ -1278,45 +1503,23 @@ async def repro_proposal_request_approval(
     body: ProposalRequestApproval,
     x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
 ) -> dict[str, Any]:
-    """NX-LB2： pin 住版本+hash 生成/复用审批（不直接执行）。
+    """NX-LB2/LB4： pin 住版本+hash 生成/复用审批（不直接执行）。
 
-    冻结步骤快照入票据；执行时重验版本+hash（proposal 被改则旧票拒绝）。
-    同一版本重复请求返回同一 pending 审批（幂等，不多建票据）。
+    与工具路径共用同一核心（proposals.request_approval_for_proposal），
+    不复制两套审批引擎；执行时重验版本+hash（提案被改则旧票拒绝）。
     """
-    from nexus import approvals, proposals as proposals_module
-    from nexus.tools.reproduction import REPRO_PRESETS, _approval_ttl_s, _public_approval
+    from nexus import proposals as proposals_module
 
     user_id = sanitize_user_id(x_nexus_user_id) or ""
-    row = proposals_module.get_proposal(sanitize_session_id(proposal_id))
-    if row is None or row["user_id"] != user_id:
-        raise HTTPException(status_code=404, detail="PROPOSAL_NOT_FOUND")
-    if row["status"] != "draft":
-        raise HTTPException(status_code=409, detail="PROPOSAL_LOCKED")
-    if int(row["version"]) != int(body.expected_version):
-        raise HTTPException(status_code=409, detail="PROPOSAL_VERSION_CONFLICT")
-    preset = REPRO_PRESETS.get(str(row["preset_id"]).lower())
-    if preset is None:
-        raise HTTPException(status_code=422, detail="PROPOSAL_PRESET_UNSUPPORTED")
-    # 幂等：同版本已有 pending 审批则复用。
-    for approval in approvals.list_approvals(
-            user_id=user_id, status="pending", session_id=row["session_id"]):
-        if (approval.get("proposal_id") == row["proposal_id"]
-                and int(approval.get("proposal_version", 0)) == int(row["version"])):
-            return {"approval": _public_approval(approval, preset), "deduped": True}
     try:
-        created = approvals.create_approval(
-            user_id=user_id, session_id=row["session_id"],
-            tool="run_reproduction", preset=preset, ttl_s=_approval_ttl_s(),
-            proposal_binding={
-                "proposal_id": row["proposal_id"],
-                "proposal_version": row["version"],
-                "proposal_hash": row["plan_hash"],
-                "frozen_steps": list(row["steps"]),
-            },
-        )
-    except Exception as error:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail="APPROVAL_CREATE_FAILED") from error
-    return {"approval": _public_approval(created, preset), "deduped": False}
+        result = proposals_module.request_approval_for_proposal(
+            sanitize_session_id(proposal_id), user_id=user_id,
+            expected_version=body.expected_version)
+    except proposals_module.ProposalError as error:
+        raise HTTPException(
+            status_code=_proposal_error_status(error.code), detail=error.code
+        ) from error
+    return {"approval": result["approval"], "deduped": bool(result.get("deduped"))}
 
 
 @app.get(

@@ -8,6 +8,7 @@ REPRO_WORKER_UNAVAILABLE，绝不假造执行结果。
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 import httpx
@@ -94,6 +95,342 @@ def plan_reproduction(target: str) -> dict[str, Any]:
             "Repro Worker 执行。禁止直接信任未核验仓库的命令。"
         ),
         "known_presets": list(REPRO_PRESETS.keys()),
+        "is_supplementary": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# NX-LB4/LB5：运行操作工具（查询/取消/备注/提案）。
+# 身份与当前会话来自请求作用域（ContextVar），模型传参只提供目标标识；
+# Backend 内部端点做归属+会话绑定校验，工具如实透传失败语义。
+# ---------------------------------------------------------------------------
+
+
+def _internal_ready() -> tuple[str, str] | None:
+    settings = get_settings()
+    url = (settings.backend_internal_url or "").rstrip("/")
+    token = settings.backend_internal_token or ""
+    if not url or not token:
+        return None
+    return url, token
+
+
+async def _internal_run_request(
+    method: str, path: str, *, user_id: str, session_id: str,
+    json_body: dict[str, Any] | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """调用 Backend 内部运行端点；返回 (status_code, data)。非 JSON 如实报错。"""
+    ready = _internal_ready()
+    if ready is None:
+        return 503, {"code": "BACKEND_INTERNAL_NOT_CONFIGURED"}
+    url, token = ready
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Nexus-User-Id": user_id,
+        "X-Nexus-Session-Id": session_id,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.request(
+                method, f"{url}{path}", json=json_body, headers=headers)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("internal run request failed: %s", type(error).__name__)
+        return 503, {"code": "BACKEND_INTERNAL_UNAVAILABLE"}
+    try:
+        payload = response.json()
+    except ValueError:
+        return 502, {"code": "BACKEND_INTERNAL_BAD_RESPONSE"}
+    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+        return response.status_code, payload["data"]
+    return response.status_code, payload if isinstance(payload, dict) else {}
+
+
+def _internal_unavailable(code: str) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "code": code,
+        "detail": "后端内部服务不可用；不能确认运行状态，也不得编造状态。",
+        "is_supplementary": True,
+    }
+
+
+def _scope_identity() -> tuple[str, str]:
+    from nexus.request_scope import current_session_id, current_user_id
+
+    return current_user_id() or "", current_session_id() or ""
+
+
+async def _fetch_owned_run(run_id: str, user_id: str) -> dict[str, Any] | None:
+    """经 Backend 内部端点取本人 run 全行（提案 parent 校验用）。"""
+    status_code, data = await _internal_run_request(
+        "GET", f"/api/v1/nexus-internal/repro-runs/{(run_id or '').strip()[:64]}",
+        user_id=user_id, session_id="")
+    if status_code == 200 and isinstance(data, dict) and data.get("run_id"):
+        return data
+    return None
+
+
+@tool
+async def get_reproduction_run(run_id: str) -> dict[str, Any]:
+    """查询用户某次复现运行的状态与有界日志（只读，有界投影）。
+
+    只能查询当前会话中属于当前用户且被明确提到 run_id 的运行；
+    跨会话/他人的运行一律被拒。返回的状态与日志是服务端快照，
+    与用户描述冲突时以快照为准，不凭记忆改写。
+    """
+    user_id, session_id = _scope_identity()
+    if not user_id or not session_id:
+        return {
+            "status": "error", "code": "SCOPE_MISSING",
+            "detail": "缺少用户/会话上下文，无法查询运行。",
+            "is_supplementary": True,
+        }
+    status_code, data = await _internal_run_request(
+        "GET", f"/api/v1/nexus-internal/runs/{(run_id or '').strip()[:64]}/status",
+        user_id=user_id, session_id=session_id)
+    if status_code == 200:
+        return {"status": "success", "run": data, "is_supplementary": True}
+    if status_code == 404:
+        return {
+            "status": "not_found", "code": "RUN_NOT_FOUND",
+            "detail": "该 run_id 不存在或不属于当前用户；请与用户确认运行标识。",
+            "is_supplementary": True,
+        }
+    if status_code == 403:
+        return {
+            "status": "rejected", "code": "RUN_SESSION_MISMATCH",
+            "detail": "该运行属于其他会话；请用户切换到对应会话或提供本会话的运行。",
+            "is_supplementary": True,
+        }
+    if status_code == 422:
+        return {
+            "status": "rejected", "code": str(data.get("code") or "RUN_REF_INVALID"),
+            "detail": "run/step 标识不合法。",
+            "is_supplementary": True,
+        }
+    return _internal_unavailable(str(data.get("code") or "BACKEND_INTERNAL_UNAVAILABLE"))
+
+
+@tool
+async def cancel_reproduction_run(run_id: str) -> dict[str, Any]:
+    """取消用户指定的复现运行（破坏性操作，需要用户明确确认后才执行）。
+
+    首次调用返回 confirmation_required：请向用户说明要取消的运行并请其
+    在界面上确认；用户确认后服务端签发一次性授权，再次调用本工具才会
+    真正取消。绝不因"正在讨论报错"而取消运行，也不代替用户做取消决定。
+    """
+    user_id, session_id = _scope_identity()
+    if not user_id or not session_id:
+        return {
+            "status": "error", "code": "SCOPE_MISSING",
+            "detail": "缺少用户/会话上下文，无法取消运行。",
+            "is_supplementary": True,
+        }
+    status_code, data = await _internal_run_request(
+        "POST", f"/api/v1/nexus-internal/runs/{(run_id or '').strip()[:64]}/cancel",
+        user_id=user_id, session_id=session_id, json_body={})
+    if status_code != 200:
+        if status_code == 404:
+            return {
+                "status": "not_found", "code": "RUN_NOT_FOUND",
+                "detail": "该 run_id 不存在或不属于当前用户。",
+                "is_supplementary": True,
+            }
+        if status_code == 403:
+            return {
+                "status": "rejected", "code": "RUN_SESSION_MISMATCH",
+                "detail": "该运行属于其他会话，不能取消。",
+                "is_supplementary": True,
+            }
+        return _internal_unavailable(str(data.get("code") or "REPRO_CANCEL_UNAVAILABLE"))
+    if data.get("status") == "confirmation_required":
+        return {
+            "status": "confirmation_required",
+            "code": "CANCEL_CONFIRMATION_REQUIRED",
+            "run_id": data.get("run_id"),
+            "detail": str(data.get("detail") or ""),
+            "is_supplementary": True,
+        }
+    return {"status": "success", "run_id": data.get("run_id"),
+            "job_id": data.get("job_id"), "run_status": data.get("status"),
+            "already_terminal": bool(data.get("already_terminal")),
+            "note": str(data.get("note") or ""),
+            "is_supplementary": True}
+
+
+@tool
+async def add_reproduction_note(run_id: str, content: str) -> dict[str, Any]:
+    """给用户的复现运行追加一条备注（≤4000 字符；标记为智能体的解释/建议）。
+
+    备注只是解释与建议的留痕，不会修改原始日志、指标或复现结论；
+    用户自己的备注经界面写入，两者按 author 区分。
+    """
+    user_id, session_id = _scope_identity()
+    if not user_id or not session_id:
+        return {
+            "status": "error", "code": "SCOPE_MISSING",
+            "detail": "缺少用户/会话上下文，无法写入备注。",
+            "is_supplementary": True,
+        }
+    cleaned = (content or "").strip()
+    if not cleaned or len(cleaned) > 4000:
+        return {
+            "status": "rejected", "code": "NOTE_CONTENT_INVALID",
+            "detail": "备注须为 1–4000 字符。",
+            "is_supplementary": True,
+        }
+    status_code, data = await _internal_run_request(
+        "POST", f"/api/v1/nexus-internal/runs/{(run_id or '').strip()[:64]}/notes",
+        user_id=user_id, session_id=session_id,
+        json_body={"content": cleaned, "request_id": f"agent-{uuid.uuid4().hex[:12]}"})
+    if status_code == 200:
+        return {"status": "success", "note": data, "is_supplementary": True}
+    if status_code == 404:
+        return {"status": "not_found", "code": "RUN_NOT_FOUND",
+                "detail": "该 run_id 不存在或不属于当前用户。", "is_supplementary": True}
+    if status_code == 403:
+        return {"status": "rejected", "code": "RUN_SESSION_MISMATCH",
+                "detail": "该运行属于其他会话。", "is_supplementary": True}
+    return _internal_unavailable(str(data.get("code") or "NOTE_WRITE_FAILED"))
+
+
+@tool
+async def create_reproduction_proposal(
+    preset_id: str, objective: str = "", parameters: dict[str, Any] | None = None,
+    parent_run_id: str = "",
+) -> dict[str, Any]:
+    """为用户创建结构化复现提案草案（不执行、不批准）。
+
+    只接受已核验预设 id；parameters 仅限该预设审核过的参数（见
+    /nexus/repro/presets 的 schema）。可选 parent_run_id 基于本人某次
+    旧运行派生新配置。返回真实 proposal_id/version 供浮窗展示；
+    是否批准永远由用户决定。
+    """
+    from nexus import proposals as proposals_module
+    from nexus.request_scope import current_session_id, current_user_id
+
+    user_id = current_user_id() or ""
+    session_id = current_session_id() or ""
+    if not user_id or not session_id:
+        return {
+            "status": "error", "code": "SCOPE_MISSING",
+            "detail": "缺少用户/会话上下文，无法创建提案。",
+            "is_supplementary": True,
+        }
+    preset = REPRO_PRESETS.get((preset_id or "").strip().lower())
+    if preset is None:
+        return {
+            "status": "rejected", "code": "UNKNOWN_PRESET",
+            "detail": "只接受已核验预设（见 plan_reproduction 的 known_presets）。",
+            "known_presets": list(REPRO_PRESETS.keys()),
+            "is_supplementary": True,
+        }
+    parent_run: dict[str, Any] | None = None
+    parent_id = (parent_run_id or "").strip()[:64]
+    if parent_id:
+        parent_run = await _fetch_owned_run(parent_id, user_id)
+        if parent_run is None:
+            return {
+                "status": "not_found", "code": "PROPOSAL_PARENT_NOT_FOUND",
+                "detail": "parent_run_id 不存在或不属于当前用户。",
+                "is_supplementary": True,
+            }
+    try:
+        row = proposals_module.create_proposal(
+            user_id=user_id, session_id=session_id, preset=preset,
+            parent_run=parent_run, objective=objective,
+            parameters=parameters or {}, data=None,
+        )
+    except proposals_module.ProposalError as error:
+        return {
+            "status": "rejected", "code": error.code,
+            "detail": str(error),
+            "is_supplementary": True,
+        }
+    return {
+        "status": "success",
+        "proposal": proposals_module.public_proposal_view(row),
+        "deduped": bool(row.get("deduped")),
+        "next_step": (
+            "向用户展示参数与差异；用户可在浮窗审阅后批准。批准由用户发起，"
+            "你不得代批，也不得在未获批准时执行。"
+        ),
+        "is_supplementary": True,
+    }
+
+
+@tool
+def update_reproduction_proposal(
+    proposal_id: str, expected_version: int,
+    objective: str | None = None, parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """按用户要求修改提案参数（乐观锁；仅 draft；旧批准自动失效）。
+
+    expected_version 必须为提案当前版本（修改会 +1）；parameters 传需要
+    改动的键（其余保持原值）。返回结构化 diff 供浮窗展示。
+    """
+    from nexus import proposals as proposals_module
+    from nexus.request_scope import current_user_id
+
+    user_id = current_user_id() or ""
+    if not user_id:
+        return {
+            "status": "error", "code": "SCOPE_MISSING",
+            "detail": "缺少用户上下文，无法修改提案。",
+            "is_supplementary": True,
+        }
+    try:
+        result = proposals_module.patch_proposal(
+            (proposal_id or "").strip()[:64], user_id=user_id,
+            expected_version=int(expected_version),
+            objective=objective, parameters=parameters,
+        )
+    except proposals_module.ProposalError as error:
+        return {
+            "status": "rejected", "code": error.code, "detail": str(error),
+            "is_supplementary": True,
+        }
+    return {
+        "status": "success",
+        "proposal": proposals_module.public_proposal_view(result["proposal"]),
+        "diff": result["diff"],
+        "next_step": "把差异展示给用户；旧批准已随版本失效，需重新请求审批。",
+        "is_supplementary": True,
+    }
+
+
+@tool
+def request_reproduction_approval(proposal_id: str, expected_version: int) -> dict[str, Any]:
+    """为提案当前版本请求执行审批（pin 住版本+hash；不执行）。
+
+    返回真实 approval 引用供浮窗展示；同一版本重复请求返回同一待办
+    （幂等）。批准与否由用户在浮窗决定——批准后前端会在下一次对话请求
+    带上 approval_id，服务端核销后才会执行。
+    """
+    from nexus import proposals as proposals_module
+    from nexus.request_scope import current_user_id
+
+    user_id = current_user_id() or ""
+    if not user_id:
+        return {
+            "status": "error", "code": "SCOPE_MISSING",
+            "detail": "缺少用户上下文，无法请求审批。",
+            "is_supplementary": True,
+        }
+    try:
+        result = proposals_module.request_approval_for_proposal(
+            (proposal_id or "").strip()[:64], user_id=user_id,
+            expected_version=int(expected_version))
+    except proposals_module.ProposalError as error:
+        return {
+            "status": "rejected", "code": error.code, "detail": str(error),
+            "is_supplementary": True,
+        }
+    return {
+        "status": "success",
+        "approval": result["approval"],
+        "deduped": bool(result.get("deduped")),
+        "next_step": "等待用户在浮窗批准；不要重复请求，也不要在未批准时执行。",
         "is_supplementary": True,
     }
 

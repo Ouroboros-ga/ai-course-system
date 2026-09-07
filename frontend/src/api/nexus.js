@@ -173,6 +173,56 @@ export function listNexusRuns(sessionId) {
 }
 
 /**
+ * 单个 run 详情（NX-LB1）：含 display_title/run_number/version/冻结配置，
+ * NX-LB5 起含已授权 artifacts 引用。非 owner 一律 404。
+ */
+export function getNexusRunDetail(runId) {
+  return request.get(`/nexus/runs/${encodeURIComponent(runId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 重命名运行（NX-LB1）：仅改标题，不改变执行 hash 或配置；乐观锁 409。
+ */
+export function renameNexusRun(runId, title, expectedVersion) {
+  return request.patch(`/nexus/runs/${encodeURIComponent(runId)}`, {
+    title,
+    expected_version: expectedVersion,
+  }, { allowFlatResponse: true })
+}
+
+/**
+ * 取消授权签发（NX-LB4）：用户在浮窗明确确认取消后调用；一次性、短有效期。
+ */
+export function requestNexusRunCancelGrant(runId, sessionId) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/cancel-grant`, {
+    session_id: sessionId,
+  }, { allowFlatResponse: true })
+}
+
+/**
+ * 运行备注列表（NX-LB5）：追加式，升序；Agent 备注标 author=agent。
+ */
+export function listNexusRunNotes(runId) {
+  return request.get(`/nexus/runs/${encodeURIComponent(runId)}/notes`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 追加运行备注（NX-LB5）：requestId 幂等；content ≤4000 字符。
+ */
+export function createNexusRunNote(runId, content, requestId = '') {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/notes`, {
+    content,
+    request_id: requestId,
+  }, { allowFlatResponse: true })
+}
+
+/**
  * 产物列表（M3）：当前用户的 Nexus Artifact（owner 过滤在 Backend）。
  */
 export function listNexusArtifacts(limit = 50) {

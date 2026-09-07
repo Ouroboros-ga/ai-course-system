@@ -1004,6 +1004,46 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   const report = read('nexus/src/nexus/repro_report.py')
   assert.match(report, /EXPLORATORY/)
 
+  // NX-LB3/LB4/LB5：运行上下文投影、取消授权、备注、产物关联。
+  // client（nexus.js）与后端路由一一对应；Runtime 工具与 LB2 同一域服务。
+  assert.match(src, /getNexusRunDetail[\s\S]*?\/nexus\/runs\/\$\{encodeURIComponent\(runId\)\}/)
+  assert.match(src, /renameNexusRun[\s\S]*?\/nexus\/runs\/\$\{encodeURIComponent\(runId\)\}/)
+  assert.match(src, /requestNexusRunCancelGrant[\s\S]*?\/nexus\/runs\/\$\{encodeURIComponent\(runId\)\}\/cancel-grant/)
+  assert.match(src, /listNexusRunNotes[\s\S]*?\/nexus\/runs\/\$\{encodeURIComponent\(runId\)\}\/notes/)
+  assert.match(src, /createNexusRunNote[\s\S]*?\/nexus\/runs\/\$\{encodeURIComponent\(runId\)\}\/notes/)
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/cancel-grant"\)/)
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/notes"\)/)
+  assert.match(backend, /@router\.get\("\/runs\/\{run_id\}\/notes"\)/)
+  assert.match(backend, /def _build_run_context/)
+  assert.match(backend, /run_context/)
+  assert.match(backend, /async def _worker_cancel/)
+  assert.match(backend, /create_grant\(/)
+  assert.match(internal, /consume_grant\(/)
+  const grantSvc = read('backend/app/services/nexus_action_grant_service.py')
+  assert.match(grantSvc, /def create_grant/)
+  assert.match(grantSvc, /def consume_grant/)
+  const noteSvc = read('backend/app/services/nexus_run_service.py')
+  assert.match(noteSvc, /def add_run_note/)
+  assert.match(noteSvc, /def list_run_notes/)
+  assert.match(internal, /@router\.get\("\/runs\/\{run_id\}\/status"\)/)
+  assert.match(internal, /@router\.post\("\/runs\/\{run_id\}\/cancel"\)/)
+  assert.match(internal, /@router\.post\("\/runs\/\{run_id\}\/notes"\)/)
+  assert.match(internal, /CANCEL_CONFIRMATION_REQUIRED/)
+  const artifactSvc = read('backend/app/services/nexus_artifact_service.py')
+  assert.match(artifactSvc, /def list_run_artifacts/)
+  assert.match(backend, /merged\["artifacts"\] = nexus_artifact_service\.list_run_artifacts/)
+  assert.match(reproTool, /get_reproduction_run/)
+  assert.match(reproTool, /cancel_reproduction_run/)
+  assert.match(reproTool, /add_reproduction_note/)
+  assert.match(reproTool, /create_reproduction_proposal/)
+  assert.match(reproTool, /update_reproduction_proposal/)
+  assert.match(reproTool, /request_reproduction_approval/)
+  assert.match(proposals, /def request_approval_for_proposal/)
+  assert.match(runtime, /_acquire_thread_writer/)
+  assert.match(runtime, /SESSION_BUSY/)
+  assert.match(runtime, /client_request_id/)
+  assert.match(runtime, /def _run_context_note/)
+
   // M1-F3 + NX-G1/NX-A1：前端模式工具声明与 Runtime 双 Profile 工具面同源（防漂移）。
   // Runtime：general 结构性排除 research-only 三工具；read_attachment 双模式共用。
   // 前端 NEXUS_MODE_CONFIG 的 tools 列表必须等于对应模式的真实产品工具面
@@ -1014,7 +1054,8 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   assert.match(runtime, /_require_model\(request\.model\)/)
   assert.match(runtime, /"models": llm_models_manifest\(settings\)/)
   // NX-R1a：Research-only 集合扩展至 5 工具（新增上传论文证据薄链两工具）。
-  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",[\s\S]*?"collect_paper_evidence",[\s\S]*?"write_research_report",\s*\}\s*\)/)
+  // NX-LB4/LB5：再扩展至 11 工具（新增 6 个运行操作与提案工具；General 仍不可见）。
+  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",[\s\S]*?"collect_paper_evidence",[\s\S]*?"write_research_report",[\s\S]*?"get_reproduction_run",[\s\S]*?"cancel_reproduction_run",[\s\S]*?"add_reproduction_note",[\s\S]*?"create_reproduction_proposal",[\s\S]*?"update_reproduction_proposal",[\s\S]*?"request_reproduction_approval",\s*\}\s*\)/)
   const cfgSrc = read('frontend/src/api/nexusAdapter.js')
   assert.match(cfgSrc, /model = null,/)
   assert.match(cfgSrc, /model,/)
@@ -1091,7 +1132,8 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   assert.match(backend, /require_platform_permission\(session, current_user, PlatformPermission\.NEXUS_USE\)/)
   // NX-H1：+计划快照反代（plan）→ 22 个受权限门端点。
   // NX-LB1/LB2：+presets/proposals×4/approvals-list/runs-rename → 29 个。
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 29)
+  // NX-LB4/LB5：+runs-cancel-grant/runs-notes×2 → 32 个。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 32)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })

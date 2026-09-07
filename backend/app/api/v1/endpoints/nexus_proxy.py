@@ -98,6 +98,25 @@ class NexusChatRequest(BaseModel):
     attachment_ids: list[str] = Field(default_factory=list, max_length=5)
     # 附件元数据清单（Backend 验主+绑定后构建，Runtime 注入模型上下文）。
     attachments: list[dict[str, Any]] = Field(default_factory=list, max_length=5)
+    # NX-LB3：请求幂等键。Runtime 以 (user, session, client_request_id) 去重：
+    # 重试不重复调用模型/工具；不同请求竞争同一会话写者时 409 SESSION_BUSY。
+    client_request_id: str = Field(default="", max_length=64)
+
+
+def _reject_unknown_fields(model: type[BaseModel], payload: Any) -> None:
+    """NX-LB4/回归修复：写入类接口拒绝未声明字段（422），但容忍签名键。
+
+    前端 request.js 会把 time/enc 注入 POST/PATCH body（签名中间件契约），
+    因此不能用 pydantic extra=forbid（会把签名键一起 422，线上 E2E 实证）。
+    本助手保留同等防护：除声明字段与 {time, enc} 外的任何字段一律 422。
+    """
+    if not isinstance(payload, dict):
+        return
+    known = set(model.model_fields) | {"time", "enc"}
+    unknown = sorted(set(payload) - known)
+    if unknown:
+        reject(422, "REQUEST_FIELD_UNKNOWN",
+               f"不接受未声明字段：{', '.join(unknown[:10])}")
 
 
 # NX-G1：mode 别名表镜像（见 NexusChatRequest 注释；与 nexus.agent 保持同构，
@@ -276,6 +295,120 @@ async def nexus_health(
     return _passthrough(response)
 
 
+# ---------------------------------------------------------------------------
+# NX-LB3：会话内运行引用（context.run_ref）→ 服务端白名单投影。
+# 客户端只提交 run/step 标识；日志、退出码、指标等执行事实一律由本层从
+# 归属校验后的 Worker 记录生成——客户端提交的任何"执行结果"不被采信。
+# ---------------------------------------------------------------------------
+
+_RUN_CTX_LOG_LINES = 40
+_RUN_CTX_LOG_CHARS = 8000
+
+
+def _bounded_log_tail(text: Any) -> dict[str, Any]:
+    """有界日志切片（最近 ≤40 行且 ≤8000 字符）＋真实行数/截断标记。"""
+    raw = _sanitize_log(text, limit=_RUN_CTX_LOG_CHARS * 100)
+    all_lines = raw.splitlines()
+    truncated = len(all_lines) > _RUN_CTX_LOG_LINES
+    shown = all_lines[-_RUN_CTX_LOG_LINES:] if truncated else all_lines
+    body = "\n".join(shown)
+    if len(body) > _RUN_CTX_LOG_CHARS:
+        body = body[-_RUN_CTX_LOG_CHARS:]
+        truncated = True
+    return {"text": body, "lines": len(shown), "total_lines": len(all_lines),
+            "truncated": truncated}
+
+
+def _resolve_run_ref(session, current_user: dict, session_id: str, run_ref: Any) -> tuple[dict, int | None]:
+    """归属三重校验：本人（404 不区分）→ 同会话（403）→ step 标识（422）。"""
+    from app.services import nexus_run_service
+
+    if not isinstance(run_ref, dict) or not str(run_ref.get("run_id") or "").strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="RUN_REF_INVALID")
+    run_id = str(run_ref["run_id"]).strip()[:64]
+    step_id: int | None = None
+    step_raw = run_ref.get("step_id")
+    if step_raw is not None and str(step_raw).strip() != "":
+        try:
+            step_id = int(step_raw)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail="STEP_NOT_FOUND") from exc
+        if step_id < 0:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail="STEP_NOT_FOUND")
+    run = nexus_run_service.get_owned_run(
+        session, user_id=_artifact_user_id(current_user), run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RUN_NOT_FOUND")
+    if (run["session_id"] or "") != session_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="RUN_SESSION_MISMATCH")
+    return run, step_id
+
+
+async def _build_run_context(
+    session, current_user: dict, session_id: str, run_ref: Any
+) -> dict[str, Any]:
+    """生成注入聊天上下文的运行快照白名单投影（有界、脱敏、无凭据/路径）。"""
+    run, step_id = _resolve_run_ref(session, current_user, session_id, run_ref)
+    live = await _live_job_status(run["job_id"]) if run["job_id"] else None
+    merged = _merge_run_live(run, live)
+    live_view = merged.get("live") or {}
+    context: dict[str, Any] = {
+        "run_id": run["run_id"],
+        "run_number": run["run_number"],
+        "display_title": run["display_title"],
+        "preset_id": run["preset_id"],
+        "paper_title": run["paper_title"],
+        "status": live_view.get("status", "unknown"),
+        "status_source": merged.get("status_source"),
+        "stale": merged.get("stale"),
+        "observed_at": merged.get("observed_at"),
+        "note": str(live_view.get("note") or ""),
+        "code": live_view.get("code"),
+        "detail": live_view.get("detail"),
+    }
+    steps: list[dict[str, Any]] = []
+    if live and not live.get("missing"):
+        context["stage_events"] = _trim_job_record(live).get("stage_events", [])
+        context["current_step"] = live.get("current_step")
+        for idx, step in enumerate((live.get("steps_result") or [])[:_STEP_MAX]):
+            steps.append({
+                "index": idx,
+                "command": str(step.get("command") or "")[:160],
+                "exit_code": step.get("exit_code"),
+                "timed_out": step.get("timed_out"),
+                "duration_s": step.get("duration_s"),
+                "log": _bounded_log_tail(step.get("log_tail")),
+            })
+    if step_id is not None:
+        if step_id >= len(steps):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail="STEP_NOT_FOUND")
+        context["step_ref"] = step_id
+        context["steps"] = [steps[step_id]]
+    else:
+        context["steps"] = steps
+    return context
+
+
+async def _inject_run_context(payload: NexusChatRequest, session, current_user: dict) -> None:
+    """把客户端 run_ref 替换为服务端白名单投影（客户端提交的执行事实不透传）。
+
+    run_ref 缺省（None）时保留 context 其余键原样（如 course_id）；客户端
+    自带的 run_context 键一律丢弃，投影只由本层生成。
+    """
+    context = dict(payload.context or {})
+    run_ref = context.pop("run_ref", None)
+    context.pop("run_context", None)
+    if run_ref is not None:
+        context["run_context"] = await _build_run_context(
+            session, current_user, payload.session_id, run_ref)
+    payload.context = context or None
+
+
 @router.post("/chat")
 async def nexus_chat(
     payload: NexusChatRequest,
@@ -288,6 +421,7 @@ async def nexus_chat(
     payload.attachment_ids, payload.attachments = _require_attachments(
         session, current_user, payload.session_id, payload.attachment_ids
     )
+    await _inject_run_context(payload, session, current_user)
     base = _runtime_base_url()
     if not base:
         return _not_configured()
@@ -624,20 +758,12 @@ async def nexus_repro_job_status(
     return JSONResponse(status_code=200, content=_trim_job_record(record))
 
 
-@router.post("/repro/jobs/{job_id}/cancel")
-async def nexus_repro_job_cancel(
-    job_id: str,
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(require_nexus_use),
-):
-    """NX-E3 取消代理：发起人鉴权（归属 = nexus_runs 登记）后转发 Worker。
+async def _worker_cancel(job_id: str) -> dict[str, Any]:
+    """Worker 取消核心（NX-E3 代理与 NX-LB4 内部取消共用）。
 
-    审查 F1（2026-09-07）：本层对 Worker 的任何**非成功**响应如实上抛——
-    404 透传、401/5xx/非 JSON 一律 502，绝不把上游失败包装成"已接受取消"；
-    成功响应还必须校验作业身份（job_id 一致）与已知状态词，缺失/未知状态
-    不默认 cancelling。取消语义（幂等/竞争终态）仍由 Worker 裁决。
+    审查 F1 语义保留：任何**非成功**响应如实上抛；成功响应校验作业身份
+    与已知状态词。取消语义（幂等/竞争终态）仍由 Worker 裁决。
     """
-    _owned_job_or_404(session, current_user, job_id)
     base = _worker_base()
     if not base:
         raise HTTPException(
@@ -681,10 +807,27 @@ async def nexus_repro_job_cancel(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="REPRO_CANCEL_UNKNOWN_STATUS"
         )
+    return {"status": cancel_status,
+            "already_terminal": bool(payload.get("already_terminal"))}
+
+
+@router.post("/repro/jobs/{job_id}/cancel")
+async def nexus_repro_job_cancel(
+    job_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-E3 取消代理：发起人鉴权（归属 = nexus_runs 登记）后转发 Worker。
+
+    审查 F1（2026-09-07）：本层对 Worker 的任何**非成功**响应如实上抛——
+    404 透传、401/5xx/非 JSON 一律 502，绝不把上游失败包装成"已接受取消"。
+    """
+    _owned_job_or_404(session, current_user, job_id)
+    result = await _worker_cancel(job_id)
     return JSONResponse(status_code=200, content={
         "job_id": job_id,
-        "status": cancel_status,
-        "already_terminal": bool(payload.get("already_terminal")),
+        "status": result["status"],
+        "already_terminal": result["already_terminal"],
     })
 
 
@@ -861,13 +1004,18 @@ class NexusProposalCreate(BaseModel):
 
 
 class NexusProposalPatch(BaseModel):
-    """NX-LB2 提案修改（extra=forbid：白名单外字段 422）。"""
+    """NX-LB2 提案修改。
+
+    extra=allow：签名键 time/enc 随 body 进来（前端 request.js 契约），
+    未声明字段由 _reject_unknown_fields 422；转发上游时排除全部 extras
+    （Runtime 侧 extra=forbid 仍兜底）。
+    """
 
     expected_version: int = Field(ge=1)
     objective: str | None = Field(default=None, max_length=500)
     parameters: dict[str, Any] | None = None
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "allow"}
 
 
 class NexusProposalRequestApproval(BaseModel):
@@ -908,10 +1056,12 @@ async def nexus_proposal_patch(
     current_user: dict = Depends(require_nexus_use),
 ):
     """NX-LB2：改提案（乐观锁；仅 draft；旧批准随 hash 失效）。"""
+    _reject_unknown_fields(NexusProposalPatch, payload.model_dump())
     return await _proxy_json(
         request, current_user, "PATCH",
         f"/api/v1/nexus/repro/proposals/{proposal_id}",
-        body=payload.model_dump(exclude_none=True),
+        body=payload.model_dump(exclude_none=True,
+                                exclude=set(payload.model_extra or {})),
     )
 
 
@@ -1313,7 +1463,7 @@ async def nexus_run_detail(
 ):
     """单个 run 详情（含实时态合并；新字段 display_title/run_number/version/
     parent/proposal/config_snapshot；老字段保留）。非 owner/不存在 → 404。"""
-    from app.services import nexus_run_service
+    from app.services import nexus_artifact_service, nexus_run_service
 
     run = nexus_run_service.get_owned_run(
         session, user_id=_artifact_user_id(current_user), run_id=run_id.strip()[:64]
@@ -1321,19 +1471,113 @@ async def nexus_run_detail(
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
     merged = (await _merge_runs_live([run]))[0]
+    # NX-LB5：已授权 Artifact 引用（可下载）；Worker 工作目录文件清单不是
+    # 下载链接，不经此字段暴露。
+    merged["artifacts"] = nexus_artifact_service.list_run_artifacts(
+        session, user_id=_artifact_user_id(current_user), run_id=run["run_id"])
     return JSONResponse(status_code=status.HTTP_200_OK, content=merged)
+
+
+class NexusRunCancelGrant(BaseModel):
+    """NX-LB4：取消授权签发请求（本人＋同会话；一次性、短有效期）。"""
+
+    session_id: str = Field(min_length=1, max_length=128)
+
+    model_config = {"extra": "allow"}
+
+
+@router.post("/runs/{run_id}/cancel-grant")
+async def nexus_run_cancel_grant(
+    run_id: str,
+    payload: NexusRunCancelGrant,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-LB4：为"取消该运行"签发一次性授权（用户显式确认动作）。
+
+    授权绑定 (user, run, action=cancel_run)＋会话＋TTL（默认 300s）；
+    Agent 的 cancel_reproduction_run 工具经内部端点核销后才会真正取消。
+    模型参数无法伪造授权——grant 只由本端点（登录态）签发。
+    """
+    from app.services import nexus_action_grant_service, nexus_run_service
+
+    _reject_unknown_fields(NexusRunCancelGrant, payload.model_dump())
+    run = nexus_run_service.get_owned_run(
+        session, user_id=_artifact_user_id(current_user), run_id=run_id.strip()[:64]
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
+    if (run["session_id"] or "") != payload.session_id.strip()[:128]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="RUN_SESSION_MISMATCH")
+    grant = nexus_action_grant_service.create_grant(
+        session, user_id=_artifact_user_id(current_user),
+        session_id=payload.session_id.strip()[:128], run_id=run["run_id"],
+        action="cancel_run",
+    )
+    return JSONResponse(status_code=status.HTTP_200_OK, content=grant)
+
+
+class NexusRunNoteCreate(BaseModel):
+    """NX-LB5：追加运行备注（request_id 幂等；content ≤4000 字符）。"""
+
+    content: str = Field(min_length=1, max_length=4000)
+    request_id: str = Field(default="", max_length=64)
+
+    model_config = {"extra": "allow"}
+
+
+@router.post("/runs/{run_id}/notes")
+async def nexus_run_note_create(
+    run_id: str,
+    payload: NexusRunNoteCreate,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-LB5：本人给运行追加备注（author_kind 固定 user，不由客户端指定）。"""
+    from app.services import nexus_run_service
+
+    _reject_unknown_fields(NexusRunNoteCreate, payload.model_dump())
+    try:
+        note = nexus_run_service.add_run_note(
+            session, user_id=_artifact_user_id(current_user),
+            run_id=run_id.strip()[:64], content=payload.content,
+            author_kind="user", request_id=payload.request_id,
+        )
+    except nexus_run_service.NoteError as error:
+        if error.code == "RUN_NOT_FOUND":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail="run 不存在") from error
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=error.code) from error
+    return JSONResponse(status_code=status.HTTP_200_OK, content=note)
+
+
+@router.get("/runs/{run_id}/notes")
+async def nexus_run_note_list(
+    run_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-LB5：某 run 的备注列表（owner 校验；升序；Agent 备注标 author=agent）。"""
+    from app.services import nexus_run_service
+
+    items = nexus_run_service.list_run_notes(
+        session, user_id=_artifact_user_id(current_user), run_id=run_id.strip()[:64])
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"items": items})
 
 
 class NexusRunRename(BaseModel):
     """NX-LB1 重命名：仅 title（null/空串恢复默认名）＋ expected_version。
 
-    extra=forbid：配置/状态/owner 永不经此入口变更，非法字段 422。
+    extra=allow：容忍签名键 time/enc；未声明字段（配置/状态/owner 等）
+    由 _reject_unknown_fields 422。
     """
 
     title: str | None = Field(default=None, max_length=120)
     expected_version: int = Field(ge=0)
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "allow"}
 
 
 @router.patch("/runs/{run_id}")
@@ -1346,6 +1590,7 @@ async def nexus_run_rename(
     """NX-LB1：重命名运行（乐观锁；不改变执行 hash 或配置）。"""
     from app.services import nexus_run_service
 
+    _reject_unknown_fields(NexusRunRename, payload.model_dump())
     try:
         row = nexus_run_service.rename_run(
             session, user_id=_artifact_user_id(current_user),
@@ -1377,6 +1622,7 @@ async def nexus_chat_stream(
     payload.attachment_ids, payload.attachments = _require_attachments(
         session, current_user, payload.session_id, payload.attachment_ids
     )
+    await _inject_run_context(payload, session, current_user)
     base = _runtime_base_url()
     if not base:
         return _not_configured()
