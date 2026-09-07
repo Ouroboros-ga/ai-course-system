@@ -67,14 +67,46 @@ def build_report(
     *,
     job: dict[str, Any],
     preset: dict[str, Any] | None,
+    metric_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """构建确定性报告（observed/expected/verdict/steps/env/license）。"""
+    """构建确定性报告（observed/expected/verdict/steps/env/license）。
+
+    NX-LB2：metric_policy.basis == "exploratory" 时 verdict 为 EXPLORATORY——
+    只记录实测值，不做通过判定（comparison 为空，原因写入 metric_note）；
+    模型不得自填容差（容差只来自预设声明，exploratory 下无声明可用）。
+    无 policy（legacy 直批路径）保持原语义不变。
+    """
     steps = job.get("steps_result") or []
     metrics = extract_metrics(steps)
+    basis = (metric_policy or {}).get("basis", "verified")
+    if basis == "exploratory":
+        reason = (metric_policy or {}).get("reason", "配置偏离已验证基线")
+        report = _base_report(job, preset, metrics, [], "EXPLORATORY")
+        report["metric_policy"] = {"basis": "exploratory", "reason": reason}
+        report["metric_note"] = (
+            f"探索性运行（{reason}）：以下为实测值，无已验证基线可比对，"
+            "不得宣称为复现通过。"
+        )
+        return report
     expected = (preset or {}).get("expected_metrics")
     comparison = compare_metrics(metrics, expected)
     verdict = decide_verdict(comparison)
+    report = _base_report(job, preset, metrics, comparison, verdict)
+    report["metric_policy"] = {"basis": "verified"}
+    report["metric_note"] = ""
+    return report
+
+
+def _base_report(
+    job: dict[str, Any],
+    preset: dict[str, Any] | None,
+    metrics: dict[str, float | None],
+    comparison: list[dict[str, Any]],
+    verdict: str,
+) -> dict[str, Any]:
+    """报告公共体（判定无关字段）。"""
     license_checks = job.get("license_checks") or {}
+    steps = job.get("steps_result") or []
     return {
         "verdict": verdict,
         "preset_id": job.get("preset_id", ""),
@@ -87,7 +119,7 @@ def build_report(
         },
         "seed_used": bool(job.get("seed_used")),
         "metrics_observed": metrics,
-        "metrics_expected": expected or {},
+        "metrics_expected": (preset or {}).get("expected_metrics") or {},
         "comparison": comparison,
         "metric_source": (preset or {}).get("expected_metrics_source", ""),
         "steps": [
@@ -121,6 +153,18 @@ def render_report_markdown(report: dict[str, Any]) -> str:
         f"本地={report['license_checks'].get('local_spdx')}）",
         f"- 种子快照：{'命中（离线确定性）' if report['seed_used'] else '未命中（运行时拉取）'}",
         "",
+    ]
+    if report.get("metric_note"):
+        lines += [f"> {report['metric_note']}", ""]
+    if verdict == "EXPLORATORY":
+        lines += [
+            "## 实测值（无基线比较）",
+            "",
+        ]
+        for name, value in (report.get("metrics_observed") or {}).items():
+            lines.append(f"- {name}：{'未提取到' if value is None else f'{value:.4f}'}")
+        lines.append("")
+    lines += [
         "## 指标对比",
         "",
     ]

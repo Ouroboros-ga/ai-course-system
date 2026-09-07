@@ -764,6 +764,29 @@ async def _proxy_json(
     return _passthrough(response)
 
 
+@router.get("/approvals")
+async def nexus_approvals_list(
+    request: Request,
+    session_id: str = "",
+    status: str = "pending",
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-LB2：审批待办恢复（输入框浮窗用）：本人的待办＋提案摘要。
+
+    查询串原样透传（session_id/status），语义由 Runtime 裁决；
+    status 非法由上游 422。
+    """
+    from urllib.parse import urlencode
+
+    query = urlencode({
+        "session_id": (session_id or "").strip()[:128],
+        "status": (status or "pending").strip()[:16],
+    })
+    return await _proxy_json(
+        request, current_user, "GET", f"/api/v1/nexus/approvals?{query}"
+    )
+
+
 @router.get("/approvals/{approval_id}")
 async def nexus_approval_status(
     approval_id: str,
@@ -806,6 +829,103 @@ async def nexus_repro_execute(
         current_user,
         "POST",
         "/api/v1/nexus/repro/execute",
+        body=payload.model_dump(),
+    )
+
+
+@router.get("/repro/presets")
+async def nexus_repro_presets(
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-LB1：可见 preset 投影（display/论文/仓库/环境/参数schema/预算/指标）。
+
+    Backend 经内部 HTTP 查询 Runtime，不跨 Python 环境 import preset；
+    只读，无凭据、内部路径、任意命令入口。
+    """
+    return await _proxy_json(
+        request, current_user, "GET", "/api/v1/nexus/repro/presets"
+    )
+
+
+class NexusProposalCreate(BaseModel):
+    """NX-LB2 提案创建（字段与 Runtime ProposalCreate 同构，原样透传）。"""
+
+    preset_id: str = Field(min_length=1, max_length=64)
+    session_id: str = Field(default="default", max_length=128)
+    parent_run_id: str = Field(default="", max_length=64)
+    objective: str = Field(default="", max_length=500)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
+    client_request_id: str = Field(default="", max_length=64)
+
+
+class NexusProposalPatch(BaseModel):
+    """NX-LB2 提案修改（extra=forbid：白名单外字段 422）。"""
+
+    expected_version: int = Field(ge=1)
+    objective: str | None = Field(default=None, max_length=500)
+    parameters: dict[str, Any] | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class NexusProposalRequestApproval(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
+@router.post("/repro/proposals")
+async def nexus_proposal_create(
+    payload: NexusProposalCreate,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-LB2：建结构化提案草案（不执行；client_request_id 幂等）。"""
+    return await _proxy_json(
+        request, current_user, "POST", "/api/v1/nexus/repro/proposals",
+        body=payload.model_dump(),
+    )
+
+
+@router.get("/repro/proposals/{proposal_id}")
+async def nexus_proposal_detail(
+    proposal_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-LB2：提案完整方案＋校验结果＋与父运行/上一版本的 diff。"""
+    return await _proxy_json(
+        request, current_user, "GET",
+        f"/api/v1/nexus/repro/proposals/{proposal_id}",
+    )
+
+
+@router.patch("/repro/proposals/{proposal_id}")
+async def nexus_proposal_patch(
+    proposal_id: str,
+    payload: NexusProposalPatch,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-LB2：改提案（乐观锁；仅 draft；旧批准随 hash 失效）。"""
+    return await _proxy_json(
+        request, current_user, "PATCH",
+        f"/api/v1/nexus/repro/proposals/{proposal_id}",
+        body=payload.model_dump(exclude_none=True),
+    )
+
+
+@router.post("/repro/proposals/{proposal_id}/request-approval")
+async def nexus_proposal_request_approval(
+    proposal_id: str,
+    payload: NexusProposalRequestApproval,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-LB2：pin 住版本+hash 生成/复用审批（不直接执行）。"""
+    return await _proxy_json(
+        request, current_user, "POST",
+        f"/api/v1/nexus/repro/proposals/{proposal_id}/request-approval",
         body=payload.model_dump(),
     )
 
@@ -1015,7 +1135,12 @@ async def nexus_attachment_bind(
 # NX-E1：run 恢复查询——owner/session/run/job 关联 + Worker 实时态合并。
 # 前端刷新/换设备后凭此恢复轮询，绝不重新提交。Worker 无此 job（重启丢内存）
 # 或不可达时回落快照并标 stale/unknown，不伪造终态。
+# NX-LB1：有界并发批量读取＋整体截止；终态行消费已保存快照（不反复问 Worker）；
+# 列表分页（cursor/limit/total）；重命名（乐观锁）；未知数量单列不冒充 0。
 # ---------------------------------------------------------------------------
+
+_RUNS_LIVE_CONCURRENCY = 4
+_RUNS_LIVE_DEADLINE_S = 10.0
 
 
 async def _live_job_status(job_id: str) -> dict[str, Any] | None:
@@ -1042,17 +1167,36 @@ async def _live_job_status(job_id: str) -> dict[str, Any] | None:
         return None
 
 
-def _merge_run_live(run: dict[str, Any], live: dict[str, Any] | None) -> dict[str, Any]:
-    """run 快照 + 实时态合并：live 缺失 → stale 快照 + honest note。"""
+def _merge_run_live(
+    run: dict[str, Any], live: dict[str, Any] | None,
+    observed_at: float | None = None,
+) -> dict[str, Any]:
+    """run 快照 + 实时态合并：live 缺失 → stale 快照 + honest note。
+
+    status_source 标记每个 run 的状态来源（live|snapshot），observed_at 为
+    本次合并时间（epoch 秒）；stale=true 表示显示的不是当前事实。
+    config_status 标记冻结配置可恢复性：frozen（快照齐全）/
+    preset-defaults（老直批运行，参数即预设默认，可重建）/
+    unavailable（无快照又无已知预设，不倒灌当前 preset 伪装历史）。
+    """
+    import time as _time
+
     merged = dict(run)
+    now = observed_at if observed_at is not None else _time.time()
+    merged["observed_at"] = now
+    merged["config_status"] = _config_status(run)
     if live is None:
         merged["live"] = {"status": "stale", "note": "执行器不可达，显示登记快照"}
+        merged["status_source"] = "snapshot"
+        merged["stale"] = True
         return merged
     if live.get("missing"):
         merged["live"] = {
             "status": "unknown",
             "note": "执行器无此作业（可能已重启），不可恢复执行，只能查看登记快照",
         }
+        merged["status_source"] = "snapshot"
+        merged["stale"] = True
         return merged
     merged["live"] = {
         "status": live.get("status", "unknown"),
@@ -1065,26 +1209,100 @@ def _merge_run_live(run: dict[str, Any], live: dict[str, Any] | None) -> dict[st
         "stage_events": _trim_job_record(live).get("stage_events", []),
         "current_step": live.get("current_step"),
     }
+    merged["status_source"] = "live"
+    merged["stale"] = False
     return merged
+
+
+def _config_status(run: dict[str, Any]) -> str:
+    """冻结配置可恢复性（展示层计算，不改存储）。
+
+    - frozen：config_snapshot 非空（LB1 后 runs / 提案执行）；
+    - preset-defaults：老直批运行（无快照），执行即预设默认参数，可重建；
+    - unavailable：无快照又无 preset 指向——不从当前 preset 倒灌成历史事实。
+    """
+    if run.get("config_snapshot"):
+        return "frozen"
+    if (run.get("preset_id") or "").strip():
+        return "preset-defaults"
+    return "unavailable"
+
+
+async def _merge_runs_live(
+    runs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """批量合并实时态：有界并发（4）＋整体截止（10s）。
+
+    终态快照行（succeeded/failed/rejected）不再问 Worker，直接消费快照；
+    超时/失败的行回落 stale 快照——部分失联不能阻塞整个会话列表。
+    """
+    import asyncio
+    import time as _time
+
+    from app.services import nexus_run_service
+
+    semaphore = asyncio.Semaphore(_RUNS_LIVE_CONCURRENCY)
+    now = _time.time()
+
+    async def _one(run: dict[str, Any]) -> dict[str, Any]:
+        if run.get("status") in nexus_run_service.TERMINAL_RUN_STATUSES:
+            return _merge_run_live(run, None, observed_at=now) | {
+                "status_source": "snapshot",
+                "stale": False,
+                "live": {"status": run.get("status", "unknown"),
+                         "note": "终态快照，不再轮询执行器"},
+            }
+        async with semaphore:
+            live = await _live_job_status(run["job_id"]) if run["job_id"] else None
+        return _merge_run_live(run, live, observed_at=now)
+
+    try:
+        async with asyncio.timeout(_RUNS_LIVE_DEADLINE_S):
+            return await asyncio.gather(*(_one(run) for run in runs))
+    except TimeoutError:
+        logger.warning("runs live merge deadline exceeded, fallback to snapshots")
+        return [_merge_run_live(run, None, observed_at=now) for run in runs]
 
 
 @router.get("/runs")
 async def nexus_runs_list(
     session_id: str = "",
+    cursor: str = "",
+    limit: int = 20,
     session: Session = Depends(get_session),
     current_user: dict = Depends(require_nexus_use),
 ):
-    """某会话我的 runs（含实时态合并）：恢复查询入口，不触发任何执行。"""
+    """NX-LB1：某会话我的 runs 分页（含实时态合并）：恢复查询入口，不触发任何执行。
+
+    返回 {items, next_cursor, total}；total 为真实 COUNT（未知数量单列，
+    失败时抛 503 而不返回 0 冒充）。旧 items 字段全保留（老客户端兼容）。
+    """
     from app.services import nexus_run_service
 
-    runs = nexus_run_service.list_session_runs(
-        session, user_id=_artifact_user_id(current_user), session_id=session_id.strip()[:128]
+    page = nexus_run_service.list_session_runs_page(
+        session, user_id=_artifact_user_id(current_user),
+        session_id=session_id.strip()[:128], limit=limit, cursor=cursor.strip()[:128],
     )
-    items = []
-    for run in runs:
-        live = await _live_job_status(run["job_id"]) if run["job_id"] else None
-        items.append(_merge_run_live(run, live))
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"items": items})
+    items = await _merge_runs_live(page["items"])
+    # 终态快照回写（best-effort）：live 为终态且与快照不一致时更新，
+    # 下次列表直接消费快照；失败只记日志。
+    for run, merged in zip(page["items"], items):
+        live_status = (merged.get("live") or {}).get("status")
+        if (merged.get("status_source") == "live"
+                and live_status in nexus_run_service.TERMINAL_RUN_STATUSES
+                and live_status != run.get("status")):
+            try:
+                nexus_run_service.update_run_status(
+                    session, user_id=_artifact_user_id(current_user),
+                    run_id=run["run_id"], status=live_status,
+                    detail=str((merged.get("live") or {}).get("detail") or "")[:300],
+                )
+            except Exception as error:  # noqa: BLE001
+                logger.warning("run snapshot writeback failed: %s", error)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"items": items, "next_cursor": page["next_cursor"], "total": page["total"]},
+    )
 
 
 @router.get("/runs/{run_id}")
@@ -1093,7 +1311,8 @@ async def nexus_run_detail(
     session: Session = Depends(get_session),
     current_user: dict = Depends(require_nexus_use),
 ):
-    """单个 run 详情（含实时态合并）；非 owner/不存在 → 404。"""
+    """单个 run 详情（含实时态合并；新字段 display_title/run_number/version/
+    parent/proposal/config_snapshot；老字段保留）。非 owner/不存在 → 404。"""
     from app.services import nexus_run_service
 
     run = nexus_run_service.get_owned_run(
@@ -1101,10 +1320,45 @@ async def nexus_run_detail(
     )
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
-    live = await _live_job_status(run["job_id"]) if run["job_id"] else None
-    return JSONResponse(
-        status_code=status.HTTP_200_OK, content=_merge_run_live(run, live)
-    )
+    merged = (await _merge_runs_live([run]))[0]
+    return JSONResponse(status_code=status.HTTP_200_OK, content=merged)
+
+
+class NexusRunRename(BaseModel):
+    """NX-LB1 重命名：仅 title（null/空串恢复默认名）＋ expected_version。
+
+    extra=forbid：配置/状态/owner 永不经此入口变更，非法字段 422。
+    """
+
+    title: str | None = Field(default=None, max_length=120)
+    expected_version: int = Field(ge=0)
+
+    model_config = {"extra": "forbid"}
+
+
+@router.patch("/runs/{run_id}")
+async def nexus_run_rename(
+    run_id: str,
+    payload: NexusRunRename,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-LB1：重命名运行（乐观锁；不改变执行 hash 或配置）。"""
+    from app.services import nexus_run_service
+
+    try:
+        row = nexus_run_service.rename_run(
+            session, user_id=_artifact_user_id(current_user),
+            run_id=run_id.strip()[:64], title=payload.title,
+            expected_version=payload.expected_version,
+        )
+    except nexus_run_service._VersionConflict as error:
+        reject(409, "RUN_VERSION_CONFLICT", "运行已被修改，请刷新后重试",
+               details={"current_version": error.current_version})
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
+    merged = (await _merge_runs_live([row]))[0]
+    return JSONResponse(status_code=status.HTTP_200_OK, content=merged)
 
 
 @router.post("/chat/stream")

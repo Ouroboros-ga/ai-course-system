@@ -166,7 +166,11 @@ class NexusReproJobRecordRequest(BaseModel):
 
 
 class NexusRunRecordRequest(BaseModel):
-    """NX-E1：Runtime 执行成功后登记 run linkage（恢复查询依据）。"""
+    """NX-E1：Runtime 执行成功后登记 run linkage（恢复查询依据）。
+
+    NX-LB1 扩展：title/parent/proposal/config_snapshot/展示投影均为可选；
+    老 Runtime 只发旧字段时照常登记（序号照分、展示名回退 preset_id）。
+    """
 
     run_id: str = Field(min_length=4, max_length=64)
     session_id: str = Field(default="default", max_length=128)
@@ -177,6 +181,13 @@ class NexusRunRecordRequest(BaseModel):
     job_id: str = Field(min_length=4, max_length=64)
     status: str = Field(default="submitted", max_length=32)
     repo_url: str = Field(default="", max_length=300)
+    title: str = Field(default="", max_length=120)
+    parent_run_id: str = Field(default="", max_length=64)
+    proposal_id: str = Field(default="", max_length=64)
+    proposal_version: int = Field(default=0, ge=0)
+    config_snapshot: dict[str, Any] = Field(default_factory=dict)
+    preset_display_name: str = Field(default="", max_length=120)
+    paper_title: str = Field(default="", max_length=300)
 
 
 @router.post("/repro-jobs")
@@ -224,6 +235,13 @@ async def nexus_internal_record_repro_run(
         approval_id=payload.approval_id,
         job_id=payload.job_id,
         status=payload.status,
+        title=payload.title,
+        parent_run_id=payload.parent_run_id,
+        proposal_id=payload.proposal_id,
+        proposal_version=payload.proposal_version,
+        config_snapshot=payload.config_snapshot,
+        preset_display_name=payload.preset_display_name,
+        paper_title=payload.paper_title,
     )
     if run is None:
         # run_id 冲突且属他人：拒绝覆盖（正常 run_id=approval_id 全局唯一）。
@@ -243,6 +261,34 @@ async def nexus_internal_record_repro_run(
             repo_url=payload.repo_url,
         )
     return unified_response(code=200, message="run 已登记", data={"run_id": run["run_id"]})
+
+
+@router.get("/repro-runs/by-job/{job_id}")
+async def nexus_internal_run_by_job(
+    job_id: str,
+    authorization: str | None = Header(default=None),
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    session: Session = Depends(get_session),
+):
+    """NX-LB2：按 job 反查本人的 run（含提案引用与冻结配置快照）。
+
+    供报告链取 metric_policy/提案上下文；无 linkage（老作业/他人的）返回
+    404，调用方回退 legacy preset 判定，不伪造基线。
+    """
+    from app.services import nexus_run_service
+
+    _require_service_token(authorization)
+    user_id = str(_require_user_identity(x_nexus_user_id))
+    run = nexus_run_service.get_run_by_job(
+        session, user_id=user_id, job_id=job_id.strip()[:64])
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RUN_NOT_FOUND")
+    return unified_response(code=200, message="run linkage", data={
+        "run_id": run["run_id"],
+        "proposal_id": run["proposal_id"],
+        "proposal_version": run["proposal_version"],
+        "config_snapshot": run["config_snapshot"],
+    })
 
 
 @router.post("/artifacts")
@@ -317,3 +363,25 @@ async def nexus_internal_attachment_content(
             status_code=code_to_status.get(error.code, 422), detail=error.code
         ) from error
     return unified_response(code=200, message="附件内容", data=content)
+
+
+@router.get("/repro-runs/{run_id}")
+async def nexus_internal_run_detail(
+    run_id: str,
+    authorization: str | None = Header(default=None),
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    session: Session = Depends(get_session),
+):
+    """NX-LB2：按 run_id 读本人的 run 全行（含冻结配置快照）。
+
+    供 Runtime 提案 parent 校验与 diff 取数；非 owner/不存在 → 404 不区分。
+    """
+    from app.services import nexus_run_service
+
+    _require_service_token(authorization)
+    user_id = str(_require_user_identity(x_nexus_user_id))
+    run = nexus_run_service.get_owned_run(
+        session, user_id=user_id, run_id=run_id.strip()[:64])
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RUN_NOT_FOUND")
+    return unified_response(code=200, message="run", data=run)

@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 REPRO_PRESETS: dict[str, dict[str, Any]] = {
     "nanogpt": {
         "preset_id": "nanogpt",
+        # NX-LB1：运行默认显示名（服务端 display_title 回退链用；不入执行 hash）。
+        "display_name": "nanoGPT",
         "paper_title": "Language Models are Unsupervised Multitask Learners (GPT-2, Radford et al., 2019)",
         "repo_url": "https://github.com/karpathy/nanoGPT",
         "repo_license": "MIT",
@@ -175,9 +177,13 @@ async def _record_job_ownership(
 async def _record_run_linkage(
     *, run_id: str, user_id: str, session_id: str,
     preset: dict[str, Any], approval_id: str, job_id: str,
+    proposal_ref: dict[str, Any] | None = None,
+    effective_preset: dict[str, Any] | None = None,
 ) -> bool:
     """NX-E1：向 Backend 登记 run linkage（恢复查询依据）。
 
+    NX-LB2：提案票据附带 proposal 引用＋冻结配置快照（含 metric_policy），
+    供报告链判定基线与恢复视图展示；普通票据快照为空（legacy preset 判定）。
     best-effort：失败不阻断提交结果（审批记录仍是权威归属），仅记日志。
     """
     from nexus import approvals as approvals_module
@@ -189,6 +195,26 @@ async def _record_run_linkage(
     if ready is None or not uid:
         return False
     url, token = ready
+    effective = effective_preset or preset
+    config_snapshot: dict[str, Any] = {}
+    if proposal_ref:
+        from nexus import proposals as proposals_module
+
+        proposal = proposals_module.get_proposal(proposal_ref.get("proposal_id", ""))
+        if proposal is not None:
+            config_snapshot = {
+                "proposal_id": proposal["proposal_id"],
+                "proposal_version": proposal["version"],
+                "preset_id": proposal["preset_id"],
+                "parameters": proposal["parameters"],
+                "environment": proposal["environment"],
+                "repo_revision": proposal["repo_revision"],
+                "revision_status": proposal["revision_status"],
+                "data": proposal["data"],
+                "steps": list(effective.get("steps") or []),
+                "budget": proposal["budget"],
+                "metric_policy": proposal["metric_policy"],
+            }
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
@@ -203,6 +229,13 @@ async def _record_run_linkage(
                     "job_id": job_id,
                     "status": "submitted",
                     "repo_url": preset.get("repo_url", ""),
+                    "title": "",
+                    "parent_run_id": "",
+                    "proposal_id": (proposal_ref or {}).get("proposal_id", ""),
+                    "proposal_version": int((proposal_ref or {}).get("proposal_version", 0) or 0),
+                    "config_snapshot": config_snapshot,
+                    "preset_display_name": str(preset.get("display_name", "")),
+                    "paper_title": str(preset.get("paper_title", "")),
                 },
                 headers={
                     "Authorization": f"Bearer {token}",
@@ -303,7 +336,7 @@ def _public_approval(
     """审批的公开投影：给前端审批卡展示，不含任何内部令牌。"""
     if row is None:
         return None
-    return {
+    view: dict[str, Any] = {
         "approval_id": row["approval_id"],
         "status": row["status"],
         "preset_id": row["preset_id"],
@@ -314,6 +347,12 @@ def _public_approval(
         "expires_at": row["expires_at"],
         "job_id": row.get("job_id") or "",
     }
+    # NX-LB2：提案绑定票据带出引用（浮窗展示版本/hash；冻结步骤本身不下发）。
+    if row.get("proposal_id"):
+        view["proposal_id"] = row["proposal_id"]
+        view["proposal_version"] = row.get("proposal_version", 0)
+        view["proposal_hash"] = row.get("proposal_hash", "")
+    return view
 
 
 async def execute_approved_reproduction(
@@ -350,8 +389,22 @@ async def execute_approved_reproduction(
             "repo_license": preset["repo_license"],
             "is_supplementary": True,
         }
+    # NX-LB2：提案绑定票据用冻结步骤提交（请求审批时快照，不读提案现行值，
+    # 杜绝"核验后修改"竞态）；普通票据用预设 steps。
+    effective = dict(preset)
+    proposal_ref: dict[str, Any] = {}
+    if approval.get("proposal_id"):
+        frozen = approval.get("frozen_steps") or []
+        if not frozen:
+            raise approvals.ApprovalError(
+                "APPROVAL_PROPOSAL_CHANGED", "批准绑定的冻结步骤缺失，请重新走审批")
+        effective = {**preset, "steps": list(frozen)}
+        proposal_ref = {
+            "proposal_id": approval["proposal_id"],
+            "proposal_version": approval["proposal_version"],
+        }
     try:
-        result = await _submit_to_worker(preset)
+        result = await _submit_to_worker(effective)
         # M4-B1：提交成功（拿到 job_id）后登记归属，进度查询按发起人鉴权。
         # NX-G2：执行前的归属绑定已由审批记录承担；此处是提交后的 job 关联。
         # NX-E1：同时登记 run linkage（run_id=approval_id），供刷新/换设备恢复。
@@ -364,7 +417,14 @@ async def execute_approved_reproduction(
                 await _record_run_linkage(
                     run_id=approval_id, user_id=user_id, session_id=session_id,
                     preset=preset, approval_id=approval_id, job_id=job_id,
+                    proposal_ref=proposal_ref, effective_preset=effective,
                 )
+                # 提案票据执行成功→冻结提案版本（后续修改须走新提案；best-effort）。
+                if proposal_ref:
+                    from nexus import proposals as proposals_module
+
+                    proposals_module.mark_proposal_executed(
+                        proposal_ref["proposal_id"], proposal_ref["proposal_version"])
                 if not recorded:
                     result["detail"] = (
                         "作业已提交，但归属登记失败：进度查询与报告生成暂不可用。"

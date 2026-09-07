@@ -963,6 +963,47 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   const reproTool = read('nexus/src/nexus/tools/reproduction.py')
   assert.match(reproTool, /_record_run_linkage/)
 
+  // NX-LB1：运行元数据（序号/命名/preset 投影/冻结配置/分页/重命名）。
+  assert.match(backend, /@router\.get\("\/repro\/presets"\)/)
+  assert.match(backend, /@router\.patch\("\/runs\/\{run_id\}"\)/)
+  assert.match(backend, /class NexusRunRename/)
+  assert.match(backend, /async def nexus_run_rename/)
+  assert.match(backend, /next_cursor/)
+  const runSvc = read('backend/app/services/nexus_run_service.py')
+  assert.match(runSvc, /def migrate_nexus_runs/)
+  assert.match(runSvc, /def rename_run/)
+  assert.match(runSvc, /def list_session_runs_page/)
+  assert.match(runSvc, /def display_title/)
+  assert.match(runSvc, /def get_run_by_job/)
+  assert.match(internal, /@router\.get\("\/repro-runs\/by-job\/\{job_id\}"\)/)
+  assert.match(internal, /@router\.get\("\/repro-runs\/\{run_id\}"\)/)
+
+  // NX-LB2：提案服务与审批绑定（创建/详情/diff/修改/批复/待办）。
+  const proposals = read('nexus/src/nexus/proposals.py')
+  assert.match(proposals, /def create_proposal/)
+  assert.match(proposals, /def patch_proposal/)
+  assert.match(proposals, /def proposal_diff/)
+  assert.match(proposals, /def compile_steps/)
+  assert.match(proposals, /def validate_parameters/)
+  assert.match(proposals, /def list_preset_projections/)
+  assert.match(proposals, /def mark_proposal_executed/)
+  assert.match(runtime, /@app\.post\(\s*"\/api\/v1\/nexus\/repro\/proposals"/)
+  assert.match(runtime, /@app\.get\(\s*"\/api\/v1\/nexus\/repro\/proposals\/\{proposal_id\}"/)
+  assert.match(runtime, /@app\.patch\(\s*"\/api\/v1\/nexus\/repro\/proposals\/\{proposal_id\}"/)
+  assert.match(runtime, /request-approval/)
+  assert.match(runtime, /@app\.get\(\s*"\/api\/v1\/nexus\/approvals"/)
+  assert.match(runtime, /@app\.get\(\s*"\/api\/v1\/nexus\/repro\/presets"/)
+  assert.match(backend, /@router\.post\("\/repro\/proposals"\)/)
+  assert.match(backend, /@router\.get\("\/repro\/proposals\/\{proposal_id\}"\)/)
+  assert.match(backend, /@router\.patch\("\/repro\/proposals\/\{proposal_id\}"\)/)
+  assert.match(backend, /request-approval/)
+  assert.match(backend, /@router\.get\("\/approvals"\)/)
+  const approvals = read('nexus/src/nexus/approvals.py')
+  assert.match(approvals, /def list_approvals/)
+  assert.match(approvals, /APPROVAL_PROPOSAL_CHANGED/)
+  const report = read('nexus/src/nexus/repro_report.py')
+  assert.match(report, /EXPLORATORY/)
+
   // M1-F3 + NX-G1/NX-A1：前端模式工具声明与 Runtime 双 Profile 工具面同源（防漂移）。
   // Runtime：general 结构性排除 research-only 三工具；read_attachment 双模式共用。
   // 前端 NEXUS_MODE_CONFIG 的 tools 列表必须等于对应模式的真实产品工具面
@@ -1046,10 +1087,11 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // 页面：无权限整页拦截并说明开通路径
   assert.match(page, /v-if="counter\.canUseNexus"/)
   assert.match(page, /暂无 Nexus AI 使用权限/)
-  // 后端是真正的强制点：全部端点（health/chat/chat-stream/sessions/messages/artifacts×2/repro×3/approvals×2/repro-execute/attachments×6/runs×2）都走 require_nexus_use
+  // 后端是真正的强制点：全部端点（health/chat/chat-stream/sessions/messages/artifacts×2/repro×3/approvals×2/repro-execute/attachments×6/runs×2/presets/proposals×4/approvals-list/runs-rename）都走 require_nexus_use
   assert.match(backend, /require_platform_permission\(session, current_user, PlatformPermission\.NEXUS_USE\)/)
   // NX-H1：+计划快照反代（plan）→ 22 个受权限门端点。
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 22)
+  // NX-LB1/LB2：+presets/proposals×4/approvals-list/runs-rename → 29 个。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 29)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })

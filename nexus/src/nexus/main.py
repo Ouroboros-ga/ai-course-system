@@ -68,6 +68,10 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
             from nexus.approvals import ensure_approvals_table
 
             await asyncio.to_thread(ensure_approvals_table, dsn, schema)
+            step = "ensure_proposals_table"
+            from nexus.proposals import ensure_proposals_table
+
+            await asyncio.to_thread(ensure_proposals_table, dsn, schema)
             step = "saver_setup"
             cm = AsyncPostgresSaver.from_conn_string(dsn_with_schema(dsn, schema))
             saver = await cm.__aenter__()
@@ -770,6 +774,40 @@ async def _fetch_repro_job(job_id: str) -> dict[str, Any]:
         raise ReproJobError("WORKER_BAD_RESPONSE", "Worker 返回非 JSON") from error
 
 
+async def _fetch_run_linkage(
+    job_id: str, user_id: str | None
+) -> dict[str, Any] | None:
+    """NX-LB2：经 Backend 内部端点取 run linkage（含冻结配置快照）。
+
+    无 linkage（老作业/他人/内部未配置）→ None，调用方回退 legacy preset
+    判定，不伪造基线。
+    """
+    from nexus.artifact_client import _settings_ready
+
+    ready = _settings_ready()
+    if ready is None or not user_id:
+        return None
+    url, token = ready
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{url}/api/v1/nexus-internal/repro-runs/by-job/{job_id}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Nexus-User-Id": user_id,
+                },
+            )
+    except Exception as error:  # noqa: BLE001
+        logger.warning("run linkage fetch failed: %s", type(error).__name__)
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        return response.json().get("data") or {}
+    except ValueError:
+        return None
+
+
 class ReproJobError(Exception):
     """作业获取/状态错误：携带机器可读 code（fail-closed 语义）。"""
 
@@ -834,13 +872,22 @@ async def repro_job_report(
             detail=f"JOB_NOT_FINISHED:{job.get('status', 'unknown')}",
         )
     preset = REPRO_PRESETS.get(str(job.get("preset_id", "")).lower())
-    report = repro_report.build_report(job=job, preset=preset)
-    # F6：真实比较已完成，best-effort 回写 Worker metric 阶段（失败不阻断报告）。
-    await _writeback_metric_verdict(
-        job_id,
-        report["verdict"],
-        f"报告链判定 {report['verdict']}（{len(report['comparison'])} 项可比对指标）",
-    )
+    # NX-LB2：有 linkage 且冻结快照声明 exploratory → 探索性结论（只记实测，
+    # 不做通过判定）；无 linkage 走 legacy preset 判定（行为不变）。
+    linkage = await _fetch_run_linkage(job_id, user_id)
+    metric_policy = ((linkage or {}).get("config_snapshot") or {}).get("metric_policy")
+    report = repro_report.build_report(job=job, preset=preset, metric_policy=metric_policy)
+    if report["verdict"] == "EXPLORATORY":
+        # Worker /metric 只接受 PASS/FAIL/INCOMPLETE：探索性无可比基线，
+        # 不回写（metric 停留 pending 属诚实降级），报告产物照常生成。
+        logger.info("exploratory report for job %s: skip metric writeback", job_id)
+    else:
+        # F6：真实比较已完成，best-effort 回写 Worker metric 阶段（失败不阻断报告）。
+        await _writeback_metric_verdict(
+            job_id,
+            report["verdict"],
+            f"报告链判定 {report['verdict']}（{len(report['comparison'])} 项可比对指标）",
+        )
     markdown = repro_report.render_report_markdown(report)
     payload_json = repro_report.render_report_json(report)
     base_title = f"复现报告 · {report['preset_id']}".strip() or "复现报告"
@@ -864,6 +911,7 @@ async def repro_job_report(
         "verdict": report["verdict"],
         "metrics_observed": report["metrics_observed"],
         "comparison": report["comparison"],
+        "metric_note": report.get("metric_note", ""),
         "artifacts": artifacts,
     }
 
@@ -994,7 +1042,326 @@ async def repro_execute_approved(
             "APPROVAL_NOT_APPROVED": 409,
             "APPROVAL_EXPIRED": 409,
             "APPROVAL_PLAN_CHANGED": 409,
+            "APPROVAL_PROPOSAL_CHANGED": 409,
         }
         raise HTTPException(
             status_code=status_map.get(error.code, 409), detail=error.code
         ) from error
+
+
+# ---------------------------------------------------------------------------
+# NX-LB1/LB2：preset 投影＋结构化提案＋审批待办（Runtime 自有域编排）
+
+
+# ---------------------------------------------------------------------------
+# NX-LB1/LB2：preset 投影＋结构化提案＋审批待办（Runtime 自有域编排）
+#
+# 身份一律取反代注入的 X-Nexus-User-Id（服务端登录态）；parent run 归属经
+# Backend 内部 run 详情校验（Runtime 不持有 run 表）。
+# 产品事件最小化：只返回方案/计划摘要/预算/有效期，无 Prompt 与思维。
+# ---------------------------------------------------------------------------
+
+
+class ProposalCreate(BaseModel):
+    preset_id: str = Field(min_length=1, max_length=64)
+    session_id: str = Field(default="default", max_length=128)
+    parent_run_id: str = Field(default="", max_length=64)
+    objective: str = Field(default="", max_length=500)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
+    client_request_id: str = Field(default="", max_length=64)
+
+
+class ProposalPatch(BaseModel):
+    expected_version: int = Field(ge=1)
+    objective: str | None = Field(default=None, max_length=500)
+    parameters: dict[str, Any] | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class ProposalRequestApproval(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
+async def _fetch_parent_run(
+    run_id: str, user_id: str
+) -> dict[str, Any] | None:
+    """经 Backend 内部端点取本人的 parent run 全行（404→None，不抛）。"""
+    from nexus.artifact_client import _settings_ready
+
+    ready = _settings_ready()
+    if ready is None or not user_id:
+        return None
+    url, token = ready
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{url}/api/v1/nexus-internal/repro-runs/{run_id}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Nexus-User-Id": user_id,
+                },
+            )
+    except Exception as error:  # noqa: BLE001
+        logger.warning("parent run fetch failed: %s", type(error).__name__)
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        return response.json().get("data") or {}
+    except ValueError:
+        return None
+
+
+def _proposal_error_status(code: str) -> int:
+    return {
+        "PROPOSAL_NOT_FOUND": 404,
+        "PROPOSAL_FORBIDDEN": 403,
+        "PROPOSAL_PRESET_UNSUPPORTED": 422,
+        "PROPOSAL_PARAM_UNKNOWN": 422,
+        "PROPOSAL_PARAM_TYPE": 422,
+        "PROPOSAL_PARAM_OUT_OF_RANGE": 422,
+        "PROPOSAL_DATA_UNSUPPORTED": 422,
+        "PROPOSAL_VERSION_CONFLICT": 409,
+        "PROPOSAL_LOCKED": 409,
+        "PROPOSAL_PERSIST_FAILED": 503,
+        "PROPOSAL_PARENT_NOT_FOUND": 404,
+    }.get(code, 422)
+
+
+@app.get(
+    "/api/v1/nexus/repro/presets",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_presets() -> dict[str, Any]:
+    """NX-LB1：可见 preset 投影（Backend 经内部 HTTP 拉取，不跨环境 import）。
+
+    只读：display/论文/仓库/License/环境摘要/参数 schema/预算/指标与来源/
+    能力限制；无凭据、内部路径、任意命令入口。
+    """
+    from nexus import proposals as proposals_module
+
+    return {"presets": proposals_module.list_preset_projections()}
+
+
+@app.post(
+    "/api/v1/nexus/repro/proposals",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_proposal_create(
+    body: ProposalCreate,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """NX-LB2：建结构化提案草案（不执行；client_request_id 幂等）。"""
+    from nexus import proposals as proposals_module
+    from nexus.tools.reproduction import REPRO_PRESETS
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    session_id = sanitize_session_id(body.session_id)
+    preset = REPRO_PRESETS.get(body.preset_id.strip().lower())
+    if preset is None:
+        raise HTTPException(status_code=404, detail="PRESET_NOT_FOUND")
+    parent_run: dict[str, Any] | None = None
+    if body.parent_run_id.strip():
+        parent_run = await _fetch_parent_run(body.parent_run_id.strip()[:64], user_id)
+        if parent_run is None:
+            raise HTTPException(status_code=404, detail="PROPOSAL_PARENT_NOT_FOUND")
+    try:
+        row = proposals_module.create_proposal(
+            user_id=user_id,
+            session_id=session_id,
+            preset=preset,
+            parent_run=parent_run,
+            objective=body.objective,
+            parameters=body.parameters,
+            data=body.data,
+            client_request_id=body.client_request_id,
+        )
+    except proposals_module.ProposalError as error:
+        raise HTTPException(
+            status_code=_proposal_error_status(error.code), detail=error.code
+        ) from error
+    return {"proposal": proposals_module.public_proposal_view(row),
+            "deduped": bool(row.get("deduped"))}
+
+
+@app.get(
+    "/api/v1/nexus/repro/proposals/{proposal_id}",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_proposal_detail(
+    proposal_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """NX-LB2：提案完整方案＋校验结果＋与父运行/上一版本的 diff。"""
+    from nexus import proposals as proposals_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    row = proposals_module.get_proposal(sanitize_session_id(proposal_id))
+    if row is None or row["user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="PROPOSAL_NOT_FOUND")
+    view = proposals_module.public_proposal_view(row)
+    diff_parent = None
+    if row.get("parent_run_id"):
+        parent = await _fetch_parent_run(row["parent_run_id"], user_id)
+        if parent is not None:
+            parent_snapshot = parent.get("config_snapshot") or {}
+            diff_parent = {
+                "parent_run_id": row["parent_run_id"],
+                "parameters_changed": [
+                    {"name": name,
+                     "old": (parent_snapshot.get("parameters") or {}).get(name),
+                     "new": (row.get("parameters") or {}).get(name)}
+                    for name in sorted(set((parent_snapshot.get("parameters") or {}))
+                                        | set(row.get("parameters") or {}))
+                    if (parent_snapshot.get("parameters") or {}).get(name)
+                    != (row.get("parameters") or {}).get(name)
+                ],
+                "steps_changed": list(parent_snapshot.get("steps") or [])
+                != list(row.get("steps") or []),
+            }
+        else:
+            diff_parent = {"parent_run_id": row["parent_run_id"], "unavailable": True,
+                           "note": "父运行已不可恢复，不做差异比较"}
+    history = row.get("history") or []
+    diff_prev = None
+    if len(history) >= 2:
+        prev = history[-2]
+        diff_prev = proposals_module.proposal_diff(
+            {"version": prev.get("version"), "parameters": prev.get("parameters"),
+             "steps": prev.get("steps"), "metric_policy": {"basis": prev.get("metric_basis")},
+             "objective": "", "plan_hash": prev.get("plan_hash")},
+            {"version": row["version"], "parameters": row["parameters"],
+             "steps": row["steps"], "metric_policy": row["metric_policy"],
+             "objective": row.get("objective", ""), "plan_hash": row["plan_hash"]},
+        )
+    return {"proposal": view, "diff_parent": diff_parent, "diff_previous": diff_prev}
+
+
+@app.patch(
+    "/api/v1/nexus/repro/proposals/{proposal_id}",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_proposal_patch(
+    proposal_id: str,
+    body: ProposalPatch,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """NX-LB2：改提案（乐观锁；仅 draft；旧批准随 hash 失效）。
+
+    未声明字段 → 422（extra=forbid）；版本冲突 → 409；已执行锁定 → 409。
+    """
+    from nexus import proposals as proposals_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    try:
+        result = proposals_module.patch_proposal(
+            sanitize_session_id(proposal_id), user_id=user_id,
+            expected_version=body.expected_version,
+            objective=body.objective, parameters=body.parameters,
+        )
+    except proposals_module.ProposalError as error:
+        raise HTTPException(
+            status_code=_proposal_error_status(error.code), detail=error.code
+        ) from error
+    result["proposal"] = proposals_module.public_proposal_view(result["proposal"])
+    return result
+
+
+@app.post(
+    "/api/v1/nexus/repro/proposals/{proposal_id}/request-approval",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_proposal_request_approval(
+    proposal_id: str,
+    body: ProposalRequestApproval,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """NX-LB2： pin 住版本+hash 生成/复用审批（不直接执行）。
+
+    冻结步骤快照入票据；执行时重验版本+hash（proposal 被改则旧票拒绝）。
+    同一版本重复请求返回同一 pending 审批（幂等，不多建票据）。
+    """
+    from nexus import approvals, proposals as proposals_module
+    from nexus.tools.reproduction import REPRO_PRESETS, _approval_ttl_s, _public_approval
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    row = proposals_module.get_proposal(sanitize_session_id(proposal_id))
+    if row is None or row["user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="PROPOSAL_NOT_FOUND")
+    if row["status"] != "draft":
+        raise HTTPException(status_code=409, detail="PROPOSAL_LOCKED")
+    if int(row["version"]) != int(body.expected_version):
+        raise HTTPException(status_code=409, detail="PROPOSAL_VERSION_CONFLICT")
+    preset = REPRO_PRESETS.get(str(row["preset_id"]).lower())
+    if preset is None:
+        raise HTTPException(status_code=422, detail="PROPOSAL_PRESET_UNSUPPORTED")
+    # 幂等：同版本已有 pending 审批则复用。
+    for approval in approvals.list_approvals(
+            user_id=user_id, status="pending", session_id=row["session_id"]):
+        if (approval.get("proposal_id") == row["proposal_id"]
+                and int(approval.get("proposal_version", 0)) == int(row["version"])):
+            return {"approval": _public_approval(approval, preset), "deduped": True}
+    try:
+        created = approvals.create_approval(
+            user_id=user_id, session_id=row["session_id"],
+            tool="run_reproduction", preset=preset, ttl_s=_approval_ttl_s(),
+            proposal_binding={
+                "proposal_id": row["proposal_id"],
+                "proposal_version": row["version"],
+                "proposal_hash": row["plan_hash"],
+                "frozen_steps": list(row["steps"]),
+            },
+        )
+    except Exception as error:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail="APPROVAL_CREATE_FAILED") from error
+    return {"approval": _public_approval(created, preset), "deduped": False}
+
+
+@app.get(
+    "/api/v1/nexus/approvals",
+    dependencies=[Depends(require_api_key)],
+)
+async def approvals_list(
+    session_id: str = "",
+    status: str = "pending",
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """NX-LB2：审批待办恢复（输入框浮窗用）：本人的待办＋提案摘要。
+
+    status 仅支持 pending/approved/consumed/rejected/expired/all。
+    """
+    from nexus import approvals, proposals as proposals_module
+    from nexus.tools.reproduction import REPRO_PRESETS, _public_approval
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    wanted = (status or "pending").strip().lower()
+    if wanted not in ("pending", "approved", "consumed", "rejected", "expired", "all"):
+        raise HTTPException(status_code=422, detail="APPROVAL_STATUS_UNSUPPORTED")
+    rows = approvals.list_approvals(
+        user_id=user_id,
+        status=None if wanted == "all" else wanted,
+        session_id=session_id.strip()[:128] or None,
+    )
+    items = []
+    for row in rows:
+        preset = REPRO_PRESETS.get(str(row.get("preset_id", "")).lower())
+        item = _public_approval(row, preset) or {}
+        if row.get("proposal_id"):
+            proposal = proposals_module.get_proposal(row["proposal_id"])
+            if proposal is not None and proposal["user_id"] == user_id:
+                item["proposal"] = {
+                    "proposal_id": proposal["proposal_id"],
+                    "version": proposal["version"],
+                    "status": proposal["status"],
+                    "objective": proposal.get("objective", ""),
+                    "parameters": proposal["parameters"],
+                    "metric_basis": (proposal.get("metric_policy") or {}).get("basis", ""),
+                    "plan_hash": proposal["plan_hash"],
+                }
+            else:
+                item["proposal"] = {"proposal_id": row["proposal_id"],
+                                    "unavailable": True}
+        items.append(item)
+    return {"items": items}

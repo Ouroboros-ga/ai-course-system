@@ -65,6 +65,12 @@ def budget_for(preset: dict[str, Any]) -> dict[str, Any]:
 
 
 def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
+    frozen = row.get("frozen_steps", [])
+    if isinstance(frozen, str):
+        try:
+            frozen = json.loads(frozen)
+        except ValueError:
+            frozen = []
     return {
         "approval_id": row["approval_id"],
         "user_id": row["user_id"],
@@ -78,7 +84,31 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "detail": row.get("detail", ""),
         "created_at": row["created_at"],
         "expires_at": row["expires_at"],
+        # NX-LB2 提案绑定（旧票据缺省为空，即 preset 直批路径）。
+        "proposal_id": row.get("proposal_id", ""),
+        "proposal_version": row.get("proposal_version", 0),
+        "proposal_hash": row.get("proposal_hash", ""),
+        "frozen_steps": frozen if isinstance(frozen, list) else [],
     }
+
+
+_APPROVAL_SELECT = (
+    "approval_id, user_id, session_id, tool, preset_id, "
+    "plan_hash, budget, status, job_id, detail, created_at, expires_at, "
+    "proposal_id, proposal_version, proposal_hash, frozen_steps"
+)
+
+_APPROVAL_KEYS = ("approval_id", "user_id", "session_id", "tool", "preset_id",
+                  "plan_hash", "budget", "status", "job_id", "detail",
+                  "created_at", "expires_at", "proposal_id", "proposal_version",
+                  "proposal_hash", "frozen_steps")
+
+
+def _row_from_pg_values(found: Any) -> dict[str, Any]:
+    row = dict(zip(_APPROVAL_KEYS, found))
+    if isinstance(row["budget"], str):
+        row["budget"] = json.loads(row["budget"])
+    return _row_to_dict(row)
 
 
 def _is_expired(row: dict[str, Any], now: float | None = None) -> bool:
@@ -118,12 +148,26 @@ def _pg_settings() -> tuple[str, str] | None:
 
 
 def ensure_approvals_table(dsn: str, schema: str) -> None:
-    """幂等建表（lifespan/首次写入前调用；失败抛异常由调用方降级）。"""
+    """幂等建表（lifespan/首次写入前调用；失败抛异常由调用方降级）。
+
+    NX-LB2：老表缺提案绑定列时逐列补（PG ADD COLUMN IF NOT EXISTS，
+    可重入；回退见提案验收记录——旧代码忽略新列）。
+    """
     import psycopg
 
     with psycopg.connect(dsn, autocommit=True) as conn:
         with conn.cursor() as cur:
             cur.execute(APPROVALS_DDL.format(schema=schema))
+            for column, ddl in (
+                ("proposal_id", "TEXT NOT NULL DEFAULT ''"),
+                ("proposal_version", "INTEGER NOT NULL DEFAULT 0"),
+                ("proposal_hash", "TEXT NOT NULL DEFAULT ''"),
+                ("frozen_steps", "TEXT NOT NULL DEFAULT '[]'"),
+            ):
+                cur.execute(
+                    f"ALTER TABLE {schema}.nexus_approvals "
+                    f"ADD COLUMN IF NOT EXISTS {column} {ddl}"
+                )
 
 
 def create_approval(
@@ -133,9 +177,16 @@ def create_approval(
     tool: str,
     preset: dict[str, Any],
     ttl_s: int,
+    proposal_binding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """创建 pending 审批（提案持久化）。零外部调用，可安全在工具内执行。"""
+    """创建 pending 审批（提案持久化）。零外部调用，可安全在工具内执行。
+
+    proposal_binding（NX-LB2，可选）：{"proposal_id", "proposal_version",
+    "proposal_hash", "frozen_steps"}——request-approval 路径绑定，执行时
+    按版本+hash 重验提案，未绑定即 legacy preset 直批路径。
+    """
     now = _now()
+    binding = proposal_binding or {}
     row = {
         "approval_id": new_approval_id(),
         "user_id": user_id or "",
@@ -149,6 +200,10 @@ def create_approval(
         "detail": "",
         "created_at": now,
         "expires_at": now + max(1, int(ttl_s)),
+        "proposal_id": str(binding.get("proposal_id", "")),
+        "proposal_version": int(binding.get("proposal_version", 0) or 0),
+        "proposal_hash": str(binding.get("proposal_hash", "")),
+        "frozen_steps": list(binding.get("frozen_steps") or []),
     }
     pg = _pg_settings()
     if pg is not None:
@@ -162,14 +217,18 @@ def create_approval(
                     cur.execute(
                         f"INSERT INTO {schema}.nexus_approvals "
                         "(approval_id, user_id, session_id, tool, preset_id, plan_hash, "
-                        "budget, status, job_id, detail, created_at, expires_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        "budget, status, job_id, detail, created_at, expires_at, "
+                        "proposal_id, proposal_version, proposal_hash, frozen_steps) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (
                             row["approval_id"], row["user_id"], row["session_id"],
                             row["tool"], row["preset_id"], row["plan_hash"],
                             json.dumps(row["budget"], ensure_ascii=False),
                             row["status"], row["job_id"], row["detail"],
                             row["created_at"], row["expires_at"],
+                            row["proposal_id"], row["proposal_version"],
+                            row["proposal_hash"],
+                            json.dumps(row["frozen_steps"], ensure_ascii=False),
                         ),
                     )
             return _row_to_dict(row)
@@ -191,19 +250,13 @@ def get_approval(approval_id: str) -> dict[str, Any] | None:
             with psycopg.connect(dsn) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        f"SELECT approval_id, user_id, session_id, tool, preset_id, "
-                        f"plan_hash, budget, status, job_id, detail, created_at, expires_at "
+                        f"SELECT {_APPROVAL_SELECT} "
                         f"FROM {schema}.nexus_approvals WHERE approval_id = %s",
                         (approval_id,),
                     )
                     found = cur.fetchone()
             if found is not None:
-                keys = ("approval_id", "user_id", "session_id", "tool", "preset_id",
-                        "plan_hash", "budget", "status", "job_id", "detail",
-                        "created_at", "expires_at")
-                row = dict(zip(keys, found))
-                if isinstance(row["budget"], str):
-                    row["budget"] = json.loads(row["budget"])
+                row = _row_from_pg_values(found)
         except Exception as error:  # noqa: BLE001
             logger.warning("approval pg read failed: %s", error)
             row = None
@@ -240,20 +293,13 @@ def _pg_transition(
             cur.execute(
                 f"UPDATE {schema}.nexus_approvals SET {update_sql} "
                 f"WHERE approval_id = %s AND status = %s "
-                f"RETURNING approval_id, user_id, session_id, tool, preset_id, "
-                f"plan_hash, budget, status, job_id, detail, created_at, expires_at",
+                f"RETURNING {_APPROVAL_SELECT}",
                 (*params, approval_id, expect),
             )
             found = cur.fetchone()
     if found is None:
         return None
-    keys = ("approval_id", "user_id", "session_id", "tool", "preset_id",
-            "plan_hash", "budget", "status", "job_id", "detail",
-            "created_at", "expires_at")
-    row = dict(zip(keys, found))
-    if isinstance(row["budget"], str):
-        row["budget"] = json.loads(row["budget"])
-    return _row_to_dict(row)
+    return _row_from_pg_values(found)
 
 
 def decide_approval(approval_id: str, user_id: str, decision: str) -> dict[str, Any]:
@@ -297,8 +343,11 @@ def consume_approval(
 ) -> dict[str, Any]:
     """消费批准（approved→consumed 原子转换），返回可执行的审批行。
 
-    校验全部绑定：本人/同会话/同工具无关（tool 由调用方固定）/plan_hash
-    一致/未过期。已消费返回原行（含 job_id，供幂等重试直接返回原 job）。
+    校验全部绑定：本人/同会话/plan_hash 一致/未过期。已消费返回原行
+    （含 job_id，供幂等重试直接返回原 job）。
+    NX-LB2：票据若绑定提案（proposal_id 非空），改走提案核验——提案须仍为
+    同一版本且 hash 一致（修改后旧票据拒绝），执行载荷取冻结步骤；
+    preset hash 检查跳过（提案 hash 已覆盖全部执行要素）。
     任何失配一律抛 ApprovalError——调用方不得提交 Worker。
     """
     current = get_approval(approval_id)
@@ -317,7 +366,9 @@ def consume_approval(
         )
     if _is_expired(current):
         raise ApprovalError("APPROVAL_EXPIRED", "审批已过期，请重新提案")
-    if plan_hash_for(preset) != current["plan_hash"]:
+    if current.get("proposal_id"):
+        _verify_proposal_binding(current)
+    elif plan_hash_for(preset) != current["plan_hash"]:
         raise ApprovalError(
             "APPROVAL_PLAN_CHANGED",
             "复现计划已变化，旧批准失效，请重新提案",
@@ -337,6 +388,34 @@ def consume_approval(
         return consume_approval(approval_id, user_id=user_id, session_id=session_id, preset=preset)
     stored["status"] = "consumed"
     return _row_to_dict(stored)
+
+
+def _verify_proposal_binding(approval: dict[str, Any]) -> dict[str, Any]:
+    """核验审批绑定的提案仍为同一版本且 hash 一致；返回提案行。
+
+    提案被修改（版本/hash 漂移）→ APPROVAL_PROPOSAL_CHANGED；
+    提案被执行锁定后又被改出 draft → 同样拒绝（须走新提案）。
+    局部 import 避开 proposals→approvals 循环依赖（proposals 不反向依赖本模块）。
+    """
+    from nexus import proposals as proposals_module
+
+    proposal = proposals_module.get_proposal(approval.get("proposal_id", ""))
+    if proposal is None:
+        raise ApprovalError("APPROVAL_PROPOSAL_CHANGED", "绑定的提案已不可恢复，请重新提案")
+    if proposal["user_id"] != approval["user_id"]:
+        raise ApprovalError("APPROVAL_PROPOSAL_CHANGED", "绑定的提案归属不一致，请重新提案")
+    if (int(proposal["version"]) != int(approval.get("proposal_version", 0))
+            or proposal["plan_hash"] != approval.get("proposal_hash", "")):
+        raise ApprovalError(
+            "APPROVAL_PROPOSAL_CHANGED",
+            f"提案已变更（现版本 v{proposal['version']}），旧批准失效，请重新走审批",
+        )
+    if proposal["status"] != "draft":
+        raise ApprovalError(
+            "APPROVAL_PROPOSAL_CHANGED",
+            f"提案已{proposal['status']}，该批准不可用，请创建新提案",
+        )
+    return proposal
 
 
 def attach_job(approval_id: str, job_id: str) -> None:
@@ -360,6 +439,50 @@ def attach_job(approval_id: str, job_id: str) -> None:
     stored = _memory_approvals.get(approval_id)
     if stored is not None:
         stored["job_id"] = job_id
+
+
+def list_approvals(
+    *, user_id: str, status: str | None = None, session_id: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """NX-LB2：本人的审批列表（待办恢复用；跨用户不可见）。
+
+    status 为 None 表全部；内存路径按 created_at 倒序后截断。
+    """
+    pg = _pg_settings()
+    if pg is not None:
+        dsn, schema = pg
+        try:
+            import psycopg
+
+            clauses = ["user_id = %s"]
+            params: list[Any] = [user_id or ""]
+            if status:
+                clauses.append("status = %s")
+                params.append(status)
+            if session_id:
+                clauses.append("session_id = %s")
+                params.append(session_id)
+            params.append(max(1, min(int(limit), 200)))
+            with psycopg.connect(dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"SELECT {_APPROVAL_SELECT} FROM {schema}.nexus_approvals "
+                        f"WHERE {' AND '.join(clauses)} "
+                        f"ORDER BY created_at DESC LIMIT %s",
+                        tuple(params),
+                    )
+                    return [_row_from_pg_values(found) for found in cur.fetchall()]
+        except Exception as error:  # noqa: BLE001
+            logger.warning("approvals pg list failed: %s", error)
+    rows = [
+        dict(stored) for stored in _memory_approvals.values()
+        if stored.get("user_id") == (user_id or "")
+        and (status is None or stored.get("status") == status)
+        and (not session_id or stored.get("session_id") == session_id)
+    ]
+    rows.sort(key=lambda r: (r.get("created_at", 0), r.get("approval_id", "")), reverse=True)
+    return [_row_to_dict(r) for r in rows[:max(1, min(int(limit), 200))]]
 
 
 def clear_memory_store() -> None:
