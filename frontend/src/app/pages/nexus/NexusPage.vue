@@ -1248,6 +1248,36 @@ function capStateTagText(cap) {
   return '未建立'
 }
 
+/* ── 启动页右侧「本会话上下文」：能力三态的行级投影（v2）──
+ * 只做展示映射，能力真相仍在 nexusCapabilities.js：
+ *   ok   = 已生效 / half = 已连接·未生效 或 降级·未知 / no = 未建立
+ * 三态文案沿用 P2-8 统一口径（capStateTagText）。 */
+const CONTEXT_CAP_ROWS = [
+  { id: 'web_search', k: 'Web 检索' },
+  { id: 'cs_knowledge', k: 'CS 知识库' },
+  { id: 'course_materials', k: '课程资料' }
+]
+
+function capTagClass(cap) {
+  if (!cap) return 'no'
+  if (cap.effective === EFFECTIVE_STATE.READY) return 'ok'
+  if (cap.effective === EFFECTIVE_STATE.DEGRADED || cap.effective === EFFECTIVE_STATE.UNKNOWN) return 'half'
+  if (cap.state === CAPABILITY_STATE.WIRED) return 'half'
+  return 'no'
+}
+
+const contextRows = computed(() =>
+  CONTEXT_CAP_ROWS.map((r) => {
+    const cap = effectiveCapabilities.value.find((c) => c.id === r.id)
+    return {
+      k: r.k,
+      v: cap ? capStateTagText(cap) : '未建立',
+      cls: capTagClass(cap),
+      hint: capHint(r.id)
+    }
+  })
+)
+
 const capIconMap = {
   FileText,
   Database,
@@ -2452,97 +2482,129 @@ const emptySuggestions = computed(() =>
       <!-- 消息流主滚动区 -->
       <div v-show="!isLabView" ref="scrollArea" class="nx-chat-scroll">
         <!-- 空状态 -->
-        <div v-if="!currentSession?.turns?.length" class="nx-empty-workspace">
-          <div class="nx-empty-eyebrow">
-            {{ activeMode === NEXUS_MODES.RESEARCH ? 'NEXUS RESEARCH' : 'NEXUS' }}
-          </div>
-          <h2 class="nx-empty-title">
-            {{ activeMode === NEXUS_MODES.RESEARCH ? '从一个研究问题开始' : '从一个问题开始' }}
-          </h2>
-          <p class="nx-empty-subtitle">
-            {{ activeMode === NEXUS_MODES.RESEARCH
-              ? '搜索论文、整理证据、比较方法；需要验证时进入实验复现。'
-              : 'Nexus 会拆解复杂任务，检索课程资料与 Web，给出可核对的过程与答案。' }}
-          </p>
+        <!-- ── 启动页（空态）v2 · 控制台方向 ──
+             这块界面只服务一件事：让用户打出第一句话。因此：
+             · 左对齐到消息列（发出第一条消息时不跳位），不再居中；
+             · 去卡片化，靠 1px 发丝线分区；
+             · 用右侧「本会话上下文」回答真正的问题——这次回答会用到什么；
+             · 不引入任何装饰性元素（v1 的 46px 衬线标题 / 幽灵描边字已废弃）。 -->
+        <div v-if="!currentSession?.turns?.length" class="nx-welcome">
+          <section class="nx-wl-main">
+            <p class="nx-wl-eyebrow">
+              <i class="nx-wl-mark" aria-hidden="true" />
+              Nexus · {{ currentSession?.title || '新会话' }} ·
+              {{ activeMode === NEXUS_MODES.RESEARCH ? 'Research' : 'General' }}
+            </p>
+            <h2 class="nx-wl-title">
+              {{ activeMode === NEXUS_MODES.RESEARCH ? '从一个研究问题开始' : '从一个问题开始' }}
+            </h2>
+            <p class="nx-wl-lede">
+              {{ activeMode === NEXUS_MODES.RESEARCH
+                ? '搜索论文、整理证据、比较方法；需要验证时进入实验复现。'
+                : 'Nexus 会拆解复杂任务，检索课程资料与 Web，给出可核对的过程与答案。' }}
+            </p>
 
-          <!-- 模式预设卡（UX 评审 P1-5）：Mode 切换即工具白名单，
-               这个决定必须在打字之前就看得见，而不是藏在顶部的下拉里。 -->
-          <div class="nx-mode-cards">
-            <div
-              v-for="(cfg, key) in NEXUS_MODE_CONFIG"
-              :key="key"
-              class="nx-mode-card"
-              :class="{ 'is-active': activeMode === key }"
-              role="button"
-              tabindex="0"
-              :aria-pressed="activeMode === key"
-              @click="switchMode(key)"
-              @keydown.enter.prevent="switchMode(key)"
-              @keydown.space.prevent="switchMode(key)"
-            >
-              <span v-if="activeMode === key" class="nx-mc-cur">当前</span>
-              <div class="nx-mc-head">
-                <span class="nx-mc-iconbox">
-                  <component
-                    :is="key === NEXUS_MODES.RESEARCH ? Microscope : Sparkles"
-                    :size="17"
-                  />
-                </span>
-                <div class="nx-mc-titlebox">
-                  <span class="nx-mc-title">{{ cfg.label }}</span>
-                  <span class="nx-mc-sub">可用工具 {{ cfg.tools.length }} 项</span>
-                </div>
-              </div>
-              <p class="nx-mc-desc">{{ cfg.desc }}</p>
-              <div class="nx-mc-tools">
-                <span v-for="t in cfg.tools" :key="t" class="nx-tool-pill">
-                  {{ formatToolDisplayName(t) }}
+            <!-- 模式即工具白名单（UX 评审 P1-5）：打字之前就看得见，
+                 切换在原地完成；控件语汇与右上「研究对话／实验工作台」一致。 -->
+            <div class="nx-wl-modeset">
+              <div class="nx-seg" role="tablist" aria-label="工作模式">
+                <span
+                  v-for="(cfg, key, i) in NEXUS_MODE_CONFIG"
+                  :key="key"
+                  class="nx-seg-btn"
+                  :class="{ 'is-on': activeMode === key }"
+                  role="tab"
+                  tabindex="0"
+                  :aria-selected="activeMode === key"
+                  :aria-pressed="activeMode === key"
+                  @click="switchMode(key)"
+                  @keydown.enter.prevent="switchMode(key)"
+                  @keydown.space.prevent="switchMode(key)"
+                >
+                  <i class="nx-seg-no">{{ String(i + 1).padStart(2, '0') }}</i>{{ cfg.label }}
                 </span>
               </div>
+              <span class="nx-wl-tools">
+                <em>·</em>可用工具 <b>{{ NEXUS_MODE_CONFIG[activeMode].tools.length }}</b> 项<em>·</em>
+                <template
+                  v-for="(t, i) in NEXUS_MODE_CONFIG[activeMode].tools.slice(0, 5)"
+                  :key="t"
+                >
+                  <em v-if="i">·</em>{{ formatToolDisplayName(t) }}
+                </template>
+                <span
+                  v-if="NEXUS_MODE_CONFIG[activeMode].tools.length > 5"
+                  class="nx-wl-more"
+                >+{{ NEXUS_MODE_CONFIG[activeMode].tools.length - 5 }}</span>
+              </span>
             </div>
-          </div>
 
-          <!-- 课程绑定引导条（UX 评审 P1-4）：课程入口从顶部 chips 收敛到这里 -->
-          <div class="nx-start-course">
-            <BookOpen :size="14" class="nx-sc-icon" />
-            <span class="nx-sc-text">
-              {{
-                currentSession?.courseName
-                  ? `已绑定课程：${currentSession.courseName}`
-                  : '未绑定课程 · 回答只会用到 Web 与通用知识'
-              }}
-            </span>
-            <SfxButton
-              variant="secondary"
-              size="sm"
-              class="nx-sc-btn"
-              @click="coursePickerOpen = true"
-            >
-              {{ currentSession?.courseId ? '更换' : '绑定课程' }}
-            </SfxButton>
-          </div>
-
-          <div
-            class="nx-quick-cards"
-            :class="{ 'is-research': activeMode === NEXUS_MODES.RESEARCH }"
-          >
-            <div
-              v-for="sg in emptySuggestions"
-              :key="sg.title"
-              class="nx-quick-card"
-              role="button"
-              tabindex="0"
-              @click="applySuggestion(sg.prompt)"
-              @keydown.enter.prevent="applySuggestion(sg.prompt)"
-              @keydown.space.prevent="applySuggestion(sg.prompt)"
-            >
-              <component :is="capIconMap[sg.icon]" :size="15" class="nx-qc-icon" />
-              <div class="nx-qc-text">
-                <span class="nx-qc-title">{{ sg.title }}</span>
-                <span class="nx-qc-desc">{{ sg.desc }}</span>
+            <div class="nx-wl-sect">
+              <span class="nx-wl-sect-t">起点建议</span>
+              <span class="nx-wl-sect-c">Starters</span>
+            </div>
+            <div class="nx-starters">
+              <div
+                v-for="(sg, i) in emptySuggestions"
+                :key="sg.title"
+                class="nx-starter"
+                role="button"
+                tabindex="0"
+                @click="applySuggestion(sg.prompt)"
+                @keydown.enter.prevent="applySuggestion(sg.prompt)"
+                @keydown.space.prevent="applySuggestion(sg.prompt)"
+              >
+                <span class="nx-starter-no">{{ String(i + 1).padStart(2, '0') }}</span>
+                <span class="nx-starter-tx">
+                  <b>{{ sg.title }}</b>
+                  <span>{{ sg.desc }}</span>
+                </span>
+                <span class="nx-starter-ar" aria-hidden="true">→</span>
               </div>
             </div>
-          </div>
+          </section>
+
+          <!-- 右侧上下文面板：回答"这次回答会用到什么"。
+               能力三态只读 nexusCapabilities.js，这里不硬编码任何状态。 -->
+          <aside class="nx-ctx">
+            <div class="nx-ctx-h">本会话上下文 / Context</div>
+            <div class="nx-ctx-row">
+              <span class="nx-ctx-k">课程</span>
+              <span class="nx-ctx-v" :class="{ 'is-off': !currentSession?.courseId }">
+                {{ currentSession?.courseName || '未绑定' }}
+              </span>
+              <SfxButton
+                variant="secondary"
+                size="sm"
+                class="nx-ctx-bind"
+                @click="coursePickerOpen = true"
+              >
+                {{ currentSession?.courseId ? '更换' : '绑定课程' }}
+              </SfxButton>
+            </div>
+            <div
+              v-for="row in contextRows"
+              :key="row.k"
+              class="nx-ctx-row"
+              :title="row.hint"
+            >
+              <span class="nx-ctx-k">{{ row.k }}</span>
+              <span class="nx-ctx-v">
+                <span class="nx-ctx-tag" :class="row.cls">{{ row.v }}</span>
+              </span>
+            </div>
+            <div class="nx-ctx-row">
+              <span class="nx-ctx-k">会话存储</span>
+              <span class="nx-ctx-v">
+                {{ nexusDataSourceMode === 'demo' ? '本地模拟 · 仅存本机' : '仅保存在本机' }}
+              </span>
+            </div>
+            <p class="nx-ctx-note">
+              {{ currentSession?.courseId
+                ? '本轮回答会参考这门课的资料与知识图谱。'
+                : '未绑定课程时，回答只会用到 Web 与通用知识；绑定后该课的资料与知识图谱会进入检索范围。' }}
+            </p>
+          </aside>
         </div>
 
         <!-- 对话 Turns 消息流 -->
@@ -3419,7 +3481,8 @@ const emptySuggestions = computed(() =>
 }
 
 /* 键盘可达性：所有自绘可点元素统一焦点环 */
-.nx-quick-card:focus-visible,
+.nx-starter:focus-visible,
+.nx-seg-btn:focus-visible,
 .nx-chip:focus-visible,
 .nx-dv-row:focus-visible,
 .nx-dv-subrow:focus-visible,
@@ -3428,8 +3491,7 @@ const emptySuggestions = computed(() =>
 .nx-session-item:focus-visible,
 .nx-course-picker-item:focus-visible,
 .nx-dr-item:focus-visible,
-.nx-dd-close:focus-visible,
-.nx-mode-card:focus-visible {
+.nx-dd-close:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
@@ -4337,242 +4399,262 @@ const emptySuggestions = computed(() =>
   gap: var(--space-6);
 }
 
-.nx-empty-workspace {
-  margin: auto;
-  max-width: 640px;
-  text-align: center;
-  padding: var(--space-8) 0;
+/* ══════════════════════════════════════════════════════════════
+   启动页（空态）v2 · 控制台方向
+   与 NexusLab v4/v6 共用视觉词：1px 发丝线分区、mono 大写小标、
+   26–28px 控件 / 1px 描边、accent 只出现在关键动作。
+   不引入任何装饰性字符（v1 的衬线大标题与幽灵描边字已废弃）。
+   ══════════════════════════════════════════════════════════════ */
+.nx-welcome {
+  /* 竖向仍居中，横向铺满：左缘与消息列对齐，发第一条消息时不跳位 */
+  margin: auto 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 28px;
+  align-items: start;
 }
 
-.nx-empty-eyebrow {
+.nx-wl-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-family: var(--font-mono);
-  font-size: var(--caption-size);
-  letter-spacing: 0.16em;
-  color: var(--nexus-accent);
-  font-weight: 500;
-  margin-bottom: var(--space-3);
-}
-
-.nx-empty-title {
-  font-size: var(--title-2-size);
-  font-weight: 600;
-  color: var(--ink-900);
-  margin-bottom: var(--space-2);
-}
-
-.nx-empty-subtitle {
-  font-size: var(--body-md-size);
-  color: var(--text-secondary);
-  line-height: 1.6;
-  margin: 0 auto;
-  max-width: 460px;
-}
-
-/* 启动页：模式预设卡（UX 评审 P1-5） */
-.nx-mode-cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
-  margin-top: var(--space-6);
-  text-align: left;
-}
-
-.nx-mode-card {
-  position: relative;
-  padding: 14px var(--space-4) var(--space-3);
-  /* 设计板 Board C：1.5px 描边 + 14px 圆角，比既有 md 圆角更舒展 */
-  border: 1.5px solid var(--border-default);
-  background: var(--surface-panel);
-  border-radius: 14px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  transition:
-    border-color var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out);
-}
-
-.nx-mode-card:hover {
-  border-color: var(--nexus-accent-line);
-}
-
-/* 选中态：accent 描边 + 极淡 accent 底（设计板是 3.5% 透明度的蓝），
-   不用 accent-soft 实底——会把卡片内容压下去 */
-.nx-mode-card.is-active {
-  border-color: var(--nexus-accent);
-  background: linear-gradient(0deg, rgba(0, 122, 244, 0.035), rgba(0, 122, 244, 0.035)),
-    var(--surface-panel);
-  box-shadow: var(--shadow-sm);
-}
-
-.nx-mc-cur {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  padding: 2px 9px;
-  border-radius: var(--radius-full);
-  background: var(--nexus-accent-soft);
-  color: var(--nexus-accent-strong);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.nx-mc-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-/* 图标容器块：32×32 accent-soft 底（设计板 .mcard .mi） */
-.nx-mc-iconbox {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  border-radius: 9px;
-  background: var(--nexus-accent-soft);
-  color: var(--nexus-accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.nx-mc-titlebox {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding-right: 44px;
-}
-
-.nx-mc-title {
-  font-size: 14.5px;
-  font-weight: 650;
-  color: var(--ink-900);
-}
-
-.nx-mc-sub {
   font-size: 10.5px;
-  font-weight: 500;
-  color: var(--text-disabled);
-}
-
-.nx-mc-desc {
-  margin: 0;
-  min-height: 32px;
-  font-size: 11.5px;
-  line-height: 1.6;
+  letter-spacing: 0.1em;
   color: var(--text-muted);
+  text-transform: uppercase;
 }
 
-.nx-mc-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+.nx-wl-mark {
+  width: 6px;
+  height: 6px;
+  background: var(--ink-900);
+  flex-shrink: 0;
 }
 
-/* 启动页的工具 pill 用绿色（设计板 .tpill），与能力三态的"已生效"同色语义 */
-.nx-mc-tools .nx-tool-pill {
-  background: var(--green-100);
-  color: var(--green-700);
-  font-weight: 600;
+.nx-wl-title {
+  margin-top: 12px;
+  font-size: 27px;
+  font-weight: 650;
+  line-height: 1.32;
+  letter-spacing: -0.01em;
+  color: var(--ink-900);
 }
 
-/* 启动页：课程绑定引导条（UX 评审 P1-4，对齐设计板 .bind-strip）
-   淡蓝强调条而非灰色虚线——它是"这一步能提升回答质量"的引导，不是背景信息 */
-.nx-start-course {
+.nx-wl-lede {
+  margin-top: 8px;
+  max-width: 34em;
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+}
+
+/* 模式分段控件：与右上「研究对话／实验工作台」同一控件语汇 */
+.nx-wl-modeset {
+  margin-top: 18px;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: var(--space-4);
-  padding: 9px 14px;
-  border: 1px solid var(--nexus-accent-line);
-  border-radius: 10px;
-  background: var(--nexus-accent-soft);
-  text-align: left;
+  flex-wrap: wrap;
 }
 
-.nx-sc-icon {
-  color: var(--nexus-accent-strong);
-  flex-shrink: 0;
-}
-
-.nx-sc-text {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--caption-size);
-  line-height: 1.55;
-  color: var(--nexus-accent-strong);
-}
-
-/* 幽灵按钮（设计板 .ghost-btn）：白底 + accent 描边，压得住淡蓝底 */
-.nx-sc-btn {
-  flex-shrink: 0;
-  height: 26px;
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: 7px;
-  background: var(--surface-panel);
-  border-color: var(--nexus-accent-line);
-  color: var(--nexus-accent-strong);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.nx-quick-cards {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-3);
-  margin-top: var(--space-8);
-  text-align: left;
-}
-
-.nx-quick-cards.is-research {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.nx-quick-card {
-  padding: var(--space-3) var(--space-4);
+.nx-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-soft);
   border: 1px solid var(--border-default);
-  background: var(--surface-panel);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  transition: border-color var(--duration-fast) var(--ease-out);
+  border-radius: var(--radius-full);
 }
 
-.nx-quick-card:hover {
-  border-color: var(--color-focus);
-}
-
-.nx-qc-icon {
+.nx-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
   color: var(--text-secondary);
-  margin-top: 2px;
-  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
-.nx-qc-text {
+.nx-seg-btn:hover { color: var(--text-primary); }
+.nx-seg-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+
+.nx-seg-btn.is-on {
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(20, 33, 61, 0.08);
+}
+
+.nx-seg-no {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-style: normal;
+  color: var(--text-disabled);
+  font-variant-numeric: tabular-nums;
+}
+
+.nx-seg-btn.is-on .nx-seg-no { color: var(--nexus-accent); }
+
+/* 工具白名单：mono 一行，不用绿色药丸（绿色会被读成"成功态"） */
+.nx-wl-tools {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+.nx-wl-tools em {
+  font-style: normal;
+  color: var(--border-strong);
+  padding: 0 3px;
+}
+
+.nx-wl-tools b {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.nx-wl-more { color: var(--text-disabled); }
+
+/* 分区小标：12.5px 标题 + mono 大写注，全站统一 */
+.nx-wl-sect {
+  margin-top: 26px;
+  max-width: 640px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.nx-wl-sect-t { font-size: 12.5px; font-weight: 600; color: var(--ink-900); }
+
+.nx-wl-sect-c {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+/* 起点建议：行式清单，发丝线分隔，不做卡片 */
+.nx-starters {
+  max-width: 640px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-width: 0;
 }
 
-.nx-qc-title {
-  font-weight: 600;
-  font-size: var(--ui-sm-size);
-  color: var(--text-primary);
+.nx-starter {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 8px 11px 0;
+  border-bottom: 1px solid var(--border-default);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
 }
 
-.nx-qc-desc {
-  font-size: var(--caption-size);
+.nx-starter:hover { background: var(--surface-panel); }
+.nx-starter:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+
+.nx-starter-no {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-disabled);
+  font-variant-numeric: tabular-nums;
+}
+
+.nx-starter-tx { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nx-starter-tx b { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.nx-starter-tx span { font-size: 11.5px; line-height: 1.6; color: var(--text-secondary); }
+
+.nx-starter-ar {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-disabled);
+  transition:
+    transform var(--duration-slow) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+/* accent 全屏唯一落点：悬停时箭头右移并着色 */
+.nx-starter:hover .nx-starter-ar {
+  transform: translateX(3px);
+  color: var(--nexus-accent);
+}
+
+/* ── 右侧上下文面板：回答"这次回答会用到什么" ── */
+.nx-ctx {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+  overflow: hidden;
+}
+
+.nx-ctx-h {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--surface-canvas);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
   color: var(--text-muted);
-  line-height: var(--caption-line);
+  text-transform: uppercase;
 }
+
+.nx-ctx-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.nx-ctx-k { flex: 0 0 68px; font-size: 12px; color: var(--text-secondary); }
+.nx-ctx-v { margin-left: auto; font-size: 12px; color: var(--text-primary); text-align: right; }
+.nx-ctx-v.is-off { color: var(--text-muted); }
+.nx-ctx-bind { flex-shrink: 0; height: 26px; min-height: 26px; padding: 0 10px; }
+
+.nx-ctx-tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+}
+
+.nx-ctx-tag.ok { color: var(--green-700); background: var(--green-100); }
+
+.nx-ctx-tag.half {
+  color: #8a6a1f;
+  background: #fdf6e3;
+  box-shadow: inset 0 0 0 1px #ecd9a4;
+}
+
+.nx-ctx-tag.no { color: var(--text-muted); background: var(--surface-soft); }
+
+.nx-ctx-note {
+  padding: 10px 14px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  background: var(--surface-canvas);
+  border-top: 1px solid var(--border-default);
+}
+
 
 /* ── 对话 Turn ── */
 .nx-chat-turn {
