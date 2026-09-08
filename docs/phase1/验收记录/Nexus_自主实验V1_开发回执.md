@@ -210,3 +210,17 @@ Resources/ExperimentScope/SandboxResult pydantic＋Run/Attempt TypedDict）、
 - 真实 PG 下新列 CAS/幂等（语句与 approvals 同模式，线上核验待部署后）。
 - 线上 Ask/Auto 真实冒烟（待部署后一次性验证账号走读＋偏好＋门拒绝）。
 - UI 选择器属 T5；正式 Word/LaTeX 与干净 B 仍按任务书为后续交付。
+
+## 线上验证（2026-09-08，部署 f8379d3e，一次性验证账号 `nx_verify_t2_e5bde8c6`）
+
+- 发布＋前端构建（v6 NexusPage chunk 正常产出）＋Runtime rsync（diff 干净）
+  ＋双服务重启＋健康检查（Research 18 工具，四项全 ok；工具面实证 Ask 无
+  `run_reproduction`、Auto 有）。
+- T2 冒烟 18/18（合成账号，无真实数据）：自主提案 kind/scope_hash 32 位→
+  请求审批→本人批准→Ask 执行 403 `EXPERIMENT_EXECUTION_DISABLED`→未知模式
+  400→Auto 执行建 run（run_id=approval_id）→重试同 run 且 deduped→改 scope
+  出 v2 后旧票据 409 `APPROVAL_PROPOSAL_CHANGED`→偏好默认 ask/未知 400/保存
+  auto→chat 未知模式 400（零 LLM 消耗）→preset 提案/审批/Ask 执行 403
+  （零 Worker 提交）→待办列表/前端 Nexus 页 200。
+- 真实 PG 下验证通过：提案锁 CAS、run 幂等、偏好落盘（同账号同会话恢复 auto）。
+  上两项“未验证”关闭；剩余未验证仅 UI 选择器（T5）与正式输出物。
