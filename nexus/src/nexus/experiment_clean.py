@@ -92,12 +92,15 @@ async def replay_steps(
                 "CLEAN_STEP_TIMEOUT",
                 f"步骤#{step['attempt_no']} 超时未出退出码（`{step['command'][:80]}`）；"
                 "未知≠通过，未持久化结论。")
+        match = step["exit_code"] is not None and int(observed) == int(step["exit_code"])
+        logger.info("clean replay step #%s exit expected=%s observed=%s match=%s",
+                    step["attempt_no"], step["exit_code"], observed, match)
         results.append({
             "attempt_no": step["attempt_no"],
             "command": step["command"][:500],
             "expected": step["exit_code"],
             "observed": int(observed),
-            "match": step["exit_code"] is not None and int(observed) == int(step["exit_code"]),
+            "match": match,
         })
     matched = sum(1 for r in results if r["match"])
     verdict = "passed" if matched == len(results) else "failed"
@@ -201,6 +204,16 @@ async def start_clean_verification(
         try:
             await _complete_clean_verification(
                 run_id=run_id, user_id=user_id, step_timeout_s=step_timeout_s)
+        except CleanError as error:
+            logger.warning("clean verification failed for %s: %s: %s",
+                           run_id, error.code, error)
+            try:
+                runs_module.set_clean_verdict(run_id, "", f"干净验证异常（{error.code}），可重试。")
+            except Exception:  # noqa: BLE001 - 落盘失败只记日志
+                logger.warning("clean reset persist failed for %s", run_id)
+            finally:
+                async with _CLEAN_LOCKS_GUARD:
+                    _VERIFYING.discard(run_id)
         except Exception as error:  # noqa: BLE001 - 后台任务绝不裸抛
             logger.warning("clean verification failed for %s: %s",
                            run_id, type(error).__name__)
