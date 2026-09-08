@@ -64,10 +64,17 @@ def _validate(name: str, rows: list[dict], *, min_n: int, max_n: int, length_che
 
 
 def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="导出平台提交格式（训练/推理集）")
+    parser.add_argument("--train", type=Path, default=DATA / "instruction_train_v2.jsonl",
+                        help="训练集 JSONL（默认 v2；传 data/instruction_train.jsonl 则导出 v1）")
+    parser.add_argument("--eval-file", type=Path, default=DATA / "instruction_eval_v2.jsonl")
+    parser.add_argument("--baseline", type=Path, default=BASE / "eval_baseline.json")
+    args = parser.parse_args()
     OUT.mkdir(exist_ok=True)
-    train = _load_jsonl(DATA / "instruction_train.jsonl")
-    ev = _load_jsonl(DATA / "instruction_eval.jsonl")
-    baseline = json.loads((BASE / "eval_baseline.json").read_text(encoding="utf-8"))["cases"]
+    train = _load_jsonl(args.train)
+    ev = _load_jsonl(args.eval_file)
+    baseline = json.loads(args.baseline.read_text(encoding="utf-8"))["cases"]
 
     files: dict[str, list[str]] = {}
 

@@ -1,0 +1,1514 @@
+{
+ "course_id": 15,
+ "count": 133,
+ "questions": [
+  {
+   "id": 322,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11218
+   ]
+  },
+  {
+   "id": 323,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11219
+   ]
+  },
+  {
+   "id": 324,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11220
+   ]
+  },
+  {
+   "id": 325,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11221
+   ]
+  },
+  {
+   "id": 326,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11222
+   ]
+  },
+  {
+   "id": 327,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11223
+   ]
+  },
+  {
+   "id": 328,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11224
+   ]
+  },
+  {
+   "id": 329,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11225
+   ]
+  },
+  {
+   "id": 330,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11226
+   ]
+  },
+  {
+   "id": 331,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11227
+   ]
+  },
+  {
+   "id": 332,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11228
+   ]
+  },
+  {
+   "id": 333,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11229
+   ]
+  },
+  {
+   "id": 334,
+   "question_text": "请计算：3 + 5 = ?",
+   "answer": "8",
+   "options": [
+    "6",
+    "7",
+    "8",
+    "9"
+   ],
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11230
+   ]
+  },
+  {
+   "id": 335,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11231
+   ]
+  },
+  {
+   "id": 336,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11232
+   ]
+  },
+  {
+   "id": 337,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11233
+   ]
+  },
+  {
+   "id": 338,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11234
+   ]
+  },
+  {
+   "id": 339,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11235
+   ]
+  },
+  {
+   "id": 340,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11236
+   ]
+  },
+  {
+   "id": 341,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11237
+   ]
+  },
+  {
+   "id": 342,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11238
+   ]
+  },
+  {
+   "id": 343,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11239
+   ]
+  },
+  {
+   "id": 344,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11240
+   ]
+  },
+  {
+   "id": 345,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11241
+   ]
+  },
+  {
+   "id": 346,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11242
+   ]
+  },
+  {
+   "id": 347,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11243
+   ]
+  },
+  {
+   "id": 348,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11244
+   ]
+  },
+  {
+   "id": 349,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11245
+   ]
+  },
+  {
+   "id": 350,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11246
+   ]
+  },
+  {
+   "id": 351,
+   "question_text": "请计算：3 + 5 = ?",
+   "answer": "8",
+   "options": [
+    "6",
+    "7",
+    "8",
+    "9"
+   ],
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11247
+   ]
+  },
+  {
+   "id": 352,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11248
+   ]
+  },
+  {
+   "id": 353,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11249
+   ]
+  },
+  {
+   "id": 354,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11250
+   ]
+  },
+  {
+   "id": 355,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11251
+   ]
+  },
+  {
+   "id": 356,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11252
+   ]
+  },
+  {
+   "id": 357,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11253
+   ]
+  },
+  {
+   "id": 358,
+   "question_text": "请计算：3 + 5 = ?",
+   "answer": "8",
+   "options": [
+    "6",
+    "7",
+    "8",
+    "9"
+   ],
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11254
+   ]
+  },
+  {
+   "id": 359,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11255
+   ]
+  },
+  {
+   "id": 360,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11256
+   ]
+  },
+  {
+   "id": 361,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11257
+   ]
+  },
+  {
+   "id": 362,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11258
+   ]
+  },
+  {
+   "id": 363,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11259
+   ]
+  },
+  {
+   "id": 364,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11260
+   ]
+  },
+  {
+   "id": 365,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11261
+   ]
+  },
+  {
+   "id": 366,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11262
+   ]
+  },
+  {
+   "id": 367,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11263
+   ]
+  },
+  {
+   "id": 368,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11264
+   ]
+  },
+  {
+   "id": 369,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11265
+   ]
+  },
+  {
+   "id": 370,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11266
+   ]
+  },
+  {
+   "id": 371,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11267
+   ]
+  },
+  {
+   "id": 372,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11268
+   ]
+  },
+  {
+   "id": 373,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11269
+   ]
+  },
+  {
+   "id": 374,
+   "question_text": "请计算：3 + 5 = ?",
+   "answer": "8",
+   "options": [
+    "6",
+    "7",
+    "8",
+    "9"
+   ],
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11270
+   ]
+  },
+  {
+   "id": 375,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11271
+   ]
+  },
+  {
+   "id": 376,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11272
+   ]
+  },
+  {
+   "id": 377,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11273
+   ]
+  },
+  {
+   "id": 378,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11274
+   ]
+  },
+  {
+   "id": 379,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11275
+   ]
+  },
+  {
+   "id": 380,
+   "question_text": "已知一个三角形的两边长分别为5和7，第三边长为整数，则第三边长不可能是（ ）",
+   "answer": "D",
+   "options": [
+    "3",
+    "5",
+    "9",
+    "13"
+   ],
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11276
+   ]
+  },
+  {
+   "id": 381,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11277
+   ]
+  },
+  {
+   "id": 382,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11278
+   ]
+  },
+  {
+   "id": 383,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11279
+   ]
+  },
+  {
+   "id": 384,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11280
+   ]
+  },
+  {
+   "id": 385,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11281
+   ]
+  },
+  {
+   "id": 386,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11282
+   ]
+  },
+  {
+   "id": 387,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11283
+   ]
+  },
+  {
+   "id": 388,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11284
+   ]
+  },
+  {
+   "id": 389,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11285
+   ]
+  },
+  {
+   "id": 390,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11286
+   ]
+  },
+  {
+   "id": 391,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11287
+   ]
+  },
+  {
+   "id": 392,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11288
+   ]
+  },
+  {
+   "id": 393,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11289
+   ]
+  },
+  {
+   "id": 394,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11290
+   ]
+  },
+  {
+   "id": 395,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11291
+   ]
+  },
+  {
+   "id": 396,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11292
+   ]
+  },
+  {
+   "id": 397,
+   "question_text": "请计算：3 + 5 = ?",
+   "answer": "8",
+   "options": [
+    "6",
+    "7",
+    "8",
+    "9"
+   ],
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11293
+   ]
+  },
+  {
+   "id": 398,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11294
+   ]
+  },
+  {
+   "id": 399,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11295
+   ]
+  },
+  {
+   "id": 400,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11296
+   ]
+  },
+  {
+   "id": 401,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11297
+   ]
+  },
+  {
+   "id": 402,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11298
+   ]
+  },
+  {
+   "id": 403,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11299
+   ]
+  },
+  {
+   "id": 404,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11300
+   ]
+  },
+  {
+   "id": 405,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11301
+   ]
+  },
+  {
+   "id": 406,
+   "question_text": "若一个三角形的两个内角分别为 50° 和 60°，则第三个内角的度数为多少？",
+   "answer": "70°",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11302
+   ]
+  },
+  {
+   "id": 407,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11303
+   ]
+  },
+  {
+   "id": 408,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11304
+   ]
+  },
+  {
+   "id": 409,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11305
+   ]
+  },
+  {
+   "id": 410,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11306
+   ]
+  },
+  {
+   "id": 411,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11307
+   ]
+  },
+  {
+   "id": 412,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11308
+   ]
+  },
+  {
+   "id": 413,
+   "question_text": "请计算：3 + 5 = ?",
+   "answer": "8",
+   "options": [
+    "6",
+    "7",
+    "8",
+    "9"
+   ],
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11309
+   ]
+  },
+  {
+   "id": 414,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11310
+   ]
+  },
+  {
+   "id": 415,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11311
+   ]
+  },
+  {
+   "id": 416,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11312
+   ]
+  },
+  {
+   "id": 417,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11313
+   ]
+  },
+  {
+   "id": 418,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11314
+   ]
+  },
+  {
+   "id": 419,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11315
+   ]
+  },
+  {
+   "id": 420,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11316
+   ]
+  },
+  {
+   "id": 421,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11317
+   ]
+  },
+  {
+   "id": 422,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11318
+   ]
+  },
+  {
+   "id": 423,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11319
+   ]
+  },
+  {
+   "id": 424,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11320
+   ]
+  },
+  {
+   "id": 425,
+   "question_text": "请计算：3 + 5 = ?",
+   "answer": "8",
+   "options": [
+    "6",
+    "7",
+    "8",
+    "9"
+   ],
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11321
+   ]
+  },
+  {
+   "id": 426,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11322
+   ]
+  },
+  {
+   "id": 427,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11323
+   ]
+  },
+  {
+   "id": 428,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11324
+   ]
+  },
+  {
+   "id": 429,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11325
+   ]
+  },
+  {
+   "id": 430,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11326
+   ]
+  },
+  {
+   "id": 431,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11327
+   ]
+  },
+  {
+   "id": 432,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11328
+   ]
+  },
+  {
+   "id": 433,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11329
+   ]
+  },
+  {
+   "id": 434,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11330
+   ]
+  },
+  {
+   "id": 435,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11331
+   ]
+  },
+  {
+   "id": 436,
+   "question_text": "请计算：3 + 5 = ?",
+   "answer": "8",
+   "options": [
+    "6",
+    "7",
+    "8",
+    "9"
+   ],
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11332
+   ]
+  },
+  {
+   "id": 437,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11333
+   ]
+  },
+  {
+   "id": 438,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11334
+   ]
+  },
+  {
+   "id": 439,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11335
+   ]
+  },
+  {
+   "id": 440,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11336
+   ]
+  },
+  {
+   "id": 441,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11337
+   ]
+  },
+  {
+   "id": 442,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11338
+   ]
+  },
+  {
+   "id": 443,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11339
+   ]
+  },
+  {
+   "id": 444,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11340
+   ]
+  },
+  {
+   "id": 445,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11341
+   ]
+  },
+  {
+   "id": 446,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11342
+   ]
+  },
+  {
+   "id": 447,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11343
+   ]
+  },
+  {
+   "id": 448,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11344
+   ]
+  },
+  {
+   "id": 449,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11345
+   ]
+  },
+  {
+   "id": 450,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11346
+   ]
+  },
+  {
+   "id": 451,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11347
+   ]
+  },
+  {
+   "id": 452,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 medium 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "medium",
+   "knowledge_node_ids": [
+    11348
+   ]
+  },
+  {
+   "id": 453,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 hard 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "hard",
+   "knowledge_node_ids": [
+    11349
+   ]
+  },
+  {
+   "id": 454,
+   "question_text": "[LLM 不可用 - 占位草稿] 针对 diagnose / 未指定知识点 的 easy 难度题目（待教师替换）",
+   "answer": "[占位答案 - LLM 不可用，待教师完善]",
+   "options": {},
+   "question_type": "short_answer",
+   "difficulty": "easy",
+   "knowledge_node_ids": [
+    11350
+   ]
+  }
+ ]
+}
