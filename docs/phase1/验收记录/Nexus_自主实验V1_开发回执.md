@@ -468,7 +468,7 @@ LICENSE_NOT_ALLOWED）；新增 `nexus/tests/test_t7_license_gate.py`（8 项）
   不等同基础镜像安装；本次 B 选 pyproject 但走 base_container，
   repo2docker 未翻转）。
 - 线上真实 PG 的 license/frozen_license 列补齐（lifespan ensure 已备，
-  待部署后看日志＋冒烟）；正式 Word/LaTeX 与干净 B 仍归 SR6。
+  待部署后看日志＋冒烟）；正式 Word/LaTeX 与干净 B 仍归 SR6（见下节）。
 
 ## 线上验证（2026-09-08，部署 ac148ab2，一次性验证账号 `nx_verify_t7_*`）
 
@@ -496,3 +496,57 @@ LICENSE_NOT_ALLOWED）；新增 `nexus/tests/test_t7_license_gate.py`（8 项）
   真实模型执行成功态待密钥轮换后重验；本次未读、未输出任何密钥，
   仅记录日志中的尾号与 401 事实。沙箱残留已随报告回收（best-effort）。
 - T7 代码验收在此关闭；剩余真实模型成功态＋UI 全链待密钥恢复后补测。
+
+## SR6（2026-09-09）：正式 Word/LaTeX 与干净 B（已提交，未完全关闭）
+
+实现（`0d3ed981`＋5 个 fix：`d660efe8`/`db90f920`/`1bb54c53`/`45c3a65f`/
+`ebb3c15c`/`28a7392a`/`59018542`/`0e15b886`，零新依赖，`uv.lock` 零改动）：
+
+- `document_output.py`（新建）：冻结报告 Markdown→标准库手组最小合法
+  OOXML（段落/标题/列表/表格/代码/引用）与自包含 main.tex（ctexart＋
+  xelatex 标识）；docx 结构自检（zip＋部件＋段落数），tex 三重自检
+  （结构/转义/括号，附反例测试锁住）；工具链存在才编译（禁
+  shell-escape），缺席如实 TOOLCHAIN_MISSING。转换不改写事实。
+- `experiment_clean.py`（新建）：全新沙箱（`{run}-clean-{nonce}` 单次
+  使用）重放冻结配方 shell 步骤、逐条比对退出码；文件工具摘要
+  （`glob` 等非 shell 形）跳过留痕不计数（`ls` 保留）；verdict 持久化
+  （passed/failed＋规则版本 `sr6-clean/2`，口径变化旧结论过期重验）；
+  异步 verifying＋后台落盘＋锁＋重启自愈；Ask 禁止（Auto 门）。
+- 报告自动带出干净结论（无→not_run）；`formats` 端点写 word＋latex 双
+  产物（content 版本 `experiment-report/1` 同源）；`clean-verify` 端点；
+  Backend 新增 `word` 产物类型（base64 二进制分支，`docx` 仍拒绝，
+  旧契约不变）＋双反代（D10 门数 36→38）；前端工作台指标页动作行＋
+  双处理函数（Ask 下干净验证禁用，详情轮询直通 cleanStatus）。
+- 回归：nexus **252 passed**；Backend runs/provider＋artifacts 新测全过
+  （2 项 fails_closed 401 系干净树对照确认的基线顺序污染，非本批）；
+  前端 96/97（唯一失败仍为 CourseLayout 他线旧断言）。
+
+## 线上验证（2026-09-09，部署 0e15b886，一次性验证账号复用 T6/T7 号）
+
+- 发布＋Runtime rsync（DIFF-CLEAN）＋三服务 active＋零 error 日志。
+- formats 全过（`apv_9d1c5fe8c4e6`）：200，derived_from
+  experiment-report/1，word 4828 字节（PK 头可下载）＋latex 4199 字节
+  （`%` 头可下载），docx 自检 ok（52 段落）＋tex 自检 ok，compile
+  如实 TOOLCHAIN_MISSING（服务端无 xelatex/pdflatex；编译证明待工具链）。
+- clean-verify 门：未知模式 400、Ask 403（`CLEAN_EXECUTION_DISABLED`）。
+- clean-B 全链（`apv_886a1557fe06`，echo/ls 快步骤）：触发 verifying→
+  轮询→**passed**（deduped）→报告自动带出 passed（`clean_verification`
+  键）。新鲜沙箱、nonce op id、逐条退出码一致、用后回收。
+- 途中抓到的真问题（均已修，均有回归测试，均如实记录）：
+  1. hunk 拆分遗漏 `content_b64` 模型字段→线上 422（`d660efe8` 修；教训：
+     共享文件按 hunk 内容 PC 双检，不只看行数）。
+  2. 代理透传签名键被 Runtime forbid 拒→只透传声明字段（`db90f920` 修）。
+  3. 同步重放在 60s 代理后必超时→改异步 verifying（`1bb54c53`）。
+  4. 重放 op id 跨次复用→控制面 409 误杀→per-replay nonce（`ebb3c15c`）。
+  5. 超时 cancel 把沙箱打成终态→后续重放永久 409→单次 id＋超时不毒化
+     （`ebb3c15c`＋`0e15b886`）；规则口径变化→结论版本 gating（`59018542`）。
+  6. 文件工具摘要（`glob …`）非 shell 命令→跳过留痕不计数（`28a7392a`；
+     否则所有用文件工具的 run 必误判 failed）。
+- micrograd run（`apv_9d1c5fe8c4e6`）的干净验证：机制侧 6 步匹配（含
+  exit=127 的复现）＋第 9 步诚实分歧（记录 0/重放 127，命令在干净环境
+  不存在）→ failed 结论正确落盘；此后该 run 的 apt 步骤在冷容器持续
+  超时（未知≠通过，未伪装）。另有约 40 个调试期孤儿沙箱（空转、无 CPU，
+  共享镜像层），待控制面重启/ prune 时回收。
+- 未关闭项：LaTeX 编译证明（需 TeX Live 工具链，apt 安装另需授权）；
+  真实模型执行成功态（DeepSeek key 尾号 b27d 持续 invalid，待轮换）；
+  真实用户 UI 全链手工走读（按钮已上线，随密钥恢复后补测）。
