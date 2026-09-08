@@ -1877,7 +1877,8 @@ async def nexus_run_report(
 class NexusRunCleanVerify(BaseModel):
     """SR6 干净B验证代理体重：只透传执行模式（未知值 400，由门裁决）。
 
-    extra=allow：容忍签名键 time/enc。
+    extra=allow：容忍签名键 time/enc；未声明字段由 _reject_unknown_fields
+    422；转发上游时只带声明字段（Runtime 侧 extra=forbid 仍兜底）。
     """
 
     research_execution_mode: str | None = Field(default=None, max_length=16)
@@ -1926,6 +1927,7 @@ async def nexus_run_clean_verify(
     from app.services import nexus_run_service
 
     _require_valid_execution_mode(payload.research_execution_mode)
+    _reject_unknown_fields(NexusRunCleanVerify, payload.model_dump())
     run = nexus_run_service.get_owned_run(
         session, user_id=_artifact_user_id(current_user), run_id=run_id.strip()[:64]
     )
@@ -1934,7 +1936,7 @@ async def nexus_run_clean_verify(
     return await _proxy_json(
         request, current_user, "POST",
         f"/api/v1/nexus/repro/runs/{run['run_id']}/clean-verify",
-        body=payload.model_dump(),
+        body={"research_execution_mode": payload.research_execution_mode},
     )
 
 

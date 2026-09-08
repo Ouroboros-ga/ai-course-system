@@ -330,3 +330,43 @@ def test_run_report_proxy_passthrough(client, session, student_user, monkeypatch
                               headers=_auth(token))
         assert missing.status_code == 404
         assert len(seen) == 1
+
+
+def test_clean_verify_forwards_declared_mode_only(client, session, student_user, monkeypatch):
+    """SR6 回归：clean-verify 只透传声明字段（签名键不进 Runtime forbid 模型）。
+
+    未知模式 400（不上行）；未声明字段 422；ask＋签名键透传上游 body 恰为
+    {"research_execution_mode": "ask"}（线上 E2E 实证：透传 time/enc 会被
+    Runtime extra=forbid 以 422 拒绝）。
+    """
+    import json as _json
+
+    token = _grant_fixture(monkeypatch, session, student_user)
+    uid = str(student_user.id)
+    _record_auto(session, "apv_sr6_cv", user=uid, session_id=SID,
+                 status="succeeded")
+    # 未知模式 → 400（门在代理层）。
+    bad = client.post("/api/v1/nexus/runs/apv_sr6_cv/clean-verify",
+                      json={"research_execution_mode": "turbo"},
+                      headers=_auth(token))
+    assert bad.status_code == 400
+    # 未声明字段 → 422（签名键 time/enc 除外）。
+    junk = client.post("/api/v1/nexus/runs/apv_sr6_cv/clean-verify",
+                       json={"research_execution_mode": "auto", "owner": "x"},
+                       headers=_auth(token))
+    assert junk.status_code == 422
+    # ask＋签名键 → 上游 body 恰为声明字段（透传成功与否由 Runtime 决定）。
+    seen: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = _json.loads(request.content.decode() or "{}")
+        return httpx.Response(403, json={"detail": "CLEAN_EXECUTION_DISABLED"})
+
+    with mock_runtime(handler):
+        ask = client.post(
+            "/api/v1/nexus/runs/apv_sr6_cv/clean-verify",
+            json={"research_execution_mode": "ask",
+                  "time": "2026-09-09 00:00:00", "enc": "ABCDEF"},
+            headers=_auth(token))
+    assert ask.status_code == 403
+    assert seen["body"] == {"research_execution_mode": "ask"}
