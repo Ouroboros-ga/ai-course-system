@@ -1,7 +1,10 @@
 """SR6 干净B：在全新沙箱中重放冻结配方（确定性重放，不经 LLM）。
 
-- 重放对象是已终态 run 的冻结配方步骤（attempt 记录的实际命令序列，
-  与 T6 报告配方同源同过滤）；模型不参与，不发明、不修改、不跳过命令。
+- 重放对象是已终态 run 的冻结配方中的 shell 步骤（与 T6 报告配方同源；
+  原生文件工具摘要如 `glob <pattern>` 不是 shell 命令——执行必 127，
+  且裸 `grep` 会挂起等 stdin，故判为不可重放：日志中如实单列，
+  不计入 verdict；`ls` 摘要与 shell 同形同语义，保留重放），模型不参与，
+  不发明、不修改 shell 命令。
 - 沙箱是全新的（`{run_id}-clean1`，与原 run 沙箱零复用；工作区从空开始，
   无残留文件、无已装依赖），隔离语义沿控制服务（独立容器/网络/资源）。
 - 判定：逐条比对退出码（重放 observed vs 记录 expected），全等→passed，
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any
 
@@ -65,6 +69,30 @@ def replayable_steps(run: dict[str, Any]) -> list[dict[str, Any]]:
     return steps
 
 
+# 原生文件工具摘要（T5-1 file_tool_summary 形状）不是 shell 命令：
+# write_file/read_file/edit_file/delete/glob 无 shell 同名物（执行必 127）；
+# grep 摘要形如 "grep <单token>"（真 shell grep 必带 flag/路径/管道，
+# 且裸 grep 会挂起等 stdin）。ls 摘要与 shell ls 同形同语义，保留重放。
+# 判别只认"工具名＋单个裸 token"形状，真 shell 命令（含 flag/管道/引号）
+# 不受影响。
+_NON_SHELL_TOOL_RE = re.compile(
+    r"^(write_file|read_file|edit_file|delete|glob|grep)\s+[^\s|&;]+\s*$")
+
+
+def is_shell_replayable(command: str) -> bool:
+    """该 attempt 命令是否为可重放的 shell 命令（纯函数，可单测）。"""
+    text = (command or "").strip()
+    if not text:
+        return False
+    return _NON_SHELL_TOOL_RE.match(text) is None
+
+
+def skipped_file_tool_steps(run: dict[str, Any]) -> list[dict[str, Any]]:
+    """文件工具摘要步骤（留痕用：如实列出，不计入 verdict）。"""
+    return [s for s in replayable_steps(run)
+            if not is_shell_replayable(s["command"])]
+
+
 async def replay_steps(
     *, run: dict[str, Any], backend: Any, step_timeout_s: int = 300,
 ) -> dict[str, Any]:
@@ -77,10 +105,11 @@ async def replay_steps(
     终态，后续重放 409 RUN_TERMINAL；容器复用，ids 唯一即无冲突）。
     返回 {"verdict", "matched", "total", "results": [...]}。
     """
-    steps = replayable_steps(run)
+    steps = [s for s in replayable_steps(run) if is_shell_replayable(s["command"])]
+    skipped = skipped_file_tool_steps(run)
     if not steps:
         raise CleanError("CLEAN_NO_REPLAYABLE_STEPS",
-                         "本次运行没有可重放的执行命令，无法做干净验证。")
+                         "本次运行没有可重放的 shell 执行命令，无法做干净验证。")
     from nexus.experiment_sandbox import ExperimentSandboxError
 
     results: list[dict[str, Any]] = []
@@ -110,7 +139,9 @@ async def replay_steps(
     matched = sum(1 for r in results if r["match"])
     verdict = "passed" if matched == len(results) else "failed"
     return {"verdict": verdict, "matched": matched, "total": len(results),
-            "results": results}
+            "results": results,
+            "skipped": [{"attempt_no": s["attempt_no"], "command": s["command"][:200]}
+                        for s in skipped]}
 
 
 def _backend_for_clean(clean_id: str) -> Any:
@@ -372,6 +403,7 @@ async def _guarded_verify(
         "matched": matched,
         "total": total,
         "results": outcome["results"],
+        "skipped": outcome.get("skipped", []),
         "checked_at": time.time(),
         "deduped": False,
     }
@@ -395,6 +427,12 @@ def render_clean_log_markdown(run: dict[str, Any],
         lines.append(
             f"- #{item.get('attempt_no', '')} `{item.get('command', '')}`"
             f"：记录 exit={item.get('expected', '—')}，重放 exit={item.get('observed', '—')} → {mark}")
+    skipped = outcome.get("skipped") or []
+    if skipped:
+        lines += ["", "## 未重放（原生文件工具摘要，非 shell 命令）", ""]
+        for item in skipped:
+            lines.append(f"- #{item.get('attempt_no', '')} `{item.get('command', '')}`"
+                         "（显示摘要，不可作 shell 执行，不计入结论）")
     lines += ["",
               "判定口径：退出码全等即 passed，任一不等即 failed；"
               "指标本身仍以报告为准，本日志只证明配方在干净环境可重复执行。",

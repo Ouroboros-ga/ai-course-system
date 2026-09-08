@@ -47,8 +47,12 @@ def _scope():
     }
 
 
-def _make_terminal_run(user_id="u-sr6", session_id="s-sr6", commands=(0, 0)):
-    """建已核验提案→核销→run→按给定退出码追加 attempt→落终态 succeeded。"""
+def _make_terminal_run(user_id="u-sr6", session_id="s-sr6", commands=(0, 0),
+                       extra_attempts=()):
+    """建已核验提案→核销→run→按给定退出码追加 attempt→落终态 succeeded。
+
+    extra_attempts：[(command, exit_code)]，在落终态前追加（终态后不可追加）。
+    """
     proposal = proposals_module.create_proposal(
         user_id=user_id, session_id=session_id, preset=None,
         kind="autonomous_experiment", scope=_scope(),
@@ -69,6 +73,11 @@ def _make_terminal_run(user_id="u-sr6", session_id="s-sr6", commands=(0, 0)):
             run["run_id"], actual_command=f"step-{index} --do",
             operation_id=f"{run['run_id']}-op-{index + 2:04d}",
             exit_code=code, log_ref="ok")
+    for extra_index, (extra_command, extra_code) in enumerate(extra_attempts):
+        runs_module.record_attempt(
+            run["run_id"], actual_command=extra_command,
+            operation_id=f"{run['run_id']}-op-{9000 + extra_index:05d}",
+            exit_code=extra_code, log_ref="ok")
     runs_module.set_status(run["run_id"], "succeeded", "")
     return runs_module.get_run(run["run_id"])
 
@@ -144,6 +153,39 @@ def test_replay_backend_op_ids_unique_per_replay():
     ids_b = {backend_b._new_operation_id() for _ in range(3)}
     assert ids_a.isdisjoint(ids_b)
     assert all(i.startswith("apv_x-clean1-op-") for i in ids_a | ids_b)
+
+
+def test_file_tool_summaries_skipped_not_counted():
+    """文件工具摘要（非 shell）跳过留痕、不计入 verdict；真 shell grep 重放。"""
+    from nexus import experiment_clean as clean_module
+
+    assert clean_module.is_shell_replayable("pip install x") is True
+    assert clean_module.is_shell_replayable("ls -la /workspace") is True
+    assert clean_module.is_shell_replayable("ls .") is True
+    assert clean_module.is_shell_replayable("grep -r foo /workspace") is True
+    assert clean_module.is_shell_replayable("glob **/{README*,setup.py}") is False
+    assert clean_module.is_shell_replayable("write_file /workspace/a.txt") is False
+    assert clean_module.is_shell_replayable("read_file /workspace/a.txt") is False
+    assert clean_module.is_shell_replayable("grep fakepkg") is False
+    assert clean_module.is_shell_replayable("") is False
+
+
+async def test_replay_skips_file_tool_summaries():
+    """含 glob 摘要的 run：跳过该步，其余 shell 步骤全等→passed。"""
+    from nexus import experiment_clean as clean_module
+
+    run = _make_terminal_run(
+        extra_attempts=[("glob **/{README*,setup.py}", 0)])
+    container = _ReplayContainer()
+    backend = _backend_for(container, clean_module.clean_sandbox_id(run["run_id"]))
+    outcome = await clean_module.run_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6", backend=backend)
+    assert outcome["clean_verification"] == "passed"
+    assert outcome["matched"] == 2 and outcome["total"] == 2
+    assert len(outcome["skipped"]) == 1
+    log = clean_module.render_clean_log_markdown(
+        runs_module.get_run(run["run_id"]), outcome)
+    assert "未重放" in log and "glob" in log
 
 
 def test_clean_sandbox_id_isolated_and_bounded():
