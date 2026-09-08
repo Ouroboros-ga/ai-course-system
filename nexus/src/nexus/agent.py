@@ -54,6 +54,11 @@ NEXUS_EXCLUDED_TOOLS = frozenset(
     {"ls", "write_file", "edit_file", "delete", "glob", "grep", "execute", "task"}
 )
 
+# T2 Ask/Auto：触发实验代码沙箱的工具（Ask 不绑定；Auto 经批准后可用）。
+# Ask 仍保留准备类工具（提案创建/修改/请求审批——“帮我运行”继续做准备工作
+# 并给出切换入口）与只读/取消类工具（查运行、读日志、下载报告、用户取消）。
+EXPERIMENT_EXECUTION_TOOLS = frozenset({"run_reproduction"})
+
 # Research-only 工具（M1-B2 双 Profile）：General 模式结构性不绑定，
 # 模型请求侧不可见（未传入 create_deep_agent 即不进 bind_tools）。
 RESEARCH_ONLY_TOOLS = frozenset(
@@ -163,11 +168,19 @@ def build_summarization_middleware(llm: Any) -> SummarizationMiddleware:
     )
 
 
-def _tools_for_mode(mode: str) -> list[Any]:
-    """M1-B2 模式工具白名单：General 结构性不绑定 research-only 三工具。"""
+def _tools_for_mode(mode: str, execution_mode: str | None = None) -> list[Any]:
+    """M1-B2 模式工具白名单：General 结构性不绑定 research-only 工具。
+
+    T2 Ask/Auto：Research+Ask 额外不绑定实验执行工具（run_reproduction）——
+    Ask 下模型请求侧不可见，纵深防御执行核（服务端核销）仍独立校验。
+    execution_mode 缺省按 Ask 收敛（安全默认）；General 传 auto 也不放行。
+    """
     if mode == "general":
         return [t for t in NEXUS_TOOLS if t.name not in RESEARCH_ONLY_TOOLS]
-    return list(NEXUS_TOOLS)
+    tools = list(NEXUS_TOOLS)
+    if (execution_mode or "ask").strip().lower() != "auto":
+        tools = [t for t in tools if t.name not in EXPERIMENT_EXECUTION_TOOLS]
+    return tools
 
 
 class InvalidNexusModel(ValueError):
@@ -239,6 +252,7 @@ def build_agent(
     mode: str = "general",
     checkpointer: Any | None = None,
     model: str | None = None,
+    execution_mode: str | None = None,
 ) -> Any:
     """构建 Nexus 主智能体。LLM 未配置时抛出 RuntimeError（调用方 fail-closed）。
 
@@ -247,6 +261,10 @@ def build_agent(
     切模式上下文连续。checkpointer 为空时用 InMemorySaver（本地/测试）；服务器
     lifespan 传入 AsyncPostgresSaver 实现重启可续聊。Compact 始终经原生
     middleware 启用；工具面经三层收敛（见 NEXUS_EXCLUDED_TOOLS 注释）。
+
+    T2 Ask/Auto：Research 工具面再按 execution_mode 拆分（Ask 不绑定
+    run_reproduction；缺省 Ask，安全默认）。调用方（main 聊天入口）须传
+    本次 effective 值；实例缓存键须区分 Ask/Auto（见 main.get_agent）。
 
     模型网关 P0：model 为服务端 allowlist 内的模型 id（调用方 main._require_model
     已校验）；同 (mode, model) 复用实例，不同模型各持独立 LLM。切模型不断会话
@@ -260,7 +278,7 @@ def build_agent(
     saver = checkpointer if checkpointer is not None else InMemorySaver()
     return create_deep_agent(
         model=llm,
-        tools=_tools_for_mode(mode),
+        tools=_tools_for_mode(mode, execution_mode),
         system_prompt=SYSTEM_PROMPT + MODE_PROMPT_APPENDIX[mode],
         middleware=[
             FilesystemMiddleware(tools=["read_file"]),

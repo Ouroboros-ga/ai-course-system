@@ -1154,7 +1154,8 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // NX-H1：+计划快照反代（plan）→ 22 个受权限门端点。
   // NX-LB1/LB2：+presets/proposals×4/approvals-list/runs-rename → 29 个。
   // NX-LB4/LB5：+runs-cancel-grant/runs-notes×2 → 32 个。
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 32)
+  // T2 Ask/Auto：+sessions execution-mode 查询/保存×2 → 34 个。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 34)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })

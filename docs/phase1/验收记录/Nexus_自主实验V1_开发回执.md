@@ -95,6 +95,61 @@
 - 真实 Worker/LLM 行为：合成覆盖冻结/判定/锁语义；真实执行质量属 T7。
 - 前端 H1/H2 消费侧：待页面_owner_按上述契约实现（503/事件 session_id）。
 
+## T1-a（2026-09-08）：契约＋薄 Adapter（零安装、零新依赖）
+
+新增（未提交）：`nexus/src/nexus/experiment_contracts.py`（任务书 §2 原样：
+Resources/ExperimentScope/SandboxResult pydantic＋Run/Attempt TypedDict）、
+`nexus/src/nexus/experiment_sandbox.py`（`HttpSandboxBackend(BaseSandbox)`）、
+`nexus/tests/test_experiment_sandbox.py`（7 项契约测试）。
+
+- 映射面：`execute/upload_files/download_files/id` ↔ 控制服务 HTTP
+  （PUT ensure 同 run 幂等；POST operations 带调用方 operation_id
+  `run-op-NNNN` 单调；GET 查询/游标；PUT/GET files 工作区限定；POST cancel；
+  GET lifecycle）。aexecute/aupload/adownload 真异步实现（非 to_thread）。
+- 超时≠停止：截止内轮询同 id，截止到返回当前尾部（exit None＋truncated），
+  调用方凭 `last_operation_id`＋`query_operation` 续查；POST 计数恒 1（测试锁定）。
+- fail-closed：未配置/不可达抛 `ExperimentSandboxError`（码 NOT_CONFIGURED/
+  UNAVAILABLE/REJECTED/BAD_RESPONSE/ID_MISMATCH/ENSURE_FAILED）；模块无
+  subprocess/os 执行原语引用（AST 断言）；客户端拒 `..` 逃逸/超 5MB 文件。
+- 回归：`test_experiment_sandbox.py` 7/7；nexus 全套件 **168 passed**；
+  前端契约 88/89（唯一失败仍为 CourseLayout 他线旧断言）；`uv.lock` 零改动。
+
+## T1-b（2026-09-08）：SWE-ReX 真实容器＋控制服务（服务器侧验证通过）
+
+> 授权：swe-rex==1.4.0 pin＋服务器侧真容器验证。生产常驻另行决策；
+> 验证部署已全量拆除（无残留进程/容器），仅缓存镜像与代码。
+
+- 独立项目 `deploy/repro-runtime/`（独立 pyproject/uv.lock/venv，不进
+  nexus/backend 依赖树）：`service.py` 控制服务＋`swerex_adapter.py` 薄适配
+  ＋`Dockerfile`/`Dockerfile.task`＋三套测试。另补 `aiohttp>=3.10`
+  （swe-rex 1.4.0 未声明但 Docker 后端 import 必需——实测确认的上游打包缺口，
+  uv.lock 锁定 exact）。
+- API 全部按已安装 1.4.0 源码实测编写（拒绝凭记忆）：
+  `DockerDeployment(image/pull/python_standalone_dir=None/port/docker_args/
+  startup_timeout)`＋`start/stop/runtime/is_alive`；`RemoteRuntime.execute
+  (Command(command/timeout/shell=True))`、`read/write/upload_file`、
+  `BashAction/BashObservation` 形态；包目录实为 `swerex`（非 `swe_rex`）。
+- 关键发现与决策（均有实证）：
+  1. 任务容器启动时 pip 现装 swe-rex 太慢且抖动（首轮 ensure 超时）→
+     预构建任务镜像 `repro-task:1.4.0`
+    （`sha256:4f2ba29b…`，python:3.12-slim＋swe-rex 预装），启动 2 秒级；
+     生产沿用"预构建＋pull=never＋记 digest"路线。
+  2. 容器内绑 127 使宿主端口映射 RST→容器内绑 0.0.0.0，对外收敛由
+     docker `-p 127.0.0.1:8401` 保证（宿主外不可达）。
+  3. 取消走优雅 stop 会排队挂起（容器内服务被长执行占住）→ kill-first：
+     daemon 面强制回收＋20s 上限优雅收尾；取消全程约 3 秒。
+  4. 服务容器内无 docker CLI→控制服务改跑宿主 venv（任务仍在容器，
+     隔离模型不变）；另补 `apt python3.10-venv`（宿主最小变更，已记录）。
+- 黑盒 6/6（8.4s）＋宿主断言全过：创建/执行/传输/取消/清理；双任务隔离
+  （跨读 404＋不同容器）；长 sleep 取消约 3 秒且零残留；资源生效
+  （memory=2g、pids=512、privileged=false、无任何挂载、bridge 网络）；
+  重启对账 unknown＋409 不复用＋已完成操作保留；网络基线：
+  metadata 与宿主网关均 UNREACHABLE（任务镜像无 curl，用 python 探针实证；
+  PyPI 出向可用——首轮 pipx 下载行为实证）。
+- 本地：adapter 7＋service 8（含快照对账）全绿；test_live_docker 无 env 默认跳过。
+- 未竟：任务网络显式 allowlist 策略（当前 bridge 默认＋基线记录，加固属 T2 部署项）；
+  sessions 长会话语义（T4 按需）；服务常驻化（systemd/ supervision，生产决策）。
+
 ## 线上验证（2026-09-08，部署 0b6c2633，一次性验证账号 `nx_verify_t0_*`）
 
 - 发布＋Runtime rsync（diff 干净）＋重启＋健康检查（Research 18 工具，四项全 ok）。
@@ -103,3 +158,55 @@
   冻结步骤含 `--batch_size=8`、metric_policy exploratory）——P1-A 冻结链
   走真实 PG 生效；P1-B linkage-ok 路径 intact。
 - P1-B unavailable 与 P1-C 500 路径无法在线上确定性触发，以离线合成为准（如上）。
+
+## T2（2026-09-08）：自主提案 kind＋Ask/Auto 门＋一次确认语义（未提交）
+
+改动（`nexus/src/nexus/`，未装新依赖，`uv.lock` 零改动）：
+- `proposals.py`：`kind` 判别（缺省 preset；`autonomous_experiment` 消费
+  ExperimentScope、不要求 preset，`plan_hash` 即 `scope_hash`，steps 为空——
+  实际命令写 attempt）；`scope_hash_for`/`validate_autonomous_scope`/
+  `budget_for_scope`；`create/patch/request-approval` 全分支＋`public` 视图；
+  DDL 增 `kind/scope/scope_hash` 列，老表 `ADD COLUMN IF NOT EXISTS` 补齐
+  （与 approvals 同模式；旧行归一 preset）。
+- `approvals.py`：审批行增 `proposal_kind/scope_hash/frozen_scope` 列（同上
+  补齐）；自主绑定建票（`plan_hash`=scope_hash、预算由 scope 资源派生）；
+  消费核验追加 scope_hash 交叉比对；核销返回值冻结体带 kind/scope。
+- `experiment_runs.py`（新增）：run 登记（run_id=approval_id，幂等返回原行；
+  重试不查审批 TTL）＋`record_attempt`（operation_id 确定性派生
+  `run-op-NNNN`，终态拒绝追加）；PG `nexus_experiment_runs`＋内存降级。
+- `execution_mode.py`（新增）：ask|auto 归一（未知拒）、显式值保存会话偏好
+  （PG `nexus_session_prefs`＋内存）、未传默认 Ask（不偷升级）、偏好查询端点；
+  `can_execute` 仅 Research+Auto。
+- `request_scope.py`：`set_experiment_gate(mode, execution_mode)` 上下文；
+  `agent.py`：`_tools_for_mode(mode, execution_mode)`（Research+Ask 不绑定
+  `run_reproduction`；General 传 auto 也不放行）＋`build_agent` 传 effective；
+  `main.get_agent` 缓存键 `(mode, model, execution)`（旧二元桩回退兼容）。
+- `tools/reproduction.py`：执行门（有门信息强制 Research+Auto；旧 preset
+  无门信息兼容直调，自主无门信息 fail-closed）；`run_reproduction` Ask 拒
+  `EXPERIMENT_EXECUTION_DISABLED` 零提交；`execute_approved_reproduction`
+  接门参＋自主票据转交；新增 `execute_autonomous_experiment`（门→核销锁
+  定→run 登记→`mark_proposal_executed`，不碰旧 Worker）；自主审批卡只显
+  目标/资源/最长时/自动排错范围（scope_hash 不下发）。
+- `main.py`：`ChatRequest.research_execution_mode`（未知 400；未传默认 Ask；
+  显式合法存偏好）；chat/stream 注门＋回 effective；提案端点 kind/scope；
+  `repro/execute` 接门参（`EXPERIMENT_EXECUTION_DISABLED`→403 等新码映射）；
+  会话偏好 PUT/GET 端点；lifespan 建 run/prefs 表；审批列表自主摘要。
+- `backend/.../nexus_proxy.py`：chat 双链路＋execute 未知执行模式 400；
+  提案 create/patch 转 kind/scope；execute 透传门字段；偏好查询/保存反代
+  （全部 `require_nexus_use` 门下，D10 门计数 32→34）。
+
+回归证据（命令＋结果）：
+- nexus 全套件 **181 passed**（含新增 `test_autonomous_approval.py` 13 项：
+  单批准排错/改 scope 失效/preset 指纹保持/模式默认与拒绝/Ask 双零提交/
+  General 无权/模型无参改门/审批卡脱 hash/HTTP 全链＋门/偏好往返）。
+- Backend nexus 域 7 文件：82 passed＋11 skipped；3 项 internal“无 token 503”
+  在 7 文件同跑时 401——基线同组合同样失败（既有用例间顺序污染，非本批回归；
+  单跑/3 文件跑全过）。
+- 前端契约 88/89（唯一失败为 CourseLayout 他线旧断言，XH 合并引入）；
+  D10 门数 32→34（本批新增 2 个同门控偏好端点，断言已同步）。
+- `git diff --stat -- nexus/uv.lock backend/pyproject.toml` 为空（无新依赖铁证）。
+
+未验证项：
+- 真实 PG 下新列 CAS/幂等（语句与 approvals 同模式，线上核验待部署后）。
+- 线上 Ask/Auto 真实冒烟（待部署后一次性验证账号走读＋偏好＋门拒绝）。
+- UI 选择器属 T5；正式 Word/LaTeX 与干净 B 仍按任务书为后续交付。

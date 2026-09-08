@@ -71,6 +71,12 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
             frozen = json.loads(frozen)
         except ValueError:
             frozen = []
+    frozen_scope = row.get("frozen_scope", {})
+    if isinstance(frozen_scope, str):
+        try:
+            frozen_scope = json.loads(frozen_scope)
+        except ValueError:
+            frozen_scope = {}
     return {
         "approval_id": row["approval_id"],
         "user_id": row["user_id"],
@@ -89,19 +95,25 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "proposal_version": row.get("proposal_version", 0),
         "proposal_hash": row.get("proposal_hash", ""),
         "frozen_steps": frozen if isinstance(frozen, list) else [],
+        # T2 自主绑定（preset 行缺省为空）。
+        "proposal_kind": row.get("proposal_kind", "") or "",
+        "scope_hash": row.get("scope_hash", "") or "",
+        "frozen_scope": frozen_scope if isinstance(frozen_scope, dict) else {},
     }
 
 
 _APPROVAL_SELECT = (
     "approval_id, user_id, session_id, tool, preset_id, "
     "plan_hash, budget, status, job_id, detail, created_at, expires_at, "
-    "proposal_id, proposal_version, proposal_hash, frozen_steps"
+    "proposal_id, proposal_version, proposal_hash, frozen_steps, "
+    "proposal_kind, scope_hash, frozen_scope"
 )
 
 _APPROVAL_KEYS = ("approval_id", "user_id", "session_id", "tool", "preset_id",
                   "plan_hash", "budget", "status", "job_id", "detail",
                   "created_at", "expires_at", "proposal_id", "proposal_version",
-                  "proposal_hash", "frozen_steps")
+                  "proposal_hash", "frozen_steps", "proposal_kind",
+                  "scope_hash", "frozen_scope")
 
 
 def _row_from_pg_values(found: Any) -> dict[str, Any]:
@@ -129,7 +141,10 @@ CREATE TABLE IF NOT EXISTS {schema}.nexus_approvals (
     job_id TEXT NOT NULL DEFAULT '',
     detail TEXT NOT NULL DEFAULT '',
     created_at DOUBLE PRECISION NOT NULL DEFAULT 0,
-    expires_at DOUBLE PRECISION NOT NULL DEFAULT 0
+    expires_at DOUBLE PRECISION NOT NULL DEFAULT 0,
+    proposal_kind TEXT NOT NULL DEFAULT '',
+    scope_hash TEXT NOT NULL DEFAULT '',
+    frozen_scope TEXT NOT NULL DEFAULT '{{}}'
 );
 CREATE INDEX IF NOT EXISTS idx_nexus_approvals_user
     ON {schema}.nexus_approvals (user_id, created_at DESC);
@@ -163,6 +178,10 @@ def ensure_approvals_table(dsn: str, schema: str) -> None:
                 ("proposal_version", "INTEGER NOT NULL DEFAULT 0"),
                 ("proposal_hash", "TEXT NOT NULL DEFAULT ''"),
                 ("frozen_steps", "TEXT NOT NULL DEFAULT '[]'"),
+                # T2 自主绑定列（旧表补齐，可重入；旧代码忽略新列）。
+                ("proposal_kind", "TEXT NOT NULL DEFAULT ''"),
+                ("scope_hash", "TEXT NOT NULL DEFAULT ''"),
+                ("frozen_scope", "TEXT NOT NULL DEFAULT '{}'"),
             ):
                 cur.execute(
                     f"ALTER TABLE {schema}.nexus_approvals "
@@ -184,9 +203,46 @@ def create_approval(
     proposal_binding（NX-LB2，可选）：{"proposal_id", "proposal_version",
     "proposal_hash", "frozen_steps"}——request-approval 路径绑定，执行时
     按版本+hash 重验提案，未绑定即 legacy preset 直批路径。
+    T2 自主绑定追加：{"proposal_kind": "autonomous_experiment",
+    "scope_hash", "frozen_scope"}——此时 preset 可为空，plan_hash 取
+    scope_hash，预算由 scope 资源派生。
     """
     now = _now()
     binding = proposal_binding or {}
+    kind = str(binding.get("proposal_kind", "") or "")
+    if kind == "autonomous_experiment":
+        from nexus.proposals import budget_for_scope, scope_hash_for
+
+        frozen_scope = binding.get("frozen_scope") or {}
+        if not isinstance(frozen_scope, dict) or not frozen_scope:
+            raise ApprovalError(
+                "APPROVAL_SCOPE_MISSING", "自主审批须绑定冻结 scope")
+        scope_hash = str(binding.get("scope_hash", "") or "")
+        if not scope_hash:
+            scope_hash = scope_hash_for(frozen_scope)
+        row = {
+            "approval_id": new_approval_id(),
+            "user_id": user_id or "",
+            "session_id": session_id or "",
+            "tool": tool,
+            "preset_id": "",
+            "plan_hash": scope_hash,
+            "budget": budget_for_scope(frozen_scope),
+            "status": "pending",
+            "job_id": "",
+            "detail": "",
+            "created_at": now,
+            "expires_at": now + max(1, int(ttl_s)),
+            "proposal_id": str(binding.get("proposal_id", "")),
+            "proposal_version": int(binding.get("proposal_version", 0) or 0),
+            "proposal_hash": str(binding.get("proposal_hash", "") or scope_hash),
+            "frozen_steps": [],
+            "proposal_kind": "autonomous_experiment",
+            "scope_hash": scope_hash,
+            "frozen_scope": dict(frozen_scope),
+        }
+        _insert_approval_row(row)
+        return _row_to_dict(row)
     row = {
         "approval_id": new_approval_id(),
         "user_id": user_id or "",
@@ -204,7 +260,16 @@ def create_approval(
         "proposal_version": int(binding.get("proposal_version", 0) or 0),
         "proposal_hash": str(binding.get("proposal_hash", "")),
         "frozen_steps": list(binding.get("frozen_steps") or []),
+        "proposal_kind": "",
+        "scope_hash": "",
+        "frozen_scope": {},
     }
+    _insert_approval_row(row)
+    return _row_to_dict(row)
+
+
+def _insert_approval_row(row: dict[str, Any]) -> None:
+    """插入审批行（PG 可用进 PG，异常回退内存；与旧路径同失败语义）。"""
     pg = _pg_settings()
     if pg is not None:
         dsn, schema = pg
@@ -218,8 +283,9 @@ def create_approval(
                         f"INSERT INTO {schema}.nexus_approvals "
                         "(approval_id, user_id, session_id, tool, preset_id, plan_hash, "
                         "budget, status, job_id, detail, created_at, expires_at, "
-                        "proposal_id, proposal_version, proposal_hash, frozen_steps) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        "proposal_id, proposal_version, proposal_hash, frozen_steps, "
+                        "proposal_kind, scope_hash, frozen_scope) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (
                             row["approval_id"], row["user_id"], row["session_id"],
                             row["tool"], row["preset_id"], row["plan_hash"],
@@ -229,13 +295,14 @@ def create_approval(
                             row["proposal_id"], row["proposal_version"],
                             row["proposal_hash"],
                             json.dumps(row["frozen_steps"], ensure_ascii=False),
+                            row["proposal_kind"], row["scope_hash"],
+                            json.dumps(row["frozen_scope"], ensure_ascii=False),
                         ),
                     )
-            return _row_to_dict(row)
+            return
         except Exception as error:  # noqa: BLE001 - PG 故障降级内存，不阻断提案
             logger.warning("approval pg insert failed, memory fallback: %s", error)
     _memory_approvals[row["approval_id"]] = dict(row)
-    return _row_to_dict(row)
 
 
 def get_approval(approval_id: str) -> dict[str, Any] | None:
@@ -387,6 +454,7 @@ def consume_approval(
         frozen_proposal = {
             "proposal_id": locked["proposal_id"],
             "version": locked["version"],
+            "kind": locked.get("kind", "") or "",
             "preset_id": locked["preset_id"],
             "parent_run_id": locked.get("parent_run_id", ""),
             "objective": locked.get("objective", ""),
@@ -399,6 +467,8 @@ def consume_approval(
             "budget": locked["budget"],
             "metric_policy": locked["metric_policy"],
             "plan_hash": locked["plan_hash"],
+            "scope": dict(locked.get("scope") or {}),
+            "scope_hash": locked.get("scope_hash", "") or "",
         }
     elif plan_hash_for(preset) != current["plan_hash"]:
         raise ApprovalError(
@@ -447,6 +517,14 @@ def _verify_proposal_binding(approval: dict[str, Any]) -> dict[str, Any]:
             "APPROVAL_PROPOSAL_CHANGED",
             f"提案已变更（现版本 v{proposal['version']}），旧批准失效，请重新走审批",
         )
+    # T2：自主票据追加 scope_hash 交叉核验（plan_hash 即 scope_hash 的
+    # 纵深防御；任一漂移都拒绝）。
+    if approval.get("scope_hash"):
+        if (proposal.get("scope_hash", "") or "") != approval["scope_hash"]:
+            raise ApprovalError(
+                "APPROVAL_PROPOSAL_CHANGED",
+                "自主 scope 已变更，旧批准失效，请重新走审批",
+            )
     if proposal["status"] != "draft":
         raise ApprovalError(
             "APPROVAL_PROPOSAL_CHANGED",

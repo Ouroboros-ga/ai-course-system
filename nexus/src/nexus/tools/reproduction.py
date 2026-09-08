@@ -160,6 +160,58 @@ def _scope_identity() -> tuple[str, str]:
     return current_user_id() or "", current_session_id() or ""
 
 
+# ---------------------------------------------------------------------------
+# T2 Ask/Auto 执行门（Research Ask / Auto 补充契约）。
+# 模式只走服务端请求上下文（request_scope）或服务端显式传参，模型工具参数
+# 无模式入参（测试锁定）。后端代理层独立校验（nexus_proxy），此处是工具侧
+# 各自校验——任一侧拒绝即零提交。
+# ---------------------------------------------------------------------------
+
+
+def _resolve_gate(
+    mode: str | None = None, execution_mode: str | None = None,
+) -> tuple[str | None, str | None]:
+    """解析执行门：显式传参 > 请求上下文 > 缺席（legacy 服务端直调）。
+
+    缺席仅兼容旧 preset 服务端直调路径（既有单测与手工执行）；真实聊天/HTTP
+    链路 main.py 必注门。autonomous 新种无门信息一律拒绝（fail-closed）。
+    """
+    from nexus.request_scope import current_execution_mode, current_request_mode
+
+    resolved_mode = mode if mode is not None else current_request_mode()
+    resolved_exec = (
+        execution_mode if execution_mode is not None else current_execution_mode()
+    )
+    return resolved_mode, resolved_exec
+
+
+def _require_execution_allowed(
+    mode: str | None, execution_mode: str | None, *, legacy_open: bool = True,
+) -> None:
+    """执行门裁决；拒绝抛 ApprovalError(EXPERIMENT_EXECUTION_DISABLED)。
+
+    legacy_open=True（旧 preset 路径）：门信息完全缺席时放行（服务端直调
+    兼容）；门信息一旦出现必须 Research+Auto。autonomous 路径传
+    legacy_open=False（无门信息也拒绝）。
+    """
+    from nexus import approvals as approvals_module
+
+    if mode is None and execution_mode is None:
+        if legacy_open:
+            return
+        raise approvals_module.ApprovalError(
+            "EXPERIMENT_EXECUTION_DISABLED",
+            "缺少执行模式上下文，自主实验拒绝执行",
+        )
+    if mode == "research" and (execution_mode or "ask") == "auto":
+        return
+    raise approvals_module.ApprovalError(
+        "EXPERIMENT_EXECUTION_DISABLED",
+        "Ask 模式不运行实验（切换到 Auto 并批准后可执行）；"
+        "General 无实验执行权",
+    )
+
+
 async def _fetch_owned_run(run_id: str, user_id: str) -> dict[str, Any] | None:
     """经 Backend 内部端点取本人 run 全行（提案 parent 校验用）。"""
     status_code, data = await _internal_run_request(
@@ -612,6 +664,18 @@ async def run_reproduction(preset_id: str) -> dict[str, Any]:
             "detail": "只接受已核验预设（见 plan_reproduction 的 known_presets）。",
             "known_presets": list(REPRO_PRESETS.keys()),
         }
+    # T2 Ask/Auto 门（工具侧各自校验）：Ask 直接调用实验入口（含 preset）
+    # 一律拒绝且零提交；General 无执行权。门在 preset 解析之后——未知预设
+    # 仍报 UNKNOWN_PRESET（旧语义不变）。
+    try:
+        _require_execution_allowed(*_resolve_gate())
+    except approvals.ApprovalError as gate_error:
+        return {
+            "status": "rejected",
+            "code": gate_error.code,
+            "detail": f"{gate_error}；复现未执行。",
+            "is_supplementary": True,
+        }
     user_id = current_user_id() or ""
     session_id = current_session_id() or ""
     approval_id = current_approval_id()
@@ -673,7 +737,11 @@ def _approval_ttl_s() -> int:
 def _public_approval(
     row: dict[str, Any] | None, preset: dict[str, Any] | None
 ) -> dict[str, Any] | None:
-    """审批的公开投影：给前端审批卡展示，不含任何内部令牌。"""
+    """审批的公开投影：给前端审批卡展示，不含任何内部令牌。
+
+    T2 自主卡：只显示目标、资源/最长时间、自动安装与排错范围——用户不看
+    scope_hash/Claim 表，也不用逐一确认初始命令（任务书 T2）。
+    """
     if row is None:
         return None
     view: dict[str, Any] = {
@@ -692,20 +760,56 @@ def _public_approval(
         view["proposal_id"] = row["proposal_id"]
         view["proposal_version"] = row.get("proposal_version", 0)
         view["proposal_hash"] = row.get("proposal_hash", "")
+    if (row.get("proposal_kind") == "autonomous_experiment"
+            or (row.get("proposal_id") and not row.get("preset_id"))):
+        scope = row.get("frozen_scope") or {}
+        if not isinstance(scope, dict):
+            scope = {}
+        resources = scope.get("resources") or {}
+        if not isinstance(resources, dict):
+            resources = {}
+        view.update({
+            "kind": "autonomous_experiment",
+            "objective": scope.get("objective", ""),
+            "repo_url": scope.get("repo_url", ""),
+            "resources": resources,
+            "wall_time_s": int(resources.get("wall_time_s", 0) or 0),
+            "mode": scope.get("mode", ""),
+            "allow_environment_repair": bool(
+                scope.get("allow_environment_repair", True)),
+        })
+        # 授权 hash 不下发审批卡（展示与授权分离）。
+        view.pop("plan_hash", None)
+        view.pop("proposal_hash", None)
     return view
 
 
 async def execute_approved_reproduction(
-    *, approval_id: str, user_id: str, session_id: str, preset_id: str
+    *, approval_id: str, user_id: str, session_id: str, preset_id: str,
+    mode: str | None = None, research_execution_mode: str | None = None,
 ) -> dict[str, Any]:
     """NX-G2 统一执行核心：聊天工具、手工执行、恢复入口共用同一检查。
 
     流程：取预设 → 原子核销批准（本人/同会话/plan_hash/有效期/一次性）→
     提交 Worker → 绑定 job → 登记归属。任何 ApprovalError 都意味着
     "不得提交 Worker"，调用方必须如实返回失败。
+
+    T2：mode/research_execution_mode 为服务端显式传入的执行门（HTTP/聊天
+    入口透传）；缺省时读请求上下文；两者皆无视为 legacy 服务端直调（旧
+    preset 路径兼容）。自主票据统一转交 execute_autonomous_experiment
+    （fail-closed 门＋run 登记，不碰旧 Worker）。
     """
     from nexus import approvals
 
+    existing = approvals.get_approval(approval_id)
+    if existing is not None and (
+        existing.get("proposal_kind") == "autonomous_experiment"
+        or (existing.get("proposal_id") and not existing.get("preset_id"))
+    ):
+        return await execute_autonomous_experiment(
+            approval_id=approval_id, user_id=user_id, session_id=session_id,
+            mode=mode, research_execution_mode=research_execution_mode,
+        )
     preset = REPRO_PRESETS.get(preset_id.strip().lower())
     if preset is None:
         return {
@@ -714,6 +818,8 @@ async def execute_approved_reproduction(
             "detail": "只接受已核验预设（见 plan_reproduction 的 known_presets）。",
             "known_presets": list(REPRO_PRESETS.keys()),
         }
+    # T2 Ask/Auto 门（执行核各自校验）：Ask 携旧票据同样拒绝，零提交。
+    _require_execution_allowed(*_resolve_gate(mode, research_execution_mode))
     approval = approvals.consume_approval(
         approval_id, user_id=user_id, session_id=session_id, preset=preset
     )
@@ -785,3 +891,88 @@ async def execute_approved_reproduction(
             "plan": preset,
             "is_supplementary": True,
         }
+
+
+async def execute_autonomous_experiment(
+    *, approval_id: str, user_id: str, session_id: str,
+    mode: str | None = None, research_execution_mode: str | None = None,
+) -> dict[str, Any]:
+    """T2 自主执行核：一次确认启动，排错不消耗新批准（N1/N3 授权）。
+
+    流程：执行门（Research+Auto+本人批准，无门信息 fail-closed）→ 原子核销
+    （版本+scope_hash 重验＋CAS 锁定提案，旧批准随 scope 漂移失效）→ run
+    登记（run_id=approval_id，幂等返回原 run）。
+
+    不碰旧 preset Worker（新自由命令不发其 /jobs）；实际安装/试跑/修复由
+    T4 实验图经沙箱执行，本核只返回运行中的 run（attempt 零条起）。
+    任何 ApprovalError/RunError 都意味着"不得执行"，调用方如实返回失败。
+    """
+    from nexus import approvals
+    from nexus import experiment_runs as runs_module
+
+    # 门先行：Ask/General/无门信息一律拒绝，零核销零登记。
+    _require_execution_allowed(
+        *_resolve_gate(mode, research_execution_mode), legacy_open=False)
+    row = approvals.get_approval(approval_id)
+    if row is None:
+        raise approvals.ApprovalError("APPROVAL_NOT_FOUND", "审批不存在或已不可恢复")
+    if (row.get("proposal_kind") != "autonomous_experiment"
+            and not (row.get("proposal_id") and not row.get("preset_id"))):
+        raise approvals.ApprovalError(
+            "APPROVAL_KIND_MISMATCH", "该票据非自主实验批准，请走预设执行入口")
+    # 幂等：run 已登记（已核销重试）→ 直接返回原 run，不重核销——审批展示
+    # TTL 过期不打断正在运行的任务（恢复唯一真相源是 run 存储）。
+    try:
+        existing_run = runs_module.get_run(approval_id)
+    except Exception as error:  # noqa: BLE001 - 存储故障 fail-closed
+        raise approvals.ApprovalError(
+            "APPROVAL_RUN_UNAVAILABLE", f"运行存储不可读：{type(error).__name__}") from error
+    if existing_run is not None:
+        if (user_id or "") != existing_run["owner"]:
+            raise approvals.ApprovalError("APPROVAL_FORBIDDEN", "无权操作他人的审批")
+        if (session_id or "") != existing_run["session_id"]:
+            raise approvals.ApprovalError(
+                "APPROVAL_SESSION_MISMATCH", "审批与当前会话不一致")
+        return {
+            "status": "running",
+            "deduped": True,
+            "detail": "该批准已启动过，返回原运行，不重复执行。",
+            "run_id": existing_run["run_id"],
+            "proposal_id": existing_run["proposal_id"],
+            "scope_hash": existing_run["scope_hash"],
+            "attempt_no": existing_run["attempt_no"],
+            "approval_id": approval_id,
+            "is_supplementary": True,
+        }
+    approval = approvals.consume_approval(
+        approval_id, user_id=user_id, session_id=session_id, preset={}
+    )
+    frozen = approval.get("frozen_proposal") or {}
+    if not isinstance(frozen, dict) or not frozen.get("scope_hash"):
+        raise approvals.ApprovalError(
+            "APPROVAL_PROPOSAL_CHANGED", "批准绑定的冻结 scope 缺失，请重新走审批")
+    try:
+        run = runs_module.create_or_get_run(
+            run_id=approval_id, owner=user_id, session_id=session_id,
+            proposal_id=str(frozen.get("proposal_id", "")),
+            proposal_version=int(frozen.get("version", 0) or 0),
+            scope_hash=str(frozen.get("scope_hash", "")),
+            approval_id=approval_id,
+        )
+    except runs_module.RunError as error:
+        raise approvals.ApprovalError(error.code, str(error)) from error
+    # 提案票据执行成功→冻结提案版本（后续修改须走新提案；best-effort）。
+    from nexus import proposals as proposals_module
+
+    proposals_module.mark_proposal_executed(
+        str(frozen.get("proposal_id", "")),
+        int(frozen.get("version", 0) or 0))
+    return {
+        "status": "running",
+        "run_id": run["run_id"],
+        "proposal_id": run["proposal_id"],
+        "scope_hash": run["scope_hash"],
+        "attempt_no": run["attempt_no"],
+        "approval_id": approval_id,
+        "is_supplementary": True,
+    }

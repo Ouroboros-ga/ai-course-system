@@ -81,13 +81,14 @@ def _registry(agent) -> list[str]:
 
 
 async def test_mode_tool_surfaces(monkeypatch: pytest.MonkeyPatch):
-    """General = read_file + write_todos + 5 产品工具；Research = read_file +
-    write_todos + 全部产品工具（NX-H1 后 write_todos 双模式同置）。"""
+    """General = read_file + write_todos + 5 产品工具；Research Auto = read_file +
+    write_todos + 全部产品工具（NX-H1 后 write_todos 双模式同置；T2 后 Research
+    Ask 不绑定 run_reproduction，见 test_autonomous_approval）。"""
     monkeypatch.setenv("NEXUS_DEEPSEEK_API_KEY", "dummy-key-for-modes")
     # 先 patch 再 build：两个实例都必须持 spy（不联网），否则 ainvoke 会真连 LLM。
     spy = _SpyChatOpenAI(responses=[AIMessage(content="ok")])
     monkeypatch.setattr(nexus.agent, "build_llm", lambda model=None: spy)
-    research = build_agent(mode="research")
+    research = build_agent(mode="research", execution_mode="auto")
     general = build_agent(mode="general")
     product = {t.name for t in NEXUS_TOOLS}
     assert set(_registry(research)) == {"read_file", "write_todos"} | product

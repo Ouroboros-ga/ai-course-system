@@ -16,6 +16,12 @@ _session_id_var: ContextVar[str | None] = ContextVar("nexus_session_id", default
 _approval_id_var: ContextVar[str | None] = ContextVar("nexus_approval_id", default=None)
 # NX-A1：本次对话绑定的附件 id（Backend 验主+绑定后注入执行上下文）。
 _attachments_var: ContextVar[tuple[str, ...]] = ContextVar("nexus_attachments", default=())
+# T2 Ask/Auto：本次请求的模式与执行模式（服务端请求上下文，非模型可写参数）。
+# 缺省 (None, None)＝未注入；执行核按“缺 mode 上下文→沿用显式传参，缺执行
+# 模式→Ask（安全默认）”裁决。
+_mode_var: ContextVar[str | None] = ContextVar("nexus_mode", default=None)
+_execution_mode_var: ContextVar[str | None] = ContextVar(
+    "nexus_execution_mode", default=None)
 
 
 def set_scope(user_id: str | None, course_id: int | None) -> tuple[Token, Token]:
@@ -71,3 +77,23 @@ def reset_attachments(token: Token) -> None:
 
 def current_attachments() -> tuple[str, ...]:
     return _attachments_var.get()
+
+
+def set_experiment_gate(
+    mode: str | None, execution_mode: str | None
+) -> tuple[Token, Token]:
+    """T2：注入本次请求的模式与执行模式（服务端上下文，模型不可写）。"""
+    return (_mode_var.set(mode), _execution_mode_var.set(execution_mode))
+
+
+def reset_experiment_gate(tokens: tuple[Token, Token]) -> None:
+    _mode_var.reset(tokens[0])
+    _execution_mode_var.reset(tokens[1])
+
+
+def current_request_mode() -> str | None:
+    return _mode_var.get()
+
+
+def current_execution_mode() -> str | None:
+    return _execution_mode_var.get()

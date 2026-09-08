@@ -648,7 +648,95 @@ def test_approval_status_and_execute_proxy_paths(
     assert execute_response.status_code == 200
     assert "/api/v1/nexus/approvals/apv_1" in seen
     execute_upstream = seen["/api/v1/nexus/repro/execute"]
+    # T2：执行门字段随透传体上行（缺字段→None，Runtime 按旧 preset 兼容语义）。
     assert json.loads(execute_upstream.content) == {
         "approval_id": "apv_1",
         "session_id": "s1",
+        "mode": None,
+        "research_execution_mode": None,
     }
+
+
+# ---------------------------------------------------------------------------
+# T2 Ask/Auto：后端侧各自校验（未知执行模式 400；合法 auto 透传上行）
+# ---------------------------------------------------------------------------
+
+
+def test_chat_rejects_unknown_execution_mode_before_runtime(
+    client, nexus_student_token, runtime_configured
+):
+    """未知 research_execution_mode 在触达 Runtime 前 400，两链路一致。"""
+
+    async def _must_not_reach(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("未知执行模式不得透传上游")
+
+    with mock_runtime(_must_not_reach):
+        chat_response = client.post(
+            "/api/v1/nexus/chat",
+            json={"message": "hi", "session_id": "s1",
+                  "mode": "research", "research_execution_mode": "turbo"},
+            headers=_auth(nexus_student_token),
+        )
+        execute_response = client.post(
+            "/api/v1/nexus/repro/execute",
+            json={"approval_id": "apv_1", "session_id": "s1",
+                  "research_execution_mode": "turbo"},
+            headers=_auth(nexus_student_token),
+        )
+    assert chat_response.status_code == 400
+    assert "INVALID_RESEARCH_EXECUTION_MODE" in chat_response.text
+    assert execute_response.status_code == 400
+    assert "INVALID_RESEARCH_EXECUTION_MODE" in execute_response.text
+
+
+def test_chat_forwards_legal_execution_mode(
+    client, nexus_student_token, runtime_configured
+):
+    """合法 auto 原样透传 Runtime（授权裁决在 Runtime 执行核）。"""
+    seen: dict[str, httpx.Request] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.path] = request
+        return httpx.Response(200, json={"ok": True})
+
+    with mock_runtime(handler):
+        response = client.post(
+            "/api/v1/nexus/chat",
+            json={"message": "hi", "session_id": "s1",
+                  "mode": "research", "research_execution_mode": "auto"},
+            headers=_auth(nexus_student_token),
+        )
+    assert response.status_code == 200
+    assert json.loads(seen["/api/v1/nexus/chat"].content)["research_execution_mode"] == "auto"
+
+
+def test_execution_mode_preference_proxy_paths(
+    client, nexus_student_token, runtime_configured
+):
+    """会话偏好查询/保存透传 Runtime（未知值保存 400，不上行）。"""
+    seen: dict[str, httpx.Request] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen[(request.method, request.url.path)] = request
+        return httpx.Response(200, json={"research_execution_mode": "auto"})
+
+    with mock_runtime(handler):
+        get_response = client.get(
+            "/api/v1/nexus/sessions/s1/execution-mode",
+            headers=_auth(nexus_student_token),
+        )
+        put_response = client.put(
+            "/api/v1/nexus/sessions/s1/execution-mode",
+            json={"research_execution_mode": "auto"},
+            headers=_auth(nexus_student_token),
+        )
+        bad_response = client.put(
+            "/api/v1/nexus/sessions/s1/execution-mode",
+            json={"research_execution_mode": "turbo"},
+            headers=_auth(nexus_student_token),
+        )
+    assert get_response.status_code == 200
+    assert ("GET", "/api/v1/nexus/sessions/s1/execution-mode") in seen
+    assert put_response.status_code == 200
+    assert ("PUT", "/api/v1/nexus/sessions/s1/execution-mode") in seen
+    assert bad_response.status_code == 400

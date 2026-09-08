@@ -93,6 +93,10 @@ class NexusChatRequest(BaseModel):
     mode: str | None = Field(default=None, max_length=32)
     context: dict[str, Any] | None = Field(default=None)
     model: str | None = Field(default=None, max_length=64)
+    # T2 Research Ask/Auto（前端规格 §2.1）：ask|auto，只在 Research 展示。
+    # 本层只做未知值 400 拒绝（两模式一致），缺字段透传由 Runtime 默认 Ask；
+    # General 兼容合法值但不产生执行授权（Runtime 执行核裁决）。
+    research_execution_mode: str | None = Field(default=None, max_length=16)
     # NX-A1：本次对话引用的附件 id（≤5）。本层逐个验 owner 并原子绑定到
     # session 后才透传；Runtime 侧只读执行上下文，不再信任模型传参。
     attachment_ids: list[str] = Field(default_factory=list, max_length=5)
@@ -135,6 +139,22 @@ def _require_valid_mode(raw: str | None) -> str:
     if cleaned in _NEXUS_RESEARCH_ALIASES:
         return "research"
     reject(400, "INVALID_NEXUS_MODE", f"未知的 Nexus 模式：{raw!r}（仅支持 general/research）")
+
+
+# T2：执行模式别名镜像（与 nexus.execution_mode 同构，两进程不共享 Python
+# 环境故不能 import；改动时两边同步）。未知值两模式一致 400。
+_NEXUS_EXECUTION_MODES = frozenset({"ask", "auto"})
+
+
+def _require_valid_execution_mode(raw: str | None) -> str | None:
+    """校验 research_execution_mode；未知值 reject 400（缺字段→None 透传）。"""
+    if raw is None:
+        return None
+    cleaned = raw.strip().lower() if isinstance(raw, str) else ""
+    if cleaned in _NEXUS_EXECUTION_MODES:
+        return cleaned
+    reject(400, "INVALID_RESEARCH_EXECUTION_MODE",
+           f"未知的执行模式：{raw!r}（仅支持 ask/auto）")
 
 
 def _require_attachments(
@@ -418,6 +438,7 @@ async def nexus_chat(
 ):
     """非流式对话：等待 Agent 循环结束后一次性返回最终答复与工具事件。"""
     _require_valid_mode(payload.mode)
+    _require_valid_execution_mode(payload.research_execution_mode)
     payload.attachment_ids, payload.attachments = _require_attachments(
         session, current_user, payload.session_id, payload.attachment_ids
     )
@@ -503,6 +524,39 @@ async def nexus_session_messages(
         logger.warning("Nexus runtime session messages unreachable: %s", error)
         return _unavailable(str(error))
     return _passthrough(response)
+
+
+class NexusExecutionModeBody(BaseModel):
+    research_execution_mode: str = Field(min_length=1, max_length=16)
+
+
+@router.put("/sessions/{session_id}/execution-mode")
+async def nexus_session_execution_mode_save(
+    session_id: str,
+    payload: NexusExecutionModeBody,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """T2：保存用户明确选择的 Research 执行模式（Ask/Auto；未知值 400）。"""
+    _require_valid_execution_mode(payload.research_execution_mode)
+    return await _proxy_json(
+        request, current_user, "PUT",
+        f"/api/v1/nexus/sessions/{session_id}/execution-mode",
+        body=payload.model_dump(),
+    )
+
+
+@router.get("/sessions/{session_id}/execution-mode")
+async def nexus_session_execution_mode_get(
+    session_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """T2：读取服务端会话偏好（无记录默认 Ask；纯读取）。"""
+    return await _proxy_json(
+        request, current_user, "GET",
+        f"/api/v1/nexus/sessions/{session_id}/execution-mode",
+    )
 
 
 @router.get("/plan/{session_id}")
@@ -874,6 +928,10 @@ class NexusApprovalDecision(BaseModel):
 class NexusApprovalExecute(BaseModel):
     approval_id: str = Field(min_length=1, max_length=64)
     session_id: str = Field(default="default", max_length=128)
+    # T2 Ask/Auto 执行门：启动须 Research+Auto+本人批准（Runtime 执行核裁决，
+    # 本层透传；未知值 400；缺字段时旧 preset 票据兼容，自主票据 fail-closed）。
+    mode: str | None = Field(default=None, max_length=32)
+    research_execution_mode: str | None = Field(default=None, max_length=16)
 
 
 async def _proxy_json(
@@ -966,7 +1024,10 @@ async def nexus_repro_execute(
     current_user: dict = Depends(require_nexus_use),
 ):
     """手工执行代理（NX-G2）：凭已批准票据提交 Worker，与聊天工具共用
-    Runtime 侧同一核销核心；幂等语义由上游保证（重试返回原 job）。"""
+    Runtime 侧同一核销核心；幂等语义由上游保证（重试返回原 job）。
+    T2：mode/research_execution_mode 透传执行门（未知值 400）。"""
+    _require_valid_mode(payload.mode)
+    _require_valid_execution_mode(payload.research_execution_mode)
     return await _proxy_json(
         request,
         current_user,
@@ -992,15 +1053,21 @@ async def nexus_repro_presets(
 
 
 class NexusProposalCreate(BaseModel):
-    """NX-LB2 提案创建（字段与 Runtime ProposalCreate 同构，原样透传）。"""
+    """NX-LB2 提案创建（字段与 Runtime ProposalCreate 同构，原样透传）。
 
-    preset_id: str = Field(min_length=1, max_length=64)
+    T2：kind 缺省 preset；kind=autonomous_experiment 时消费 scope，
+    preset_id 可空。
+    """
+
+    preset_id: str = Field(default="", max_length=64)
     session_id: str = Field(default="default", max_length=128)
     parent_run_id: str = Field(default="", max_length=64)
     objective: str = Field(default="", max_length=500)
     parameters: dict[str, Any] = Field(default_factory=dict)
     data: dict[str, Any] = Field(default_factory=dict)
     client_request_id: str = Field(default="", max_length=64)
+    kind: str = Field(default="preset", max_length=32)
+    scope: dict[str, Any] | None = Field(default=None)
 
 
 class NexusProposalPatch(BaseModel):
@@ -1014,6 +1081,8 @@ class NexusProposalPatch(BaseModel):
     expected_version: int = Field(ge=1)
     objective: str | None = Field(default=None, max_length=500)
     parameters: dict[str, Any] | None = None
+    # T2：自主提案改 scope（preset 提案传 scope 由 Runtime 422）。
+    scope: dict[str, Any] | None = None
 
     model_config = {"extra": "allow"}
 
@@ -1619,6 +1688,7 @@ async def nexus_chat_stream(
     循环中可能长时间不产出 token，用非流式的 60s 会误杀正常长任务。
     """
     _require_valid_mode(payload.mode)
+    _require_valid_execution_mode(payload.research_execution_mode)
     payload.attachment_ids, payload.attachments = _require_attachments(
         session, current_user, payload.session_id, payload.attachment_ids
     )

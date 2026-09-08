@@ -33,9 +33,10 @@ from nexus.persistence import sanitize_session_id, sanitize_user_id, thread_for
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("nexus")
 
-# M1-B2：按（模式, 模型）索引的 agent 实例（同对共享同一 checkpointer）。
+# M1-B2/T2：按（模式, 模型, 执行模式）索引的 agent 实例（同对共享同一 checkpointer）。
 # 模型网关 P0：同一 thread 命名空间跨模型共享，切模型不断上下文。
-_agents: dict[tuple[str, str], Any] = {}
+# T2：Research 区分 ask/auto（工具面不同）；General 统一 ask。
+_agents: dict[tuple[str, str, str], Any] = {}
 # 两个模式共享的本地降级 saver：保证 memory 模式下同 session 切模式上下文连续
 # （服务器上由 lifespan 注入 AsyncPostgresSaver，两者天然共享）。
 _fallback_saver = InMemorySaver()
@@ -72,6 +73,14 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
             from nexus.proposals import ensure_proposals_table
 
             await asyncio.to_thread(ensure_proposals_table, dsn, schema)
+            step = "ensure_experiment_runs_table"
+            from nexus.experiment_runs import ensure_runs_table
+
+            await asyncio.to_thread(ensure_runs_table, dsn, schema)
+            step = "ensure_session_prefs_table"
+            from nexus.execution_mode import ensure_prefs_table
+
+            await asyncio.to_thread(ensure_prefs_table, dsn, schema)
             step = "saver_setup"
             cm = AsyncPostgresSaver.from_conn_string(dsn_with_schema(dsn, schema))
             saver = await cm.__aenter__()
@@ -79,9 +88,12 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
             _pg_ctx = cm
             _pg_saver = saver
             default_model = llm_default_model(settings)
-            for mode in ("research", "general"):
-                _agents[(mode, default_model)] = build_agent(
-                    mode=mode, checkpointer=saver, model=default_model
+            for mode, execution_mode in (
+                ("research", "auto"), ("research", "ask"), ("general", "ask"),
+            ):
+                _agents[(mode, default_model, execution_mode)] = build_agent(
+                    mode=mode, checkpointer=saver, model=default_model,
+                    execution_mode=execution_mode,
                 )
             logger.info("nexus persistence: postgres enabled (schema=%s)", schema)
         except Exception as error:  # noqa: BLE001 - PG 故障不阻断服务启动
@@ -105,23 +117,43 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
 app = FastAPI(title="Nexus AI Runtime", version=__version__, lifespan=lifespan)
 
 
-def get_agent(mode: str = "general", model: str | None = None) -> Any:
-    """取（模式, 模型）agent 实例；model 为 None 即默认模型。
+def get_agent(
+    mode: str = "general", model: str | None = None,
+    execution_mode: str | None = None,
+) -> Any:
+    """取（模式, 模型, 执行模式）agent 实例；model 为 None 即默认模型。
 
     model 入参应已由 _require_model 校验；此处再做一次归一是纵深防御
     （normalize_model_name 对清单外 id 抛 InvalidNexusModel，绝不静默建实例）。
+
+    T2 Ask/Auto：Research 实例键区分 Ask/Auto（工具面不同）；General 统一
+    归一 ask（无实验执行权，传 auto 也不放行）。execution_mode 缺省 Ask
+    （安全默认）。
     """
+    from nexus import execution_mode as execution_mode_module
+
     mode = normalize_mode(mode)
     settings = get_settings()
     model = normalize_model_name(model, llm_available_models(settings), llm_default_model(settings))
-    key = (mode, model)
+    try:
+        execution_key = execution_mode_module.normalize_execution_mode(
+            execution_mode, mode) if execution_mode is not None else "ask"
+    except execution_mode_module.InvalidExecutionMode:
+        execution_key = "ask"
+    if mode == "general":
+        execution_key = "ask"
+    key = (mode, model, execution_key)
     agent = _agents.get(key)
+    if agent is None:
+        # 兼容旧二元键桩（单测注入的假图不区分 Ask/Auto；生产键恒三元）。
+        agent = _agents.get((mode, model))
     if agent is None:
         try:
             agent = build_agent(
                 mode=mode,
                 checkpointer=_pg_saver if _pg_saver is not None else _fallback_saver,
                 model=model,
+                execution_mode=execution_key,
             )
         except RuntimeError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
@@ -152,6 +184,12 @@ class ChatRequest(BaseModel):
     context: dict[str, Any] | None = Field(default=None)
     approval_id: str | None = Field(default=None, max_length=64)
     model: str | None = Field(default=None, max_length=64)
+    # T2 Research Ask/Auto（前端规格 §2.1）：research_execution_mode=ask|auto，
+    # 只在 Research 展示；Ask 与 Auto 唯一差别是实验代码沙箱执行权限。
+    # 缺字段→默认 Ask（不从旧 Auto 偏好偷偷升级）；未知值 400
+    # INVALID_RESEARCH_EXECUTION_MODE；General 兼容合法值但不产生执行授权。
+    # 模型不能经工具参数修改本字段——只走请求顶层（工具侧各自校验）。
+    research_execution_mode: str | None = Field(default=None, max_length=16)
     attachment_ids: list[str] = Field(default_factory=list, max_length=5)
     # NX-A1：附件元数据清单（Backend 验主+绑定后构建，随 payload 透传）。
     # 模型必须知道附件 id/文件名才能调用 read_attachment——只透传 id 时
@@ -208,6 +246,24 @@ def _require_model(raw: str | None) -> str:
         return normalize_model_name(raw, llm_available_models(settings), llm_default_model(settings))
     except InvalidNexusModel as error:
         raise HTTPException(status_code=400, detail=f"INVALID_NEXUS_MODEL:{error.raw!r}") from error
+
+
+def _require_execution_mode(raw: str | None, mode: str) -> str | None:
+    """T2：校验本次显式传入的执行模式（未知值 400，不读偏好兜底）。
+
+    返回归一值（ask|auto）或 None（未传——调用方再按 resolve_effective 解析
+    effective；未传不从旧 Auto 偏好偷偷升级，默认 Ask）。
+    """
+    from nexus import execution_mode as execution_mode_module
+
+    if raw is None:
+        return None
+    try:
+        return execution_mode_module.normalize_execution_mode(raw, mode)
+    except execution_mode_module.InvalidExecutionMode as error:
+        raise HTTPException(
+            status_code=400, detail=f"INVALID_RESEARCH_EXECUTION_MODE:{error.raw!r}"
+        ) from error
 
 
 def _config_for(session_id: str, user_id: str | None = None) -> dict[str, Any]:
@@ -488,8 +544,9 @@ async def _agent_stream(
     attachments: list[dict[str, Any]] | None = None,
     request_id: str = "",
     run_context: dict[str, Any] | None = None,
+    execution_mode: str = "ask",
 ):
-    agent = get_agent(mode, model)
+    agent = get_agent(mode, model, execution_mode)
     thread_id = thread_for(session_id, user_id)
     inputs = {"messages": [{"role": "user", "content": (
         _attachment_note(attachments) + _run_context_note(run_context) + message
@@ -499,14 +556,17 @@ async def _agent_stream(
     from nexus.request_scope import (
         reset_attachments,
         reset_execution_scope,
+        reset_experiment_gate,
         reset_scope,
         set_attachments,
         set_execution_scope,
+        set_experiment_gate,
         set_scope,
     )
 
     scope_tokens = set_scope(user_id, course_id)
     exec_tokens = set_execution_scope(session_id, approval_id)
+    gate_tokens = set_experiment_gate(mode, execution_mode)
     attach_token = set_attachments(attachment_ids)
 
     async def _tag(payload: dict[str, Any]) -> dict[str, Any]:
@@ -564,26 +624,38 @@ async def _agent_stream(
     finally:
         reset_scope(scope_tokens)
         reset_execution_scope(exec_tokens)
+        reset_experiment_gate(gate_tokens)
         reset_attachments(attach_token)
         # 写者资格兜底释放（正常/失败/取消路径已显式释放；此处防生成器
         # 在任何未捕获路径上关闭后泄漏门锁）。
         _active_threads.discard(thread_id)
     _release_thread_writer(thread_id, request_id, status="done")
-    yield _sse("done", await _tag({"session_id": session_id, "token_count": token_count}))
+    yield _sse("done", await _tag({
+        "session_id": session_id, "token_count": token_count,
+        "research_execution_mode": execution_mode,
+    }))
 
 
 def _tool_surface() -> dict[str, list[str]] | None:
     """已构建 agent 的执行器工具注册表（M0-B1 巡检口径，M1 起按模式上报）。
 
-    模型网关 P0：键为 "mode@model"，只含已实际构建的实例。不同模型同模式
-    的工具面应一致；出现分歧即回归信号（某模型实例构建走了不同分支）。
+    模型网关 P0：键为 "mode@model:execution"，只含已实际构建的实例。不同模型
+    同模式的工具面应一致；出现分歧即回归信号（某模型实例构建走了不同分支）。
+    T2：Research 区分 ask/auto（Ask 不绑定 run_reproduction）。
     """
     if not _agents:
         return None
     surfaces: dict[str, list[str]] = {}
-    for (mode, model), agent in _agents.items():
+    for raw_key, agent in _agents.items():
+        # 兼容旧二元键桩（单测注入）；生产键恒 (mode, model, execution)。
+        if len(raw_key) == 3:
+            mode, model, execution_mode = raw_key
+        else:  # pragma: no cover - 仅旧测试桩形状
+            mode, model = raw_key
+            execution_mode = "ask"
         try:
-            surfaces[f"{mode}@{model}"] = sorted(agent.nodes["tools"].bound.tools_by_name.keys())
+            surfaces[f"{mode}@{model}:{execution_mode}"] = sorted(
+                agent.nodes["tools"].bound.tools_by_name.keys())
         except AttributeError:
             continue
     return surfaces or None
@@ -747,9 +819,18 @@ async def chat_stream(
 ) -> StreamingResponse:
     mode = _require_mode(request.mode)
     model = _require_model(request.model)
-    get_agent(mode, model)
     user_id = sanitize_user_id(x_nexus_user_id)
     session_id = sanitize_session_id(request.session_id)
+    # T2 Ask/Auto：显式值严格校验（未知 400）；未传默认 Ask（不偷升级）；
+    # 显式合法值保存会话偏好（刷新恢复由客户端显式发送）。
+    from nexus import execution_mode as execution_mode_module
+
+    _require_execution_mode(request.research_execution_mode, mode)
+    effective, _was_explicit = execution_mode_module.resolve_effective(
+        request.research_execution_mode, mode,
+        user_id=user_id or "", session_id=session_id,
+    )
+    get_agent(mode, model, effective)
     thread_id = thread_for(session_id, user_id)
     request_id = _sanitize_request_id(request)
     # NX-LB3：单写者门 + 幂等去重（先于任何执行；同步临界区，无排队器）。
@@ -772,6 +853,7 @@ async def chat_stream(
             request.attachments,
             request_id=request_id,
             run_context=_server_run_context(request),
+            execution_mode=effective,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -795,9 +877,16 @@ async def chat(
 ) -> dict[str, Any]:
     mode = _require_mode(request.mode)
     model = _require_model(request.model)
-    agent = get_agent(mode, model)
+    from nexus import execution_mode as execution_mode_module
+
+    _require_execution_mode(request.research_execution_mode, mode)
     user_id = sanitize_user_id(x_nexus_user_id)
     session_id = sanitize_session_id(request.session_id)
+    effective, _was_explicit = execution_mode_module.resolve_effective(
+        request.research_execution_mode, mode,
+        user_id=user_id or "", session_id=session_id,
+    )
+    agent = get_agent(mode, model, effective)
     config = _config_for(session_id, user_id)
     thread_id = thread_for(session_id, user_id)
     request_id = _sanitize_request_id(request)
@@ -816,14 +905,17 @@ async def chat(
     from nexus.request_scope import (
         reset_attachments,
         reset_execution_scope,
+        reset_experiment_gate,
         reset_scope,
         set_attachments,
         set_execution_scope,
+        set_experiment_gate,
         set_scope,
     )
 
     scope_tokens = set_scope(user_id, _context_course_id(request))
     exec_tokens = set_execution_scope(session_id, _sanitize_approval_id(request))
+    gate_tokens = set_experiment_gate(mode, effective)
     attach_token = set_attachments(_sanitize_attachment_ids(request))
     inputs = {
         "messages": [
@@ -867,6 +959,7 @@ async def chat(
             "message": final_message,
             "tool_events": tool_events,
             "plan": plan,
+            "research_execution_mode": effective,
         }
     except Exception:
         final_status = "failed"
@@ -874,6 +967,7 @@ async def chat(
     finally:
         reset_scope(scope_tokens)
         reset_execution_scope(exec_tokens)
+        reset_experiment_gate(gate_tokens)
         reset_attachments(attach_token)
         # NX-N0/P1-C：写者获取后的全部路径统一释放——模型异常、状态读取、
         # 计划投影、线程触达任一失败都不泄漏门锁；失败记 failed 供同键重试。
@@ -1203,6 +1297,10 @@ class ApprovalDecision(BaseModel):
 class ApprovalExecute(BaseModel):
     approval_id: str = Field(min_length=1, max_length=64)
     session_id: str = Field(default="default", max_length=128)
+    # T2 Ask/Auto 执行门：启动必须 Research+Auto+本人批准。缺字段（旧客户端）
+    # 时旧 preset 票据保持兼容，自主票据 fail-closed 拒绝；未知值 400。
+    mode: str | None = Field(default=None, max_length=32)
+    research_execution_mode: str | None = Field(default=None, max_length=16)
 
 
 def _public_approval_view(
@@ -1297,12 +1395,19 @@ async def repro_execute_approved(
     if row is None:
         raise HTTPException(status_code=404, detail="APPROVAL_NOT_FOUND")
     preset_id = str(row.get("preset_id", ""))
+    # T2 Ask/Auto 门：mode 未知→400；执行模式未知→400；缺字段时旧 preset
+    # 票据兼容，自主票据由执行核 fail-closed。
+    mode = _require_mode(body.mode) if body.mode is not None else None
+    if body.research_execution_mode is not None:
+        _require_execution_mode(body.research_execution_mode, mode or "research")
     try:
         return await execute_approved_reproduction(
             approval_id=approval_id,
             user_id=user_id,
             session_id=session_id,
             preset_id=preset_id,
+            mode=mode,
+            research_execution_mode=body.research_execution_mode,
         )
     except approvals.ApprovalError as error:
         status_map = {
@@ -1313,6 +1418,14 @@ async def repro_execute_approved(
             "APPROVAL_EXPIRED": 409,
             "APPROVAL_PLAN_CHANGED": 409,
             "APPROVAL_PROPOSAL_CHANGED": 409,
+            "APPROVAL_KIND_MISMATCH": 409,
+            "APPROVAL_SCOPE_MISSING": 409,
+            "EXPERIMENT_EXECUTION_DISABLED": 403,
+            "APPROVAL_RUN_UNAVAILABLE": 503,
+            "RUN_FORBIDDEN": 403,
+            "RUN_SESSION_MISMATCH": 403,
+            "RUN_NOT_FOUND": 404,
+            "RUN_TERMINAL": 409,
         }
         raise HTTPException(
             status_code=status_map.get(error.code, 409), detail=error.code
@@ -1333,19 +1446,25 @@ async def repro_execute_approved(
 
 
 class ProposalCreate(BaseModel):
-    preset_id: str = Field(min_length=1, max_length=64)
+    preset_id: str = Field(default="", max_length=64)
     session_id: str = Field(default="default", max_length=128)
     parent_run_id: str = Field(default="", max_length=64)
     objective: str = Field(default="", max_length=500)
     parameters: dict[str, Any] = Field(default_factory=dict)
     data: dict[str, Any] = Field(default_factory=dict)
     client_request_id: str = Field(default="", max_length=64)
+    # T2 自主提案：kind 缺省 preset；kind=autonomous_experiment 时消费
+    # scope（ExperimentScope），不要求 preset_id。
+    kind: str = Field(default="preset", max_length=32)
+    scope: dict[str, Any] | None = Field(default=None)
 
 
 class ProposalPatch(BaseModel):
     expected_version: int = Field(ge=1)
     objective: str | None = Field(default=None, max_length=500)
     parameters: dict[str, Any] | None = None
+    # T2：自主提案改 scope（preset 提案传 scope 422）。
+    scope: dict[str, Any] | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -1398,6 +1517,9 @@ def _proposal_error_status(code: str) -> int:
         "PROPOSAL_PERSIST_FAILED": 503,
         "PROPOSAL_APPROVAL_CREATE_FAILED": 503,
         "PROPOSAL_PARENT_NOT_FOUND": 404,
+        "PROPOSAL_KIND_UNSUPPORTED": 422,
+        "PROPOSAL_KIND_MISMATCH": 422,
+        "PROPOSAL_SCOPE_INVALID": 422,
     }.get(code, 422)
 
 
@@ -1424,15 +1546,27 @@ async def repro_proposal_create(
     body: ProposalCreate,
     x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
 ) -> dict[str, Any]:
-    """NX-LB2：建结构化提案草案（不执行；client_request_id 幂等）。"""
+    """NX-LB2：建结构化提案草案（不执行；client_request_id 幂等）。
+
+    T2：kind 缺省 preset；kind=autonomous_experiment 时消费 scope，
+    不要求 preset_id。
+    """
     from nexus import proposals as proposals_module
     from nexus.tools.reproduction import REPRO_PRESETS
 
     user_id = sanitize_user_id(x_nexus_user_id) or ""
     session_id = sanitize_session_id(body.session_id)
-    preset = REPRO_PRESETS.get(body.preset_id.strip().lower())
-    if preset is None:
-        raise HTTPException(status_code=404, detail="PRESET_NOT_FOUND")
+    kind = (body.kind or "preset").strip()
+    preset = None
+    if kind == "autonomous_experiment":
+        if (body.preset_id or "").strip():
+            raise HTTPException(status_code=422, detail="PROPOSAL_KIND_MISMATCH")
+    else:
+        if kind != "preset":
+            raise HTTPException(status_code=422, detail="PROPOSAL_KIND_UNSUPPORTED")
+        preset = REPRO_PRESETS.get(body.preset_id.strip().lower())
+        if preset is None:
+            raise HTTPException(status_code=404, detail="PRESET_NOT_FOUND")
     parent_run: dict[str, Any] | None = None
     if body.parent_run_id.strip():
         parent_run = await _fetch_parent_run(body.parent_run_id.strip()[:64], user_id)
@@ -1448,6 +1582,8 @@ async def repro_proposal_create(
             parameters=body.parameters,
             data=body.data,
             client_request_id=body.client_request_id,
+            kind=kind,
+            scope=body.scope,
         )
     except proposals_module.ProposalError as error:
         raise HTTPException(
@@ -1531,6 +1667,7 @@ async def repro_proposal_patch(
             sanitize_session_id(proposal_id), user_id=user_id,
             expected_version=body.expected_version,
             objective=body.objective, parameters=body.parameters,
+            scope=body.scope,
         )
     except proposals_module.ProposalError as error:
         raise HTTPException(
@@ -1600,17 +1737,85 @@ async def approvals_list(
         if row.get("proposal_id"):
             proposal = proposals_module.get_proposal(row["proposal_id"])
             if proposal is not None and proposal["user_id"] == user_id:
-                item["proposal"] = {
-                    "proposal_id": proposal["proposal_id"],
-                    "version": proposal["version"],
-                    "status": proposal["status"],
-                    "objective": proposal.get("objective", ""),
-                    "parameters": proposal["parameters"],
-                    "metric_basis": (proposal.get("metric_policy") or {}).get("basis", ""),
-                    "plan_hash": proposal["plan_hash"],
-                }
+                if (proposal.get("kind") == "autonomous_experiment"
+                        or (not proposal.get("preset_id") and proposal.get("scope"))):
+                    scope = proposal.get("scope") or {}
+                    item["proposal"] = {
+                        "proposal_id": proposal["proposal_id"],
+                        "version": proposal["version"],
+                        "kind": "autonomous_experiment",
+                        "status": proposal["status"],
+                        "objective": proposal.get("objective", ""),
+                        "repo_url": (scope or {}).get("repo_url", ""),
+                        "mode": (scope or {}).get("mode", ""),
+                        "scope_hash": proposal.get("scope_hash", ""),
+                    }
+                else:
+                    item["proposal"] = {
+                        "proposal_id": proposal["proposal_id"],
+                        "version": proposal["version"],
+                        "status": proposal["status"],
+                        "objective": proposal.get("objective", ""),
+                        "parameters": proposal["parameters"],
+                        "metric_basis": (proposal.get("metric_policy") or {}).get("basis", ""),
+                        "plan_hash": proposal["plan_hash"],
+                    }
             else:
                 item["proposal"] = {"proposal_id": row["proposal_id"],
                                     "unavailable": True}
         items.append(item)
     return {"items": items}
+
+
+class ExecutionModeBody(BaseModel):
+    research_execution_mode: str = Field(min_length=1, max_length=16)
+
+
+@app.put(
+    "/api/v1/nexus/sessions/{session_id}/execution-mode",
+    dependencies=[Depends(require_api_key)],
+)
+async def session_execution_mode_save(
+    session_id: str,
+    body: ExecutionModeBody,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """T2：保存用户明确选择的 Research 执行模式（Ask/Auto）。
+
+    未知值 400；合法值落服务端会话偏好（刷新恢复由客户端显式发送，
+    未传字段不偷升级）。
+    """
+    from nexus import execution_mode as execution_mode_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    session_id = sanitize_session_id(session_id)
+    try:
+        normalized = execution_mode_module.normalize_execution_mode(
+            body.research_execution_mode, "research")
+    except execution_mode_module.InvalidExecutionMode as error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"INVALID_RESEARCH_EXECUTION_MODE:{error.raw!r}",
+        ) from error
+    execution_mode_module.save_preference(user_id, session_id, normalized)
+    return {"session_id": session_id,
+            "research_execution_mode": normalized}
+
+
+@app.get(
+    "/api/v1/nexus/sessions/{session_id}/execution-mode",
+    dependencies=[Depends(require_api_key)],
+)
+async def session_execution_mode_get(
+    session_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """T2：读取服务端会话偏好（无记录默认 Ask；纯读取，不触发执行）。"""
+    from nexus import execution_mode as execution_mode_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    session_id = sanitize_session_id(session_id)
+    saved = execution_mode_module.get_preference(user_id, session_id)
+    return {"session_id": session_id,
+            "research_execution_mode": saved or "ask",
+            "has_preference": saved is not None}
