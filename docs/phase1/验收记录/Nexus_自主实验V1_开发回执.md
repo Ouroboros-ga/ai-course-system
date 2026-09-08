@@ -469,3 +469,30 @@ LICENSE_NOT_ALLOWED）；新增 `nexus/tests/test_t7_license_gate.py`（8 项）
   repo2docker 未翻转）。
 - 线上真实 PG 的 license/frozen_license 列补齐（lifespan ensure 已备，
   待部署后看日志＋冒烟）；正式 Word/LaTeX 与干净 B 仍归 SR6。
+
+## 线上验证（2026-09-08，部署 ac148ab2，一次性验证账号 `nx_verify_t7_*`）
+
+- 发布＋Runtime rsync（DIFF-CLEAN，`license_policy.py` 到位）＋三服务
+  active＋近 15 分钟零 warning 日志；current 指 `releases/ac148ab2`。
+- 门生效实证（`nx_verify_t7_6d8950ec`）：直建未固定修订提案→审批→批准→
+  Auto 执行 **409 `REVISION_NOT_PINNED`**（零 run、零容器，fail-closed）。
+- 真实模型 Ask（同账号）：200 且命中 micrograd 关键词，零实验提交。
+- 真实模型 Auto intake（`nx_verify_t7b_19facecf`，session t7b）：
+  模型自主调 `prepare_experiment`（target micrograd，status success），
+  落盘 `pp_9706ee542f77`（v1 draft，MIT verified，revision `7bc720e`
+  pinned，smoke，missing_inputs 空），回显如实声明未执行、批准由用户
+  决定——自主性实证（工具选择＋参数＋诚实陈述皆为模型行为）。
+- 真实仓库执行（`nx_verify_t7c_4ba2b3ad`，intake→`pp_5fe140c393d9`→审批→
+  Auto 执行 `apv_9d1c5fe8c4e6`）：门通过，run 启动，真模型驱动真容器
+  完成 8 个 operation（多次 DeepSeek 200），随后一次 DeepSeek 调用返回
+  **401 `invalid api key ****b27d`** → 图 fail-closed 落 failed（8 条
+  attempt 保留，退出码均为 0；无伪造成功）。
+- 失败 run 报告回收（同账号重登）：`POST /runs/{id}/report` 200，
+  environment_ready=true，metric not_evaluated，2 产物（1869＋1342 字节），
+  下载 1869 字节，落盘后回收触发。注意诚实缺口：报告
+  execution_succeeded=true（按末 attempt exit 0 拼装）而 run status=failed
+  （图侧 LLM 401）——判定口径差异如实记录，SR6 不以此冒充复现成功。
+- 外部阻塞：DeepSeek key（尾号 b27d）现已持续失效（chat 亦 502），
+  真实模型执行成功态待密钥轮换后重验；本次未读、未输出任何密钥，
+  仅记录日志中的尾号与 401 事实。沙箱残留已随报告回收（best-effort）。
+- T7 代码验收在此关闭；剩余真实模型成功态＋UI 全链待密钥恢复后补测。
