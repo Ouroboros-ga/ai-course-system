@@ -337,6 +337,63 @@ def t7_cited(node: dict, variant: int) -> dict:
     return _chat(("user", q), ("assistant", a))
 
 
+# ---------------------------------------------------------------- T9-T11 扩充任务
+
+_COURSE_ZH = {
+    "algorithms": "算法设计与复杂度分析", "arch": "计算机组成与体系结构", "compiler": "编译原理",
+    "data_structures": "数据结构", "db": "数据库系统", "discrete": "离散数学",
+    "graphics": "计算机图形学", "ml": "机器学习", "net": "计算机网络",
+    "os": "操作系统", "se": "软件工程",
+}
+
+
+def t7b_judge(node: dict) -> dict:
+    """判断题：说法取自 key_points 原文（保证事实正确），训练资料比对与引用习惯。"""
+    kp = (node.get("key_points") or [""])[0]
+    cite = _cite(node)
+    q = f"请依据教材判断下面这句话是否正确，并说明出处：\n「{kp}」"
+    a = ("正确。该表述与教材内容一致。"
+         + (f"补充：{node.get('definition', '')}" if node.get("definition") else "")
+         + "\n出处：" + cite.strip("（）"))
+    return _chat(("user", q), ("assistant", a))
+
+
+def t9_terminology(node: dict) -> dict | None:
+    aliases = node.get("aliases") or []
+    if not aliases:
+        return None
+    q = f"计算机学科知识点「{node['name']}」常见的英文术语（别名）有哪些？"
+    a = (f"「{node['name']}」的常见英文表述：{ '、'.join(aliases) }。\n"
+         f"阅读英文教材/文档时，这些术语等价使用。" + _cite(node))
+    return _chat(("user", q), ("assistant", a))
+
+
+def t10_locator(node: dict, names: dict[str, str], rels_by_node: dict[str, list[dict]]) -> dict:
+    course = _COURSE_ZH.get(node.get("_course", ""), node.get("_course", "计算机科学"))
+    prereq = [r["from"] for r in rels_by_node.get(node["id"], [])
+              if r["relation_type"] == "prerequisite_of" and r["to"] == node["id"]]
+    src = node.get("source") or {}
+    prereq_txt = ("建议先掌握：" + "、".join("「" + names.get(p, p) + "」" for p in prereq)) if prereq \
+        else "知识图谱中未标记强先修节点，按课程章节顺序学习即可"
+    q = (f"我想系统学习「{node['name']}」。它属于计算机科学的哪个领域？学习前需要哪些基础？"
+         "应该参考什么教材？")
+    a = (f"1）领域：「{node['name']}」属于{course}。\n"
+         f"2）先修：{prereq_txt}。\n"
+         f"3）教材：{src.get('title', '')}{('，' + src['chapter']) if src.get('chapter') else ''}"
+         f"{('（作者：' + src['authors'] + '）') if src.get('authors') else ''}。")
+    return _chat(("user", q), ("assistant", a))
+
+
+def t11_source(node: dict) -> dict:
+    src = node.get("source") or {}
+    q = f"如果要权威地学习「{node['name']}」，应该参考哪本教材的哪一部分？"
+    a = (f"推荐参考：{src.get('title', '')}"
+         + (f"（作者：{src['authors']}）" if src.get("authors") else "")
+         + (f"，{src['chapter']}" if src.get("chapter") else "")
+         + f"。该章节系统讲解「{node['name']}」的定义、要点与示例，与课程知识图谱条目一一对应。")
+    return _chat(("user", q), ("assistant", a))
+
+
 # ---------------------------------------------------------------- 主流程
 
 def build_v2(knowledge_dir: Path, baseline: Path) -> tuple[list[dict], list[dict], dict]:
@@ -385,8 +442,17 @@ def build_v2(knowledge_dir: Path, baseline: Path) -> tuple[list[dict], list[dict
     t4 = t4_code(train_nodes, set())
     reg(t4, "T4_代码")
 
-    # T5 多轮对话（每个 train 节点 1 条，追问类型轮换）
-    t5 = [t5_dialogue(n, train_names, rels_by_node, i) for i, n in enumerate(train_nodes)]
+    # T5 多轮对话（每节点 1 条；偶数位节点扩为三轮）
+    t5: list[dict] = []
+    for i, n in enumerate(train_nodes):
+        d = t5_dialogue(n, train_names, rels_by_node, i)
+        if i % 2 == 0 and n.get("key_points"):
+            kp = n["key_points"][-1]
+            d["messages"].extend([
+                {"role": "user", "content": "最后帮我划一下重点：这部分我最该记住的一句话是什么？"},
+                {"role": "assistant", "content": f"记住这句就够了：「{kp}」\n" + _cite(n)},
+            ])
+        t5.append(d)
     reg(t5, "T5_多轮对话")
 
     # T6 误区澄清
@@ -406,13 +472,30 @@ def build_v2(knowledge_dir: Path, baseline: Path) -> tuple[list[dict], list[dict
         t7.append(t7_cited(n, 1))
     reg(t7, "T7_引用作答")
 
-    train = t1 + t2 + t3 + t4 + t5 + t6 + t7
+    # T7b 判断题（说法取自 key_points 原文，训练资料比对）
+    t7b = [t7b_judge(n) for n in train_nodes]
+    reg(t7b, "T7b_判断题")
 
-    # 评测集：eval 节点的讲解/关系 + 基准 10 问（不进训练）
+    # T9 术语对照（有 aliases 的节点）
+    t9 = [x for x in (t9_terminology(n) for n in train_nodes) if x is not None]
+    reg(t9, "T9_术语对照")
+
+    # T10 知识定位/学习路径
+    t10 = [t10_locator(n, train_names, rels_by_node) for n in train_nodes]
+    reg(t10, "T10_知识定位")
+
+    # T11 出处溯源
+    t11 = [t11_source(n) for n in train_nodes]
+    reg(t11, "T11_出处溯源")
+
+    train = t1 + t2 + t3 + t4 + t5 + t6 + t7 + t7b + t9 + t10 + t11
+
+    # 评测集：eval 节点的讲解/关系/引用 + 基准 10 问（不进训练），目标 50 条
     ev: list[dict] = []
-    for n in nodes:
-        if n["id"] in eval_nodes:
-            ev.append(t1_explain(n, 0))
+    eval_node_list = [n for n in nodes if n["id"] in eval_nodes]
+    for n in eval_node_list:
+        ev.append(t1_explain(n, 0))
+        ev.append(t7_cited(n, 0))
     for r in rels:
         if r["from"] in eval_nodes or r["to"] in eval_nodes:
             ev.append(t2_relation(r, names))
