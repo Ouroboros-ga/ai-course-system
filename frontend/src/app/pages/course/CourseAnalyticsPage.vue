@@ -1,5 +1,5 @@
 <script setup>
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, inject, nextTick, onMounted, ref } from 'vue'
 import { Bar, Doughnut, Pie, Line } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -52,7 +52,10 @@ const kpi = computed(() => {
     : 0
   const pending = pts.reduce((s, p) => s + (Number(p.pending_recommendation_count) || 0), 0)
   let mastered = 0
-  for (const p of pts) mastered += Number(p.mastery_distribution?.['掌握'] || 0)
+  for (const p of pts) {
+    const d = p.mastery_distribution || {}
+    mastered += Number(d.advanced || 0) + Number(d.proficient || 0)
+  }
   return {
     students: analytics.value?.student_count || 0,
     points: pts.length,
@@ -69,7 +72,7 @@ const statusDistribution = computed(() => {
     inProgress += Number(p.in_progress || 0)
     completed += Number(p.completed || 0)
     pending += Number(p.pending_recommendation_count || 0)
-    mastered += Number(p.mastery_distribution?.['掌握'] || 0)
+    mastered += Number(p.mastery_distribution?.advanced || 0) + Number(p.mastery_distribution?.proficient || 0)
   }
   return { notStarted, inProgress, completed, pending, mastered }
 })
@@ -127,23 +130,23 @@ const barChartOptions = computed(() => ({
 }))
 
 const masteryDonutData = computed(() => {
-  const counts = {}
+  let mastered = 0
+  let needsMastery = 0
   for (const p of points.value) {
     for (const [level, c] of Object.entries(p.mastery_distribution || {})) {
-      counts[level] = (counts[level] || 0) + Number(c || 0)
+      const n = Number(c || 0)
+      if (level === 'advanced' || level === 'proficient') mastered += n
+      else if (level === 'developing' || level === 'beginner') needsMastery += n
     }
   }
-  const entries = Object.entries(counts)
-  const colorFor = (level) => {
-    if (level === '掌握') return VIVID.completed
-    if (level === '未掌握') return VIVID.notMastered
-    return VIVID.unknown
-  }
+  const slices = []
+  if (mastered > 0) slices.push({ label: '已掌握', value: mastered, color: VIVID.completed })
+  if (needsMastery > 0) slices.push({ label: '待掌握', value: needsMastery, color: VIVID.notMastered })
   return {
-    labels: entries.map(([l]) => l),
+    labels: slices.map(s => s.label),
     datasets: [{
-      data: entries.map(([, c]) => c),
-      backgroundColor: entries.map(([l]) => colorFor(l)),
+      data: slices.map(s => s.value),
+      backgroundColor: slices.map(s => s.color),
       borderWidth: 2,
       borderColor: '#FFFFFF',
     }],
@@ -348,6 +351,14 @@ function evidenceText(cognition) {
   return evidence.map(item => `${item.evidence_id} / ${item.type}`).join('；')
 }
 
+function masteryLabel(level) {
+  if (level === 'advanced' || level === 'proficient') return '已掌握'
+  if (level === 'developing' || level === 'beginner') return '待掌握'
+  return ''
+}
+
+const detailSection = ref(null)
+
 async function load() {
   state.value = 'loading'
   error.value = ''
@@ -372,6 +383,10 @@ async function inspectStudent(studentId) {
   selectedStudent.value = studentId
   const response = await getStudentLearningAnalytics(courseId.value, studentId)
   studentDetail.value = response?.data ?? response
+  // 明细渲染在列表最下方，点击后滚动到可视区域，避免"看起来没反应"
+  nextTick(() => {
+    detailSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
 }
 
 onMounted(load)
@@ -539,11 +554,11 @@ onMounted(load)
         </div>
       </section>
 
-      <section v-if="studentDetail" class="sfx-panel">
+      <section v-if="studentDetail" ref="detailSection" class="sfx-panel">
         <h2 class="sfx-panel-title">学生 {{ selectedStudent }} 学习明细</h2>
         <div v-for="item in studentDetail.items" :key="item.outline_node_id" class="sfx-analytics-student-detail">
           <div><strong>{{ item.title }}</strong><span>{{ item.learning.status }} · {{ Math.round(item.learning.completion_ratio * 100) }}%</span></div>
-          <div><span>认知：{{ item.cognition.mastery_level || item.cognition.status }}</span><span>置信度：{{ item.cognition.evidence_confidence ?? '—' }}</span></div>
+          <div><span>认知：{{ masteryLabel(item.cognition.mastery_level) || item.cognition.status }}</span><span>置信度：{{ item.cognition.evidence_confidence ?? '—' }}</span></div>
           <div class="sfx-t-caption">原因：{{ reasonText(item.cognition) }}</div>
           <div class="sfx-t-caption">证据：{{ evidenceText(item.cognition) }}</div>
           <div class="sfx-t-caption">推荐：{{ item.recommendation?.status || 'not_available' }}{{ item.recommendation?.title ? ` · ${item.recommendation.title}` : '' }}</div>
