@@ -26,6 +26,22 @@ def _settings_ready() -> tuple[str, str] | None:
     return url, token
 
 
+def _error_detail(response: Any) -> str:
+    """提取服务端错误明细（FastAPI 用 detail，内部信封用 message）。"""
+    try:
+        payload = response.json()
+    except ValueError:
+        return ""
+    if isinstance(payload, dict):
+        detail = payload.get("detail", payload.get("message", ""))
+        if isinstance(detail, list):
+            return "; ".join(str(getattr(item, "get", lambda *_: item)("msg", item))
+                             if isinstance(item, dict) else str(item)
+                             for item in detail)[:300]
+        return str(detail or "")[:300]
+    return ""
+
+
 async def write_binary_artifact_via_backend(
     *, artifact_type: str, title: str, raw: bytes, user_id: str | None,
     run_id: str = "",
@@ -76,10 +92,7 @@ async def write_binary_artifact_via_backend(
             "detail": f"产物写入失败（{type(error).__name__}）；不得声称文件已生成。",
         }
     if response.status_code != 200:
-        try:
-            detail = response.json().get("message", "")
-        except ValueError:
-            detail = ""
+        detail = _error_detail(response)
         return {
             "status": "unavailable",
             "code": "ARTIFACT_UNAVAILABLE",
@@ -104,6 +117,8 @@ async def write_binary_artifact_via_backend(
             "download_path": f"/api/v1/nexus/artifacts/{artifact_id}/download",
         },
     }
+
+
 async def write_artifact_via_backend(
     *, artifact_type: str, title: str, content: str, user_id: str | None,
     run_id: str = "",
@@ -142,10 +157,7 @@ async def write_artifact_via_backend(
             "detail": f"产物写入失败（{type(error).__name__}）；不得声称文件已生成。",
         }
     if response.status_code != 200:
-        try:
-            detail = response.json().get("message", "")
-        except ValueError:
-            detail = ""
+        detail = _error_detail(response)
         return {
             "status": "unavailable",
             "code": "ARTIFACT_UNAVAILABLE",

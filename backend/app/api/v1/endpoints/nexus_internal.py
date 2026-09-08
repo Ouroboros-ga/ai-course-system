@@ -158,7 +158,8 @@ class NexusArtifactWriteRequest(BaseModel):
 
     artifact_type: str = Field(min_length=1, max_length=16)
     title: str = Field(min_length=1, max_length=120)
-    content: str = Field(min_length=1)
+    content: str = Field(default="")
+    content_b64: str = Field(default="", max_length=1024 * 1024)
     run_id: str = Field(default="", max_length=64)
 
 
