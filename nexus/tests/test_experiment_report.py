@@ -1,0 +1,314 @@
+"""T6 交付环境配方与真实结果（接既有 Artifact）。
+
+行为契约（任务书 T6）：
+- 收集固定 repo SHA＋实际补丁、依赖锁/镜像 digest、数据来源/hash、执行
+  命令、参数、seed、日志引用与实际指标；保存后才回收可变工作区；
+- 配方和结果关联本 run；报告区分 environment_ready / execution_succeeded /
+  metric_verdict / clean_verification；没有指标就是 not_evaluated，B 未
+  执行就是 not_run；
+- 用户得到"做了什么、修了什么、跑出什么、如何再跑"的 Markdown 报告和可
+  下载配方/日志；产物经现有 owner/session 校验；
+- exit 0 不等于论文复现成功（任务书示例断言）。
+
+全调用真实业务代码；Artifact 写入与控制回收经注入替身（ tracking 调用
+顺序，断言"先落盘后回收"）。
+"""
+
+import pytest
+
+from nexus import approvals
+from nexus import experiment_runs as runs_module
+from nexus import proposals as proposals_module
+
+
+@pytest.fixture(autouse=True)
+def _clean_stores():
+    approvals.clear_memory_store()
+    proposals_module.clear_memory_store()
+    runs_module.clear_memory_store()
+    yield
+    approvals.clear_memory_store()
+    proposals_module.clear_memory_store()
+    runs_module.clear_memory_store()
+
+
+def _scope():
+    return {
+        "objective": "配置并试跑", "repo_url": "https://github.com/example/r",
+        "repo_revision": "deadbeef1234", "source_refs": [], "data_refs": [],
+        "network_profile": "pypi-allowed",
+        "resources": {"cpu": 1.0, "memory_mb": 2048, "disk_mb": 5120,
+                      "wall_time_s": 1800},
+        "mode": "smoke", "allow_environment_repair": True,
+    }
+
+
+def _make_run(user_id="u-t6", session_id="s-t6", scope=None):
+    proposal = proposals_module.create_proposal(
+        user_id=user_id, session_id=session_id, preset=None,
+        kind="autonomous_experiment", scope=scope or _scope())
+    req = proposals_module.request_approval_for_proposal(
+        proposal["proposal_id"], user_id=user_id,
+        expected_version=proposal["version"])
+    aid = req["approval"]["approval_id"]
+    approvals.decide_approval(aid, user_id, "approved")
+    approvals.consume_approval(aid, user_id=user_id, session_id=session_id,
+                               preset={})
+    run = runs_module.create_or_get_run(
+        run_id=aid, owner=user_id, session_id=session_id,
+        proposal_id=proposal["proposal_id"], proposal_version=1,
+        scope_hash=proposal["scope_hash"], approval_id=aid)
+    return run, proposal
+
+
+def _attempts_ok(run_id):
+    runs_module.record_attempt(
+        run_id, actual_command="pip install -r requirements.txt",
+        operation_id=f"{run_id}-op-0002", exit_code=0, log_ref="ok")
+    runs_module.record_attempt(
+        run_id, actual_command="python train.py",
+        operation_id=f"{run_id}-op-0003", exit_code=0, log_ref="loss=0.5")
+
+
+def _report(exit_code=0, metrics=None, clean_b=None):
+    """任务书示例形态：只组装输入，判定走真实 build。"""
+    from nexus import experiment_report as report_module
+
+    run, _proposal = _make_run()
+    if exit_code == 0:
+        _attempts_ok(run["run_id"])
+    else:
+        runs_module.record_attempt(
+            run["run_id"], actual_command="python train.py",
+            operation_id=f"{run['run_id']}-op-0002", exit_code=exit_code,
+            log_ref="traceback")
+    runs_module.set_status(run["run_id"],
+                           "succeeded" if exit_code == 0 else "failed", "")
+    return report_module.build_experiment_report(
+        run=runs_module.get_run(run["run_id"]),
+        scope=_scope(), license_info={"spdx": "MIT", "status": "verified"},
+        image="repro-task:1.4.0", image_digest="sha256:4f2ba29b",
+        metrics=metrics, clean=clean_b)
+
+
+def test_exit_zero_is_not_paper_success():
+    report = _report(exit_code=0, metrics=None, clean_b=None)
+    assert report["execution_succeeded"] is True
+    assert report["metric_verdict"] == "not_evaluated"
+    assert report["clean_verification"] == "not_run"
+    assert report.get("reproducible") is not True
+
+
+def test_failed_run_marks_execution_failed():
+    report = _report(exit_code=1, metrics=None, clean_b=None)
+    assert report["execution_succeeded"] is False
+    assert report["metric_verdict"] == "not_evaluated"
+    assert "reproducible" not in report or report.get("reproducible") is not True
+
+
+def test_metrics_compare_deterministically():
+    report = _report(
+        exit_code=0,
+        metrics={"observed": {"val_loss": 1.89},
+                 "expected": {"val_loss": {"target": 1.88, "tolerance": 0.06}}},
+        clean_b=None)
+    assert report["metric_verdict"] == "PASS"
+    assert report["comparison"][0]["observed"] == 1.89
+    bad = _report(
+        exit_code=0,
+        metrics={"observed": {"val_loss": 2.5},
+                 "expected": {"val_loss": {"target": 1.88, "tolerance": 0.06}}},
+        clean_b=None)
+    assert bad["metric_verdict"] == "FAIL"
+
+
+def test_clean_b_verdict_passthrough():
+    report = _report(
+        exit_code=0, metrics=None,
+        clean_b={"status": "passed", "note": "clean env ok"})
+    assert report["clean_verification"] == "passed"
+    assert _report(exit_code=0)["clean_verification"] == "not_run"
+
+
+def test_recipe_pins_revision_image_and_commands():
+    from nexus import experiment_report as report_module
+
+    run, _proposal = _make_run()
+    _attempts_ok(run["run_id"])
+    runs_module.set_status(run["run_id"], "succeeded", "")
+    report = report_module.build_experiment_report(
+        run=runs_module.get_run(run["run_id"]), scope=_scope(),
+        license_info={"spdx": "MIT", "status": "verified"},
+        image="repro-task:1.4.0", image_digest="sha256:4f2ba29b")
+    recipe = report["recipe"]
+    assert recipe["repo_url"] == "https://github.com/example/r"
+    assert recipe["repo_revision"] == "deadbeef1234"
+    assert recipe["revision_pinned"] is True
+    assert recipe["base_image"] == "repro-task:1.4.0"
+    assert recipe["image_digest"] == "sha256:4f2ba29b"
+    assert [s["command"] for s in recipe["steps"]] == [
+        "pip install -r requirements.txt", "python train.py"]
+    assert recipe["generated_from_run"] == run["run_id"]
+    # seed 未跟踪：如实 null，不编造。
+    assert recipe["seed"] is None
+    markdown = report_module.render_recipe_markdown(report)
+    assert "pip install -r requirements.txt" in markdown
+    assert "repro-task:1.4.0" in markdown
+
+
+def test_report_markdown_has_four_sections():
+    from nexus import experiment_report as report_module
+
+    report = _report(exit_code=0, metrics=None, clean_b=None)
+    text = report_module.render_report_markdown(report)
+    for section in ("做了什么", "修了什么", "跑出什么", "如何再跑"):
+        assert section in text
+    assert "not_evaluated" in text or "未评估" in text
+    assert "claim_refs" not in text
+
+
+def test_report_records_repair_history():
+    """修了什么：失败 attempt 与其后成功的命令如实列出（不编造因果）。"""
+    from nexus import experiment_report as report_module
+
+    run, _proposal = _make_run()
+    runs_module.record_attempt(
+        run["run_id"], actual_command="python train.py",
+        operation_id=f"{run['run_id']}-op-0002", exit_code=1,
+        log_ref="ModuleNotFoundError: No module named 'fakepkg'")
+    runs_module.record_attempt(
+        run["run_id"], actual_command="pip install fakepkg",
+        operation_id=f"{run['run_id']}-op-0003", exit_code=0, log_ref="ok")
+    runs_module.record_attempt(
+        run["run_id"], actual_command="python train.py",
+        operation_id=f"{run['run_id']}-op-0004", exit_code=0, log_ref="loss=0.5")
+    runs_module.set_status(run["run_id"], "succeeded", "")
+    report = report_module.build_experiment_report(
+        run=runs_module.get_run(run["run_id"]), scope=_scope(),
+        license_info={"spdx": "MIT", "status": "verified"},
+        image="repro-task:1.4.0", image_digest="sha256:4f2ba29b")
+    failures = report["failures"]
+    assert len(failures) == 1
+    assert "fakepkg" in failures[0]["log_tail"]
+    assert "PASS" not in report_module.render_report_markdown(report)
+
+
+async def test_generate_writes_artifacts_then_recycles(monkeypatch):
+    """保存后才回收：artifact 写入全部成功后才调控制取消；写入失败不回收."""
+    from nexus import experiment_report as report_module
+
+    calls: list = []
+
+    async def _fake_write(*, artifact_type, title, content, user_id, run_id=""):
+        calls.append(("write", artifact_type, title))
+        return {"status": "success",
+                "artifact": {"artifact_id": f"art-{len(calls)}",
+                             "artifact_type": artifact_type, "title": title,
+                             "size_bytes": len(content),
+                             "download_path": f"/api/v1/nexus/artifacts/art-{len(calls)}/download"}}
+
+    class _FakeBackend:
+        async def cancel(self):
+            calls.append(("cancel",))
+            return {"status": "cancelled"}
+
+    monkeypatch.setattr(report_module.artifact_client,
+                        "write_artifact_via_backend", _fake_write)
+    run, _proposal = _make_run()
+    _attempts_ok(run["run_id"])
+    runs_module.set_status(run["run_id"], "succeeded", "")
+    result = await report_module.generate_run_report(
+        run_id=run["run_id"], user_id="u-t6", backend=_FakeBackend())
+    assert result["content_version"] == "experiment-report/1"
+    assert len(result["artifacts"]) == 2
+    assert [c[0] for c in calls] == ["write", "write", "cancel"]
+    # 写入失败 → 不回收，调用方得 502 语义（此处抛 ReportError）。
+    async def _failing_write(**kwargs):
+        calls.append(("write-fail",))
+        return {"status": "unavailable", "code": "ARTIFACT_UNAVAILABLE",
+                "detail": "down"}
+
+    monkeypatch.setattr(report_module.artifact_client,
+                        "write_artifact_via_backend", _failing_write)
+    n_cancel_before = len([c for c in calls if c[0] == "cancel"])
+    with pytest.raises(report_module.ReportError) as exc:
+        await report_module.generate_run_report(
+            run_id=run["run_id"], user_id="u-t6", backend=_FakeBackend())
+    assert exc.value.code == "REPORT_ARTIFACT_WRITE_FAILED"
+    assert len([c for c in calls if c[0] == "cancel"]) == n_cancel_before
+
+
+async def test_generate_rejects_unfinished_and_foreign():
+    from nexus import experiment_report as report_module
+
+    run, _proposal = _make_run()
+    with pytest.raises(report_module.ReportError) as exc:
+        await report_module.generate_run_report(
+            run_id=run["run_id"], user_id="u-t6", backend=None)
+    assert exc.value.code == "RUN_NOT_FINISHED"
+    runs_module.request_cancel(run["run_id"], "u-t6")
+    runs_module.set_status(run["run_id"], "cancelled", "")
+    with pytest.raises(report_module.ReportError) as exc2:
+        await report_module.generate_run_report(
+            run_id=run["run_id"], user_id="u-t6", backend=None)
+    assert exc2.value.code == "RUN_CANCELLED"
+    with pytest.raises(report_module.ReportError) as exc3:
+        await report_module.generate_run_report(
+            run_id=run["run_id"], user_id="attacker", backend=None)
+    assert exc3.value.code == "RUN_FORBIDDEN"
+
+
+async def test_report_http_endpoint(monkeypatch):
+    """Runtime 报告端点：成功 200＋产物；跨用户 404；运行中 409；写入失败 502。"""
+    from httpx import ASGITransport, AsyncClient
+
+    from nexus import experiment_report as report_module
+    from nexus.main import app
+
+    monkeypatch.delenv("NEXUS_API_KEY", raising=False)
+
+    async def _ok_write(*, artifact_type, title, content, user_id, run_id=""):
+        return {"status": "success",
+                "artifact": {"artifact_id": f"art-{title[:4]}",
+                             "artifact_type": artifact_type, "title": title,
+                             "size_bytes": len(content),
+                             "download_path": "/api/v1/nexus/artifacts/x/download"}}
+
+    monkeypatch.setattr(report_module.artifact_client,
+                        "write_artifact_via_backend", _ok_write)
+    run, _proposal = _make_run(user_id="u-http", session_id="s-http")
+    _attempts_ok(run["run_id"])
+    runs_module.set_status(run["run_id"], "succeeded", "")
+    user = {"X-Nexus-User-Id": "u-http"}
+    async with AsyncClient(transport=ASGITransport(app=app),
+                           base_url="http://test") as client:
+        ok_resp = await client.post(
+            f"/api/v1/nexus/repro/runs/{run['run_id']}/report", headers=user)
+        assert ok_resp.status_code == 200, ok_resp.text
+        body = ok_resp.json()
+        assert body["execution_succeeded"] is True
+        assert body["metric_verdict"] == "not_evaluated"
+        assert len(body["artifacts"]) == 2
+        assert body["content_version"] == "experiment-report/1"
+        # 跨用户 → 404（不区分不存在/他人）。
+        cross = await client.post(
+            f"/api/v1/nexus/repro/runs/{run['run_id']}/report",
+            headers={"X-Nexus-User-Id": "attacker"})
+        assert cross.status_code == 404
+        # 运行中 → 409。
+        run2, _p2 = _make_run(user_id="u-http", session_id="s-http")
+        busy = await client.post(
+            f"/api/v1/nexus/repro/runs/{run2['run_id']}/report", headers=user)
+        assert busy.status_code == 409
+
+    async def _bad_write(**kwargs):
+        return {"status": "unavailable", "code": "ARTIFACT_UNAVAILABLE",
+                "detail": "down"}
+
+    monkeypatch.setattr(report_module.artifact_client,
+                        "write_artifact_via_backend", _bad_write)
+    async with AsyncClient(transport=ASGITransport(app=app),
+                           base_url="http://test") as client:
+        fail = await client.post(
+            f"/api/v1/nexus/repro/runs/{run['run_id']}/report", headers=user)
+        assert fail.status_code == 502

@@ -373,3 +373,33 @@ Runtime 日志零错误。常驻链路（审批→调度→Adapter→控制→�
   占用，镜像共享磁盘），报告产物化后回收的逻辑归 T6。
 - T5 在此关闭。剩余未验证：真实模型＋真实用户的 Ask/Auto 交互验收
   （T7）、正式 Word/LaTeX 与干净 B（SR6）。
+
+## T6（2026-09-08）：交付环境配方与真实结果（未提交）
+
+新增 `nexus/src/nexus/experiment_report.py`、
+`nexus/tests/test_experiment_report.py`（10 项）；修改 `main.py`
+（`POST /repro/runs/{id}/report`）、`nexus_proxy.py`（`POST
+/runs/{id}/report` 反代，D10 门数 35→36）、`nexus.js`、`NexusPage.vue`
+（`@report`＋`requestAutoReport`）、`NexusExperimentWorkspace.vue`
+（终态自主 run 的"生成报告"按钮，Ask 下禁用并给原因）；
+`test_nexus_runs_provider.py`（＋1 报告代理）、契约测试（＋T6 断言）。
+
+- 配方：repo 修订（SHA 才算 pinned，否则如实标注）＋实际命令序列＋
+  镜像 digest＋网络/资源＋数据声明＋日志引用；seed 未跟踪如实 null。
+- 判定四分量：environment_ready / execution_succeeded / metric_verdict /
+  clean_verification；无指标 not_evaluated、B 未做 not_run；绝不合成
+  reproducible=true（任务书示例断言原样落地）。
+- 修了什么：失败 attempt 与其后命令如实并列，不编造因果、不删失败记录，
+  不出现 PASS 宣称。
+- 交付：Markdown 报告＋Markdown 配方经既有 artifact_client 写入并关联
+  run（owner 校验沿用）；两个产物都落盘后才调控制 cancel 回收（写入失败
+  抛 502 且不回收）；内容版本 `experiment-report/1` 冻结供 NX-O1 复用。
+- License：提案未持久化 License 结论，报告如实 unknown＋备注（执行前核验
+  门与持久化归 T7，本批不放行 gate 也不伪装 verified）。
+- 回归：nexus 全套件 **218 passed**；Backend nexus 域 94＋11 skipped
+  （3 项系已知基线顺序污染）；前端契约 90/91（仅他线 CourseLayout）；
+  `vite build` 通过；`uv.lock` 零改动。
+
+未验证项：
+- 线上真实 PG 的报告链（待部署后一次性账号走"执行→报告→下载→回收"）。
+- 真实 GitHub 仓库的配方修订固定（T7 用已核验 License 仓库走读）。

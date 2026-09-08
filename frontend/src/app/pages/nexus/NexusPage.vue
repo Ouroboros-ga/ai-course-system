@@ -59,7 +59,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusProposalApproval } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusProposalApproval } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -369,6 +369,28 @@ async function addRunNote({ content, onError, onDone }) {
     onError?.('备注保存失败，请重试')
   } finally {
     noting.value = false
+  }
+}
+
+// ── T6 自主运行报告＋配方：确定性拼装，不经 LLM；产物关联本 run，可下载 ──
+async function requestAutoReport(id) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const run = item?.run
+  const runId = item?.runId
+  if (!run || !runId || run.reportRequested) return
+  run.reportRequested = true
+  try {
+    const res = await requestNexusRunReport(runId)
+    for (const a of res?.artifacts || []) {
+      if (a?.artifact_id && !(item.turn.artifacts || []).some((x) => x.artifact_id === a.artifact_id)) {
+        item.turn.artifacts = [...(item.turn.artifacts || []), a]
+      }
+    }
+    persistSessions()
+    showToast(`报告已生成：执行${res?.execution_succeeded ? '成功' : '失败'} · 指标${res?.metric_verdict || '—'} · ${res?.artifacts?.length || 0} 个产物`, 'success')
+  } catch (err) {
+    run.reportRequested = false
+    showToast(err?.message || '报告生成失败', 'error')
   }
 }
 
@@ -774,6 +796,9 @@ async function restoreExecMode(session) {
   } catch { execMode.value = 'ask' }
   execModeSaved.value = false
 }
+
+/* 选择器说明：分段控件（与视图切换器同语汇），两项一句话差别见模板 title；
+ * 模式真值只有 ask|auto（服务端校验，未知值 400）。 */
 
 async function setExecMode(mode) {
   if (mode !== 'ask' && mode !== 'auto') return
@@ -2898,6 +2923,7 @@ const emptySuggestions = computed(() =>
         @cancel="cancelRunFromWorkspace"
         @ask="openAskWindow"
         @analyze="analyzeRunResult"
+        @report="requestAutoReport"
         @rerun="rerunFromWorkspace"
         @rename="renameRunFromWorkspace"
         @add-note="addRunNote"

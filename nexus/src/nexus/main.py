@@ -335,9 +335,14 @@ def _summarize_tool_content(content: Any) -> str:
 
 # M1-B4（D4）：按工具从 JSON 结果中抽取结构化条目；条目边界截断，
 # 不再对整个 JSON 做 600 字符腰斩（腰斩产物前端 JSON.parse 必失败）。
+# CR4：search_cs_knowledge / search_course_materials 的条目经 "items" 显式
+# 抽取——展示层截断（_ITEM_STR_MAX）只影响界面呈现，模型消费的 ToolMessage
+# content 为完整 JSON（含正文与 reference_id），不受影响。
 _ITEM_FIELD_BY_TOOL = {
     "web_search": "items",
     "search_arxiv_papers": "items",
+    "search_cs_knowledge": "items",
+    "search_course_materials": "items",
     "plan_reproduction": "plan",
     "run_reproduction": "job",
     "write_artifact": "artifact",
@@ -1517,6 +1522,49 @@ async def repro_run_cancel(
             detail=str(result.get("code") or "CANCEL_FAILED"),
         )
     return result
+
+
+@app.post(
+    "/api/v1/nexus/repro/runs/{run_id}/report",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_run_report(
+    run_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """T6：自主 run 报告＋配方生成（确定性拼装，不经 LLM）。
+
+    本人终态（succeeded/failed）run 才可生成；产物经既有 Artifact 链写入并
+    关联本 run；两个产物落盘后才回收可变工作区。跨用户/不存在一律 404。
+    """
+    from nexus import experiment_report as report_module
+    from nexus import experiment_runs as runs_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    run = runs_module.get_run(sanitize_session_id(run_id))
+    if run is None or (user_id or "") != run["owner"]:
+        raise HTTPException(status_code=404, detail="RUN_NOT_FOUND")
+    try:
+        from nexus.experiment_agent import _backend_from_settings
+
+        backend: Any = _backend_from_settings(run["run_id"])
+    except Exception:
+        backend = None
+    try:
+        return await report_module.generate_run_report(
+            run_id=run["run_id"], user_id=user_id, backend=backend)
+    except report_module.ReportError as error:
+        status_map = {
+            "RUN_NOT_FOUND": 404,
+            "RUN_FORBIDDEN": 403,
+            "RUN_NOT_FINISHED": 409,
+            "RUN_CANCELLED": 409,
+            "RUN_PROPOSAL_UNAVAILABLE": 409,
+            "REPORT_ARTIFACT_WRITE_FAILED": 502,
+        }
+        raise HTTPException(
+            status_code=status_map.get(error.code, 409), detail=error.code
+        ) from error
 
 
 # ---------------------------------------------------------------------------

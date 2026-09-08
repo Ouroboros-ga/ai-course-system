@@ -1848,6 +1848,32 @@ async def nexus_run_note_list(
     return JSONResponse(status_code=status.HTTP_200_OK, content={"items": items})
 
 
+@router.post("/runs/{run_id}/report")
+async def nexus_run_report(
+    run_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """T6：自主 run 报告＋配方生成代理（确定性拼装，不经 LLM）。
+
+    本人终态（succeeded/failed）run 才可生成；产物经 Artifact 链写入并关联
+    本 run，可下载；落盘后回收可变工作区。归属校验先行（非本人 404），
+    判定语义由 Runtime 原样返回（透传体，无信封改写）。
+    """
+    from app.services import nexus_run_service
+
+    run = nexus_run_service.get_owned_run(
+        session, user_id=_artifact_user_id(current_user), run_id=run_id.strip()[:64]
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
+    return await _proxy_json(
+        request, current_user, "POST",
+        f"/api/v1/nexus/repro/runs/{run['run_id']}/report",
+    )
+
+
 class NexusRunRename(BaseModel):
     """NX-LB1 重命名：仅 title（null/空串恢复默认名）＋ expected_version。
 

@@ -301,3 +301,32 @@ def test_internal_status_projects_attempts(client, session, student_user, monkey
     assert len(data["steps"]) == 2
     assert data["steps"][1]["command"] == "python train.py"
     assert data["steps"][1]["exit_code"] is None
+
+
+def test_run_report_proxy_passthrough(client, session, student_user, monkeypatch):
+    """T6：报告生成代理——归属先行，本人透传 Runtime；他人 404 不上行。"""
+    token = _grant_fixture(monkeypatch, session, student_user)
+    uid = str(student_user.id)
+    _record_auto(session, "apv_t6_rep", user=uid, session_id=SID,
+                 status="succeeded")
+    seen: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.path] = True
+        return httpx.Response(200, json={
+            "run_id": "apv_t6_rep", "content_version": "experiment-report/1",
+            "execution_succeeded": True, "metric_verdict": "not_evaluated",
+            "comparison": [], "clean_verification": "not_run",
+            "artifacts": [{"artifact_id": "art-1"}]})
+
+    with mock_runtime(handler):
+        ok_response = client.post("/api/v1/nexus/runs/apv_t6_rep/report",
+                                  headers=_auth(token))
+        assert ok_response.status_code == 200
+        assert ok_response.json()["metric_verdict"] == "not_evaluated"
+        assert "/api/v1/nexus/repro/runs/apv_t6_rep/report" in seen
+        # 他人 run：404 且不上行（seen 不再增长）。
+        missing = client.post("/api/v1/nexus/runs/apv_nope/report",
+                              headers=_auth(token))
+        assert missing.status_code == 404
+        assert len(seen) == 1

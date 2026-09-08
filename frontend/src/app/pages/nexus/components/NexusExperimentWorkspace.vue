@@ -256,6 +256,16 @@ function durationLabel(step) {
 
 const hasReport = computed(() => !!run.value?.verdict)
 const reportErr = computed(() => run.value?.reportError || '')
+
+/** T6：自主 run 终态（succeeded/failed）且尚未生成报告 → 可生成。 */
+const isReportable = computed(() => {
+  const r = run.value
+  if (!r) return false
+  const auto = isAutonomous.value
+  if (!auto) return false
+  if (!['succeeded', 'failed'].includes(r.status)) return false
+  return !r.reportRequested
+})
 </script>
 
 <template>
@@ -332,6 +342,22 @@ const reportErr = computed(() => run.value?.reportError || '')
         >
           <template #icon><RotateCw :size="13" /></template>
           调整方案再运行
+        </SfxButton>
+      </template>
+      <!-- T6 自主 run：终态后可生成报告＋配方（确定性拼装，不经 LLM；
+           产物关联本 run，可下载；落盘后回收工作区。Ask 下禁用（回收涉及
+           沙箱调用，服务端同样拒绝），切 Auto 后可用。 -->
+      <template v-else-if="isReportable">
+        <SfxButton
+          variant="primary"
+          size="sm"
+          :loading="!!run?.reportRequested"
+          :disabled="isAsk"
+          :title="isAsk ? 'Ask 模式不运行实验相关操作，切换到 Auto 后可用' : '生成确定性报告与可重复配方（产物可下载）'"
+          @click="emit('report', active.id)"
+        >
+          <template #icon><FileText :size="13" /></template>
+          生成报告
         </SfxButton>
       </template>
       <!-- T5：执行器失联但运行未终止（reconciling），如实标注，不冒称失败。 -->
@@ -675,6 +701,9 @@ const reportErr = computed(() => run.value?.reportError || '')
 .nxw-tab {
   font-size: var(--ui-sm-size); color: var(--text-muted);
   padding: 5px 10px 8px; border-bottom: 2px solid transparent; cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
 }
 .nxw-tab.is-on { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--nexus-accent); }
 .nxw-tabn { font-family: var(--font-mono); font-size: 10px; color: var(--text-disabled); margin-left: 4px; }

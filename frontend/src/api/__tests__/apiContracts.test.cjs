@@ -1157,7 +1157,8 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // NX-LB4/LB5：+runs-cancel-grant/runs-notes×2 → 32 个。
   // T2 Ask/Auto：+sessions execution-mode 查询/保存×2 → 34 个。
   // T5：+runs/{id}/cancel 用户直接取消 → 35 个。
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 35)
+  // T6：+runs/{id}/report 自主报告 → 36 个。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 36)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })
@@ -1214,6 +1215,8 @@ test('T5 Ask/Auto：输入框选择器＋服务端偏好＋合并批准动作（
   assert.match(client, /export function saveNexusSessionExecutionMode\(sessionId, mode\)/)
   assert.match(client, /export function cancelNexusRun\(runId, sessionId\)/)
   assert.match(client, /researchExecutionMode/)
+  assert.match(client, /export function requestNexusRunReport\(runId\)/)
+  assert.match(client, /\/nexus\/runs\/.*\/report/)
   // 选择器只在 Research 展示（General 隐藏且不发送），与视图切换器同分段语汇。
   assert.match(page, /v-if="isResearchMode"[\s\S]*?nx-exec-seg/)
   assert.match(page, /研究与写作/)
@@ -1243,14 +1246,20 @@ test('T5 自主 run 工作台复用：attempt 投影＋reconciling＋Ask 复跑�
   assert.match(ws, /command_summary/)
   assert.match(ws, /v-if="!isAutonomous"[\s\S]*?nxw-stagebar/)
   assert.match(ws, /对账中/)
+  // T6：终态自主 run 可生成报告（Ask 下禁用，服务端同样约束）。
+  assert.match(ws, /isReportable/)
+  assert.match(ws, /生成报告/)
+  assert.match(ws, /@click="emit\('report', active\.id\)"/)
   // Ask 下复跑禁用且给原因（title），服务端 403 双保险。
   assert.match(ws, /:disabled="isAsk"/)
   assert.match(ws, /Ask 模式不运行实验，切换到 Auto 后可用/)
   assert.match(ws, /executionMode: \{ type: String, default: 'ask' \}/)
   // 共享投影单源：日志尾回退 attempts，不各写一份。
   assert.match(shared, /run\?\.attempts/)
-  // 父组件透传执行模式＋run 级取消＋详情轮询恢复。
+  // 父组件透传执行模式＋run 级取消＋详情轮询＋报告生成恢复。
   assert.match(page, /:execution-mode="execMode"/)
   assert.match(page, /cancelNexusRun\(run/)
   assert.match(page, /startRunDetailPolling/)
+  assert.match(page, /requestNexusRunReport\(runId\)/)
+  assert.match(page, /@report="requestAutoReport"/)
 })

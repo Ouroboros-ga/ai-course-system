@@ -295,6 +295,16 @@ export function listNexusRunNotes(runId) {
 }
 
 /**
+ * 自主运行报告＋配方生成（T6）：确定性拼装，不经 LLM。
+ * 本人终态 run 才可生成；产物关联本 run，可下载；落盘后回收工作区。
+ */
+export function requestNexusRunReport(runId) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/report`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
  * 追加运行备注（NX-LB5）：requestId 幂等；content ≤4000 字符。
  */
 export function createNexusRunNote(runId, content, requestId = '') {
