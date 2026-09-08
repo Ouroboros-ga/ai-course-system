@@ -55,30 +55,56 @@ class EmbeddingValidationError(ValueError):
         self.error_code = error_code
 
 
-#: E5 处理约定（与实现常量绑定；配置声明不一致即拒绝，避免指纹名不符实）。
-REQUIRED_POOLING = "attention-mask mean"
+#: 支持的模型族：池化与前缀由族注册表决定（配置声明必须与族一致）。
+#: - e5：attention-mask mean ＋ ``query: `` / ``passage: `` 前缀（官方约定）；
+#: - bge-zh：CLS pooling ＋ 中文查询指令前缀（BGE v1.5 官方建议，文档侧无前缀）。
+MODEL_FAMILIES: dict[str, dict[str, Any]] = {
+    "e5": {
+        "pooling": "attention-mask mean",
+        "prefixes": {"query": QUERY_PREFIX, "passage": PASSAGE_PREFIX},
+    },
+    "bge-zh": {
+        "pooling": "cls",
+        "prefixes": {"query": "为这个句子生成表示以用于检索相关文章：", "passage": ""},
+    },
+}
+DEFAULT_FAMILY = "e5"
+
+#: 兼容旧名（E5 单族时期的常量；新代码请用 family_spec()）。
+REQUIRED_POOLING = MODEL_FAMILIES[DEFAULT_FAMILY]["pooling"]
+
+
+def family_spec(family: str | None) -> dict[str, Any]:
+    """取模型族规格（缺省 e5，兼容未声明 family 的旧配置）。"""
+    key = str(family or DEFAULT_FAMILY).strip().lower() or DEFAULT_FAMILY
+    spec = MODEL_FAMILIES.get(key)
+    if spec is None:
+        raise EmbeddingConfigurationError(
+            f"未知模型族 {family!r}（支持：{sorted(MODEL_FAMILIES)}）")
+    return {"family": key, **spec}
 
 
 def validate_model_config(config: dict) -> None:
-    """校验配置声明的池化/前缀与实现一致（fail-closed，不静默改语义）。
+    """校验配置声明的族/池化/前缀与实现一致（fail-closed，不静默改语义）。
 
-    指纹的意义是"同指纹 ⇒ 同加工"。若允许 ``pooling="cls"`` 之类声明被
-    写入指纹而实现仍按 attention-mask mean 编码，指纹就名不符实；此处
-    在生成指纹前拒绝（serve/worker/预检同一条路径）。
+    指纹的意义是"同指纹 ⇒ 同加工"。声明 ``pooling="cls"`` 却按 mean 编码，
+    指纹就名不符实；此处按 ``family`` 注册表逐项校验（serve/worker/预检
+    同一条路径）。未声明 family 视为 e5（兼容旧配置）。
     """
     if not isinstance(config, dict):
         raise EmbeddingConfigurationError("model config must be an object")
+    spec = family_spec(config.get("family"))
     pooling = str(config.get("pooling") or "")
-    if pooling != REQUIRED_POOLING:
+    if pooling != spec["pooling"]:
         raise EmbeddingConfigurationError(
-            f"pooling 必须为 {REQUIRED_POOLING!r}（收到 {pooling!r}；"
-            "CLS pooling 不适用于 E5，不得只改声明不改实现）")
+            f"pooling 必须为 {spec['pooling']!r}（族 {spec['family']}；"
+            f"收到 {pooling!r}）")
     prefixes = config.get("prefixes")
-    expected = {"query": QUERY_PREFIX, "passage": PASSAGE_PREFIX}
     if not isinstance(prefixes, dict) or {
-            str(k): str(v) for k, v in prefixes.items()} != expected:
+            str(k): str(v) for k, v in prefixes.items()} != spec["prefixes"]:
         raise EmbeddingConfigurationError(
-            f"prefixes 必须为 {expected}（收到 {prefixes!r}）")
+            f"prefixes 必须为 {spec['prefixes']}（族 {spec['family']}；"
+            f"收到 {prefixes!r}）")
 
 
 def model_fingerprint_for(config: dict) -> str:
@@ -92,6 +118,7 @@ def model_fingerprint_for(config: dict) -> str:
         raise EmbeddingConfigurationError(
             f"model config missing fields: {missing}（冻结前不得编码）")
     canonical = {
+        "family": family_spec(config.get("family"))["family"],
         "model_id": config["model_id"],
         "revision": config["revision"],
         "files_hash": config["files_hash"],
@@ -117,13 +144,18 @@ def input_hash_for(text: str, kind: str, model_fingerprint: str) -> str:
     ).hexdigest()
 
 
-def build_vector_input(title: str, text: str, kind: str) -> str:
-    """组装进入模型的完整输入：前缀 +（标题 + 换行）+ 正文。
+def build_vector_input(title: str, text: str, kind: str,
+                       prefixes: dict | None = None) -> str:
+    """组装进入模型的完整输入：族前缀 +（标题 + 换行）+ 正文。
 
     标题参与输入即参与 ``input_hash``（调用方必须如实传入，不得事后
-    拼接标题却复用无标题向量）。
+    拼接标题却复用无标题向量）。``prefixes`` 缺省用 e5 约定（兼容旧调用）。
     """
-    prefix = QUERY_PREFIX if kind == "query" else PASSAGE_PREFIX
+    if kind not in ("query", "passage"):
+        raise EmbeddingConfigurationError("kind must be query|passage")
+    table = prefixes if isinstance(prefixes, dict) else \
+        MODEL_FAMILIES[DEFAULT_FAMILY]["prefixes"]
+    prefix = str(table.get(kind) or "")
     title = str(title or "").strip()
     body = str(text or "")
     if title:
@@ -147,6 +179,26 @@ def mean_pool(hidden: Any, mask: Any) -> Any:
         raise EmbeddingValidationError(
             "EMPTY_INPUT", "attention mask 全零（空输入不得编码）")
     return pooled
+
+
+def cls_pool(hidden: Any, mask: Any) -> Any:
+    """CLS pooling（BGE 中文系列官方约定）：取 [CLS] 位向量。
+
+    全零 mask 行抛错（空输入不得编码，与 mean_pool 同语义）。
+    """
+    if bool((mask.sum(dim=1) == 0).any()):
+        raise EmbeddingValidationError(
+            "EMPTY_INPUT", "attention mask 全零（空输入不得编码）")
+    return hidden[:, 0]
+
+
+def pool_by_family(hidden: Any, mask: Any, pooling: str) -> Any:
+    """按声明的池化方式池化（未知方式拒绝，不静默回退）。"""
+    if pooling == "attention-mask mean":
+        return mean_pool(hidden, mask)
+    if pooling == "cls":
+        return cls_pool(hidden, mask)
+    raise EmbeddingConfigurationError(f"未知池化方式：{pooling!r}")
 
 
 def l2_normalize(matrix: Any) -> Any:
@@ -267,7 +319,9 @@ class E5Provider:
             return []
         if any(not str(t).strip() for t in texts):
             raise EmbeddingValidationError("EMPTY_INPUT", "空文本不得编码")
-        prefixed = [build_vector_input("", text, kind) for text in texts]
+        prefixed = [build_vector_input("", text, kind,
+                                       self.config.get("prefixes"))
+                    for text in texts]
         encoded = self._tokenizer(
             prefixed, padding=True, truncation=False,
             max_length=self.max_length, return_tensors="pt")
@@ -278,7 +332,8 @@ class E5Provider:
                 f"输入超 {self.max_length} tokens（调用方必须正确分块，禁止静默截断）")
         with torch.no_grad():
             hidden = self._model(**encoded).last_hidden_state
-        pooled = mean_pool(hidden, encoded["attention_mask"])
+        pooled = pool_by_family(hidden, encoded["attention_mask"],
+                                str(self.config.get("pooling") or ""))
         normalized = l2_normalize(pooled)
         vectors = normalized.cpu().tolist()
         validate_vectors(vectors, expected_dimension=self.dimension,

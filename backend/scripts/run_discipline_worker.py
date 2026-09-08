@@ -294,6 +294,7 @@ def make_embed_client():
     from app.platform.knowledge.corpus_embedding import (
         E5Provider,
         HttpEmbedClient,
+        family_spec,
     )
 
     url = str(getattr(settings, "CORPUS_EMBEDDING_URL", "") or "").strip()
@@ -303,13 +304,15 @@ def make_embed_client():
     if not model_path:
         raise RuntimeError(
             "CORPUS_EMBEDDING_URL 与 CORPUS_EMBEDDING_MODEL_PATH 均未配置")
+    spec = family_spec(getattr(settings, "CORPUS_EMBEDDING_FAMILY", "e5"))
     provider = E5Provider.load(model_path, {
+        "family": spec["family"],
         "model_id": settings.CORPUS_EMBEDDING_MODEL_ID,
         "revision": settings.CORPUS_EMBEDDING_MODEL_REVISION,
         "files_hash": settings.CORPUS_EMBEDDING_FILES_HASH,
         "tokenizer": settings.CORPUS_EMBEDDING_TOKENIZER,
-        "pooling": "attention-mask mean",
-        "prefixes": {"query": "query: ", "passage": "passage: "},
+        "pooling": spec["pooling"],
+        "prefixes": spec["prefixes"],
         "dimension": settings.CORPUS_EMBEDDING_DIMENSION,
         "max_length": settings.CORPUS_EMBEDDING_MAX_LENGTH,
     })

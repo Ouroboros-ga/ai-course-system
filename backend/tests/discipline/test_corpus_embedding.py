@@ -52,9 +52,9 @@ def test_fingerprint_stable_and_sensitive():
         model_fingerprint_for({"model_id": "x"})
 
 
-def test_validate_model_config_rejects_cls_and_custom_prefixes():
-    """P2-7：声明与实现不一致必须拒绝，不能只改声明却按 mean-pooling 编码。"""
-    validate_model_config(dict(BASE_CONFIG))  # 合法配置通过
+def test_validate_model_config_enforces_family_processing():
+    """P2-7＋族注册表：声明与实现必须一致；cls 只对 bge-zh 族合法。"""
+    validate_model_config(dict(BASE_CONFIG))  # e5 合法
     with pytest.raises(EmbeddingConfigurationError) as exc_info:
         validate_model_config(dict(BASE_CONFIG, pooling="cls"))
     assert "attention-mask mean" in str(exc_info.value)
@@ -63,6 +63,27 @@ def test_validate_model_config_rejects_cls_and_custom_prefixes():
             BASE_CONFIG, prefixes={"query": "q: ", "passage": "p: "}))
     with pytest.raises(EmbeddingConfigurationError):
         validate_model_config(dict(BASE_CONFIG, prefixes={}))
+    # bge-zh 族：CLS ＋ 中文查询指令前缀合法；改成 mean 即拒绝。
+    bge = dict(BASE_CONFIG, family="bge-zh", pooling="cls", dimension=512,
+               prefixes={"query": "为这个句子生成表示以用于检索相关文章：",
+                         "passage": ""})
+    validate_model_config(bge)
+    with pytest.raises(EmbeddingConfigurationError):
+        validate_model_config(dict(bge, pooling="attention-mask mean"))
+    with pytest.raises(EmbeddingConfigurationError):
+        validate_model_config(dict(BASE_CONFIG, family="unknown-family"))
+
+
+def test_family_changes_fingerprint_and_vector_input():
+    """同模型不同族 ⇒ 不同指纹；向量输入按族前缀组装。"""
+    bge = dict(BASE_CONFIG, family="bge-zh", pooling="cls", dimension=512,
+               prefixes={"query": "为这个句子生成表示以用于检索相关文章：",
+                         "passage": ""})
+    assert model_fingerprint_for(bge) != model_fingerprint_for(BASE_CONFIG)
+    assert build_vector_input("", "页表", "passage", bge["prefixes"]) == "页表"
+    assert build_vector_input("", "页表", "query",
+                              bge["prefixes"]).startswith("为这个句子")
+    assert build_vector_input("", "页表", "query") == "query: 页表"  # 旧调用兼容
 
 
 def test_input_hash_binds_kind_text_and_model():

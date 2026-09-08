@@ -1,21 +1,22 @@
 {
   "schema_version": "corpus-rag-config/1",
-  "status": "draft-unfrozen",
-  "status_note": "结构已定；model.revision/files_hash 与对照实测在模型下载获批、真实小批运行后回填，在此之前不得宣称参数已冻结或覆盖已全量。",
+  "status": "frozen",
+  "status_note": "2026-09-09 冻结：改用服务器 CPU 可跑的中文优化模型 BAAI/bge-small-zh-v1.5（本地预置，无需下载）。revision 为本地预置标识（HF 不可达，未绑上游 commit）；files_hash 绑定实际文件内容组合哈希。改动任一字段即新指纹，旧向量不混算。",
   "model": {
-    "id": "intfloat/multilingual-e5-small",
-    "revision": null,
-    "files_hash": null,
-    "pooling": "attention-mask mean",
-    "prefixes": {"query": "query: ", "passage": "passage: "},
+    "family": "bge-zh",
+    "id": "BAAI/bge-small-zh-v1.5",
+    "revision": "local-bge-small-zh-v1.5-20260809",
+    "files_hash": "1f104d8db3f36373fd91d46f504e899df6813940d4408ff74843320d6fc39786",
+    "pooling": "cls",
+    "prefixes": {"query": "为这个句子生成表示以用于检索相关文章：", "passage": ""},
     "normalize": "l2",
-    "dimension": 384,
+    "dimension": 512,
     "max_length": 512,
     "code_version": "corpus-embedding/1"
   },
   "baseline_model": {
     "id": "bge-small-zh-v1.5-local",
-    "note": "历史中文子集基线（教材+中文维基），只代表部分来源覆盖"
+    "note": "历史中文子集基线（教材+中文维基）；2026-09-09 起升为正式模型（family=bge-zh）"
   },
   "chunking": {
     "target_tokens": 320,

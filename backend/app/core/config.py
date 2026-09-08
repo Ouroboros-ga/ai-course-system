@@ -244,6 +244,9 @@ class Settings(BaseSettings):
     # CR2 学科 embedding（独立于 GRAPHRAG_*；换学科模型不动课程模型）。
     # 模型 ID/版本/文件哈希/tokenizer/维度/长度共同生成 model_fingerprint；
     # 未冻结（revision/files_hash 为空）时拒绝构建。
+    # 模型族：e5（attention-mask mean＋query/passage 前缀）| bge-zh（CLS＋中文查询指令）。
+    # 池化与前缀由族注册表决定（corpus_embedding.MODEL_FAMILIES），配置声明不一致即拒绝。
+    CORPUS_EMBEDDING_FAMILY: str = "e5"
     CORPUS_EMBEDDING_MODEL_ID: str = "intfloat/multilingual-e5-small"
     CORPUS_EMBEDDING_MODEL_PATH: str = ""
     CORPUS_EMBEDDING_MODEL_REVISION: str = ""

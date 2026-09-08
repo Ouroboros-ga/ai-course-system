@@ -30,15 +30,15 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 仅Research显示Ask/Auto，默认Ask；General不显示。两者保留同样的自主规划、检索补查、阅读、研究子任务及Markdown/LaTeX/Word等文档输出；唯一差别是Ask禁止实验代码沙箱，Auto确认一次范围后可配置/运行/排错。文档输出支持情况仍按NX-O1验收，不因Ask模式额外禁用。
 
-本批落入[自主实验执行任务书T2/T4/T5/T7](Nexus_自主实验V1_执行任务书.md)：新增research_execution_mode字段、服务端执行校验、实例工具隔离、Research输入区选择器与浮窗/会话恢复。Ask直接调用或携旧票据不能提交实验；切Ask仅约束后续新请求，不暗中取消已批准run，界面提示并保留用户Cancel。完整设计见[前端规格§2.1](Nexus_AI_前端开发规格与UX落地说明.md)。当前只有文档冻结，尚无该开关/字段实现。
+本批落入[自主实验执行任务书T2/T4/T5/T7](Nexus_自主实验V1_执行任务书.md)：新增research_execution_mode字段、服务端执行校验、实例工具隔离、Research输入区选择器与浮窗/会话恢复。Ask直接调用或携旧票据不能提交实验；切Ask仅约束后续新请求，不暗中取消已批准run，界面提示并保留用户Cancel。完整设计见[前端规格§2.1](Nexus_AI_前端开发规格与UX落地说明.md)。**（2026-09-09 更新：该字段与开关已全链实现并随 `054b5f27` 上线，见 §10。）**
 
 ## 2. Current registered / effective tool surface
 
 | 层次               | 工具                                                                          |
 | ---------------- | --------------------------------------------------------------------------- |
 | General 产品工具（7）  | web\_search、search\_course\_materials、search\_cs\_knowledge、write\_artifact、read\_attachment、write\_todos（NX-H1 计划）、read\_file（StateBackend 历史读回，不是宿主通用文件） |
-| Research 产品工具（12） | 全部 General + search\_arxiv\_papers、plan\_reproduction、run\_reproduction、collect\_paper\_evidence、write\_research\_report（NX-R1a） |
-| 两模式 Harness | read_file（StateBackend读回）＋显式 TodoListMiddleware 的 write_todos；Research 总工具数18含这两项，不等于18个业务工具 |
+| Research 产品工具（17，2026-09-09 实测） | 全部 General + search\_arxiv\_papers、plan\_reproduction、run\_reproduction、collect\_paper\_evidence、write\_research\_report（NX-R1a）、get\_reproduction\_run、cancel\_reproduction\_run、add\_reproduction\_note、create/update\_reproduction\_proposal、request\_reproduction\_approval（NX-LB4/LB5）、prepare\_experiment（T3） |
+| 两模式 Harness | read_file（StateBackend读回）＋显式 TodoListMiddleware 的 write_todos；Research 总工具数 19（Ask 下 18）含这两项，不等于业务工具数 |
 
 代码源为 `nexus/src/nexus/tools/__init__.py` 与 `agent.py`。注册不等于可执行：`effective = manifest ∩ mode ∩ tool surface ∩ health/config ∩ user/scope policy`，提交另需 approval。聚合与强审批已随 b34ea2d9 部署上线（2026-09-05）；附件与恢复同批上线，真实链已于 09-06 浏览器验收。工具计数为 /health tool_surface 口径（fa4bceed 线实证：General 7/Research 12，含 NX-H1/R1a 注册）。
 
@@ -87,7 +87,7 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 1. ✅ NX-G1/G2/G3、NX-A1、NX-E1 已随 b34ea2d9 上线（2026-09-05，b080e269 线上只读验证）；§7 前置清单五项交互式验收已全部通过（2026-09-06 浏览器真实链，见 [NX-E2E3 验收](验收记录/NX-E2E3_验收_2026-09-06.md)）。
 2. ✅ 下一批次 NX-E2+E3 已上线并通过浏览器真实链验收（2026-09-06，Worker v0.2.0）；验收发现并修复 4 个集成缺陷（归属断层/code 键信封冲突/恢复标记误持久化/附件清单未注入），详见验收记录。
-3. ✅ NX-E2/E3 边界修复批次（2026-09-07，`5f989495`+`c89ee487`，Worker v0.3.0）：审查记录六项发现（F1 取消失败被包装成功/F2 日志真脱敏/F3 长行采集/F4 冷恢复/F5 spawn 窗口取消/F6 Metric 真实判定）全量修复；测试矩阵 Worker 20＋Nexus 102＋后端 nexus 域 59＋前端契约 89 全绿；浏览器复验通过（含 Metric pending→报告回写 done 全链、冷恢复补齐、取消链）；详见[审查记录修复回执](NX-E2E3_质量与产品符合性审查_2026-09-07.md)。
+3. ✅ NX-E2/E3 边界修复批次（2026-09-07，`5f989495`+`c89ee487`，Worker v0.3.0）：审查记录六项发现（F1 取消失败被包装成功/F2 日志真脱敏/F3 长行采集/F4 冷恢复/F5 spawn 窗口取消/F6 Metric 真实判定）全量修复；测试矩阵 Worker 20＋Nexus 102＋后端 nexus 域 59＋前端契约 89 全绿（该批次时点计数；2026-09-09 现为 Nexus 271／后端 nexus 域 101／前端契约 97）；浏览器复验通过（含 Metric pending→报告回写 done 全链、冷恢复补齐、取消链）；详见[审查记录修复回执](NX-E2E3_质量与产品符合性审查_2026-09-07.md)。
 4. 下一主线见§10：最小输入理解＋N1/N2/N3的一次确认自主实验闭环优先；持续研究SR2–SR4继续建设但不阻塞环境配置，正式输出SR6可并行。AB/CD与v6已实现部分不重复开发。
 5. 回退保留 preset，但不能绕过已启用强审批；关闭新 Provider 时保留状态/报告可读，不自动重放命令。
 6. 测试覆盖 Mode、恶意跨模式调用、无批准 Worker 零调用、过期/跨用户/计划篡改/并发重试、health 失联、八格式/视觉、取消、恢复、A/B 与日志脱敏。隔离 fixture/mock 不调真实付费服务；Mock 不能称线上安全验收。
@@ -260,12 +260,12 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 **2026-09-09 更新（审核后）**：T0–T7＋SR6 代码已落地并提交（dev-liu `c1e217d0` 前），`swe-rex==1.4.0` 只装在独立项目 `deploy/repro-runtime`（`nexus/uv.lock`/`backend/pyproject.toml` 零改动）。全量审核与修复见[审核记录](验收记录/Nexus_自主实验V1_全量审核_2026-09-08.md)、[修复计划](验收记录/Nexus_自主实验V1_修复计划_2026-09-08.md)。**CURRENT（受限）：CPU 公开仓库的一次确认自主配置与运行 V1**——代码、沙箱适配、一次确认门、自主修复循环（脚本化模型＋假容器）与报告链已交付；**真实模型在真实沙箱内自主完成一次环境故障修复与继续运行尚未验收**，不得据此宣称完整自主实验能力。完整 Paper Research、GPU、受控 A/B、正式 Word/LaTeX（LaTeX 编译证明）仍为 NEXT。
 
-总路线：[Nexus 完整转型：研究、实验与成果交付实施计划](Nexus_论文到实验_下一阶段实施计划.md)。**2026-09-07最新排期与重要设计参照：**[持续研究V1：开源集成与开发任务书](Nexus_持续研究V1_开源集成与开发任务书.md)，§1冻结本轮用户结论，§4–11给出任务、边界与验收。实验既可由用户直接发起，也可由研究循环发起；完整综述和证据充分评分不作为实验前置条件；所有SR任务当前为NEXT，新增文档不代表已经实现。NX-P1 拆为可独立交付的准备链 P1a、依赖 Sandbox 的可执行链 P1b；最终 Paper-to-Reproduction 目标不变。
+总路线：[Nexus 完整转型：研究、实验与成果交付实施计划](Nexus_论文到实验_下一阶段实施计划.md)。**2026-09-07最新排期与重要设计参照：**[持续研究V1：开源集成与开发任务书](Nexus_持续研究V1_开源集成与开发任务书.md)，§1冻结本轮用户结论，§4–11给出任务、边界与验收。实验既可由用户直接发起，也可由研究循环发起；完整综述和证据充分评分不作为实验前置条件；SR0/SR6 已交付，其余 SR 任务为 NEXT，新增文档不代表已经实现。NX-P1 拆为可独立交付的准备链 P1a、依赖 Sandbox 的可执行链 P1b；最终 Paper-to-Reproduction 目标不变。
 
 | 进度口径 | 当前事实 |
 | --- | --- |
 | 历史 P2 M0–M5 | 6/6 完成，仅代表当时冻结 MVP |
-| 后端 A/B/C/D | 4/4 交付且有线上记录；三项 P1 与前批研究链遗留需收尾 |
+| 后端 A/B/C/D | 4/4 交付且有线上记录；三项 P1 已于 2026-09-08 批次 A 修复（见修复计划）；前批研究链遗留按 SR 主线跟踪 |
 | v6 工作台/启动页 | bcbad16f/a60d4e87 已提交；本轮不宣称完整浏览器链重新验收 |
 | 用户论文→实验准备 | `prepare_experiment` 已落地（无 preset 入口，只准备不执行，T3）；真实模型端到端准备/找仓链未验收 |
 | 独立 Sandbox / 环境构建 / Repair / Clean B | BaseSandbox＋SWE-ReX Docker 适配、一次确认门、自主修复循环已落地（T1/T2/T4）；repo2docker 路线 fail-closed **未交付**；真实模型修复与 Clean B 全链未验收 |
@@ -307,7 +307,7 @@ N1不等N2全部完成才提供帮助；持续研究可独立产出结论，必�
 | NX-H 复杂任务 | Todo与工具循环已有，Observe/Re-plan、预算、受限子任务及实际交付检查未完整验收 | 复杂问题/证据不足/失败后调整/部分交付，按真实任务验证；不只看Todo是否全完成 |
 | NX-R1 完整研究 | R1a薄链不等于深度研究 | 候选→全文→证据→比较/冲突追查→综合→引用；能独立完成无实验研究 |
 | NX-E4 恢复 | 现有checkpoint/run基础不等于完整持久化对账 | 研究、实验、子任务和输出中断可恢复，不重复执行、不串会话 |
-| **NX-O1 正式输出** | `.md/.tex`纯文本已有；Word与LaTeX编译/打包/校验未实现 | 同一冻结成果生成Markdown、LaTeX工程+编译预览、原生可编辑DOCX；公式/表格/引用/数值一致，校验与下载均真实 |
+| **NX-O1 正式输出** | Word(.docx)＋LaTeX(.tex) 产物已实现（SR6 `document_output.py`）；LaTeX 编译证明缺 TeX 工具链（TOOLCHAIN_MISSING），可编辑性/编译验收未完成 | 同一冻结成果生成Markdown、LaTeX工程+编译预览、原生可编辑DOCX；公式/表格/引用/数值一致，校验与下载均真实 |
 | **NX-FINAL 综合验收** | N0–N4仅是实验纵向链 | N0–N4＋H/R1/E4/O1汇合，多形式输入→拆解→研究→执行/验证→正式文件的成功与失败恢复全部有证据 |
 
 NX-O1采用既有Artifact/对象存储/权限域，扩展真正二进制文档路径与有限异步渲染作业；源内容冻结后多格式渲染，不分别让模型重写导致结果分叉。渲染隔离、无shell escape/宏/任意外联；docx必须可编辑，tex必须在声明工具链编译通过。单格式失败返回partial，不冒充全部成功。

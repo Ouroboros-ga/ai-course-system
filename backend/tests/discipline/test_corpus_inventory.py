@@ -73,8 +73,17 @@ def test_rag_fixtures_are_present_and_synthetic():
         "textbook", "zhwiki", "enwiki", "rfc", "arxiv"}
     assert "cs-public" in sources["sets"]
     config = json.loads((RAG_DIR / "config.json").read_text(encoding="utf-8"))
-    assert config["model"]["id"] == "intfloat/multilingual-e5-small"
-    assert config["model"]["dimension"] == 384
+    model = config["model"]
+    assert config["status"] == "frozen", "模型参数必须冻结后才可上线"
+    assert model["revision"] and model["files_hash"], \
+        "冻结配置必须绑定 revision/files_hash（否则指纹名不符实）"
+    # 声明必须与族注册表一致：池化/前缀不得只改声明不改实现。
+    from app.platform.knowledge.corpus_embedding import family_spec
+
+    spec = family_spec(model["family"])
+    assert model["pooling"] == spec["pooling"]
+    assert model["prefixes"] == spec["prefixes"]
+    assert int(model["dimension"]) > 0
     assert config["chunking"]["target_tokens"] == 320
     lines = (RAG_DIR / "queries.jsonl").read_text(encoding="utf-8").splitlines()
     lines = [line for line in lines if line.strip()]
