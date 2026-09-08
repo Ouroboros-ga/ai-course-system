@@ -189,10 +189,18 @@ async def test_replay_skips_file_tool_summaries():
 
 
 def test_clean_sandbox_id_isolated_and_bounded():
+    from nexus import experiment_clean as clean_module
+
     clean_id = clean_module.clean_sandbox_id("apv_123456789012")
     assert clean_id == "apv_123456789012-clean1"
     assert clean_id != "apv_123456789012"
     assert len(clean_module.clean_sandbox_id("r" * 100)) <= 64
+    # 调度 nonce：每次全新 id（cancel/终态不毒化后续重验），64 上限内。
+    first = clean_module.clean_sandbox_id("apv_123456789012", "abc123")
+    second = clean_module.clean_sandbox_id("apv_123456789012", "def456")
+    assert first != second
+    assert len(first) <= 64 and len(second) <= 64
+    assert first.startswith("apv_123456789012-clean-")
 
 
 def test_replayable_steps_match_report_recipe():

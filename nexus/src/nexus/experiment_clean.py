@@ -51,10 +51,19 @@ class CleanError(Exception):
         self.code = code
 
 
-def clean_sandbox_id(run_id: str) -> str:
-    """干净B沙箱 id（原 run 派生，`{run}-clean1`，截断保 64 上限）。"""
-    base = (run_id or "").strip()[: 64 - len(CLEAN_SANDBOX_SUFFIX)]
-    return f"{base}{CLEAN_SANDBOX_SUFFIX}"
+def clean_sandbox_id(run_id: str, nonce: str = "") -> str:
+    """干净沙箱 id（默认 `{run}-clean1`，保持可读与可对账）。
+
+    调度时传入 per-replay nonce → `{run}-clean-{nonce}`：控制面沙箱
+    cancel 后即终态（后续 submit 409 RUN_TERMINAL），复用 id 会永久
+    毒化该 run 的后续重验；每次调度全新 id，一次性，用后即回收。
+    """
+    base = (run_id or "").strip()
+    if nonce and str(nonce).strip():
+        suffix = f"-clean-{str(nonce).strip()[:8]}"
+    else:
+        suffix = CLEAN_SANDBOX_SUFFIX
+    return f"{base[: 64 - len(suffix)]}{suffix}"
 
 
 def replayable_steps(run: dict[str, Any]) -> list[dict[str, Any]]:
@@ -126,6 +135,11 @@ async def replay_steps(
                              f"重放中断（{error.code}）：{error}") from error
         observed = response.exit_code
         if observed is None:
+            # 超时≠通过：沙箱 id 单次使用，回收无毒化风险，先回收再如实抛错。
+            try:
+                await backend.cancel()
+            except Exception:  # noqa: BLE001 - 回收 best-effort
+                pass
             raise CleanError(
                 "CLEAN_STEP_TIMEOUT",
                 f"步骤#{step['attempt_no']} 超时未出退出码（`{step['command'][:80]}`）；"
@@ -338,6 +352,7 @@ async def _complete_clean_verification(
 async def _guarded_verify(
     *, run_id: str, user_id: str, backend: Any = None,
     step_timeout_s: int = 900, _skip_verifying_check: bool = False,
+    clean_id: str = "",
 ) -> dict[str, Any]:
     """干净B编排：归属→终态→冻结提案→幂等→重放→落盘→回收。
 
@@ -345,6 +360,8 @@ async def _guarded_verify(
       cancelled→RUN_CANCELLED——取消无可结论的结果，不验证）；
     - 已有 passed/failed 结论直接返回（deduped；attempt 终态后不可变，
       结论天然稳定）；
+    - clean_id 为空且 backend 未注入时，按本次调度生成全新沙箱 id
+      （单次使用；cancel/终态不影响后续重验）；
     - 新鲜沙箱执行完即 cancel 回收（best-effort，失败只记日志）。
     """
     from nexus import experiment_runs as runs_module
@@ -377,7 +394,11 @@ async def _guarded_verify(
     if not _skip_verifying_check and stored_verdict == "verifying":
         return {"run_id": run_id, "clean_verification": "verifying",
                 "deduped": True}
-    clean_id = clean_sandbox_id(run_id)
+    import uuid as _uuid
+
+    if not (clean_id or "").strip():
+        # 每次调度全新沙箱 id（单次使用）：cancel/终态不毒化后续重验。
+        clean_id = clean_sandbox_id(run_id, _uuid.uuid4().hex[:6])
     active_backend = backend
     if active_backend is None:
         try:
