@@ -9,6 +9,10 @@
   文件字节不过 Runtime 进程——与 P2 计划 M3-B2 原文的偏离已记录在计划文档。
 
 P0 支持类型：markdown / latex（纯文本对象）；DOCX 判 no-go（见计划文档）。
+
+SR6：新增 word 类型（真正可编辑 .docx 二进制；旧 DOCX no-go 只属于历史
+冻结范围，本阶段用户明确要求 Word，现提升为必做——见下阶段实施计划§10）。
+word 经 content_b64（base64）写入字节，下载经对象存储直出，不经过文本编码。
 """
 from __future__ import annotations
 
@@ -25,6 +29,11 @@ from app.services.object_storage import get_object_storage
 ARTIFACT_TYPES: dict[str, dict[str, str]] = {
     "markdown": {"ext": "md", "mime": "text/markdown"},
     "latex": {"ext": "tex", "mime": "application/x-tex"},
+    # SR6：原生可编辑 Word（.docx 二进制经 content_b64 写入；"docx" 仍为
+    # 未知类型保持拒绝，旧契约不变）。
+    "word": {"ext": "docx",
+             "mime": "application/vnd.openxmlformats-officedocument"
+                     ".wordprocessingml.document"},
 }
 
 _CONTENT_MAX_BYTES = 512 * 1024
@@ -122,14 +131,33 @@ def _iso(ts: Any) -> str:
 
 
 def validate_artifact_input(artifact_type: str, title: str, content: str) -> str | None:
-    """返回错误码或 None（通过）。fail-closed 校验，两端同源。"""
+    """返回错误码或 None（通过）。fail-closed 校验，两端同源。
+
+    word 类型走二进制分支（见 validate_binary_input），此处仍拒绝
+    content 形态的 word（字节必须经 base64，不经文本编码）。
+    """
     if artifact_type not in ARTIFACT_TYPES:
         return "ARTIFACT_TYPE_UNSUPPORTED"
+    if artifact_type == "word":
+        return "ARTIFACT_CONTENT_INVALID"
     if not title or not title.strip() or len(title) > _TITLE_MAX:
         return "ARTIFACT_TITLE_INVALID"
     if not content:
         return "ARTIFACT_CONTENT_EMPTY"
     if len(content.encode("utf-8")) > _CONTENT_MAX_BYTES:
+        return "ARTIFACT_CONTENT_TOO_LARGE"
+    return None
+
+
+def validate_binary_input(artifact_type: str, title: str, raw: bytes) -> str | None:
+    """二进制产物校验（SR6 word）：类型必须为 word，字节非空且限大小。"""
+    if artifact_type != "word" or artifact_type not in ARTIFACT_TYPES:
+        return "ARTIFACT_TYPE_UNSUPPORTED"
+    if not title or not title.strip() or len(title) > _TITLE_MAX:
+        return "ARTIFACT_TITLE_INVALID"
+    if not raw:
+        return "ARTIFACT_CONTENT_EMPTY"
+    if len(raw) > _CONTENT_MAX_BYTES:
         return "ARTIFACT_CONTENT_TOO_LARGE"
     return None
 
@@ -168,6 +196,54 @@ def create_artifact(
             "object_key": object_key,
             "size_bytes": size_bytes,
             "sha256": sha256 or hashlib.sha256(data).hexdigest(),
+            "run_id": (run_id or "")[:64],
+        },
+    )
+    session.commit()
+    return {
+        "artifact_id": artifact_id,
+        "artifact_type": artifact_type,
+        "title": title.strip(),
+        "object_key": object_key,
+        "size_bytes": size_bytes,
+        "sha256": sha256,
+    }
+
+
+def create_binary_artifact(
+    session: Session, *, user_id: str, artifact_type: str, title: str,
+    data: bytes, run_id: str = "",
+) -> dict[str, Any]:
+    """二进制产物入库（SR6 word）：字节直接进对象存储，不经文本编码。
+
+    调用方已过 validate_binary_input；此处不再二次限大小（与文本路径同源
+    口径：大小在校验层裁决）。
+    """
+    ensure_table(session)
+    spec = ARTIFACT_TYPES[artifact_type]
+    artifact_id = uuid.uuid4().hex[:12]
+    payload = bytes(data)
+    object_key = f"nexus-artifacts/u{user_id}/{artifact_id}.{spec['ext']}"
+    storage = get_object_storage()
+    sha256 = storage.put(object_key, payload, mime_type=spec["mime"])
+    size_bytes = len(payload)
+    bind = session.connection()
+    bind.execute(
+        text(
+            f"INSERT INTO {_table(session)} "
+            "(artifact_id, user_id, artifact_type, title, object_key, size_bytes, "
+            "sha256, run_id) "
+            "VALUES (:artifact_id, :user_id, :artifact_type, :title, :object_key, "
+            ":size_bytes, :sha256, :run_id)"
+        ),
+        {
+            "artifact_id": artifact_id,
+            "user_id": user_id,
+            "artifact_type": artifact_type,
+            "title": title.strip(),
+            "object_key": object_key,
+            "size_bytes": size_bytes,
+            "sha256": sha256 or hashlib.sha256(payload).hexdigest(),
             "run_id": (run_id or "")[:64],
         },
     )

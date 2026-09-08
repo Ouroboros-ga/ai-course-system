@@ -305,6 +305,28 @@ export function requestNexusRunReport(runId) {
 }
 
 /**
+ * 自主运行正式格式产物（SR6）：Word .docx＋LaTeX .tex，确定性转换。
+ * 与报告同门（本人终态 run）；内容同源同版本；纯渲染不碰沙箱。
+ */
+export function requestNexusRunFormats(runId) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/formats`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 自主运行干净验证（SR6）：全新沙箱重放冻结配方，比对退出码。
+ * 重放调用实验沙箱——只在 Auto 下可用（Ask 服务端 403）。
+ */
+export function requestNexusRunCleanVerify(runId, executionMode) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/clean-verify`, {
+    research_execution_mode: executionMode,
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
  * 追加运行备注（NX-LB5）：requestId 幂等；content ≤4000 字符。
  */
 export function createNexusRunNote(runId, content, requestId = '') {

@@ -258,16 +258,15 @@ def render_report_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def generate_run_report(
-    *, run_id: str, user_id: str, backend: Any = None,
-) -> dict[str, Any]:
-    """生成 run 报告产物（报告＋配方）并关联本 run；成功后回收工作区。
+async def build_stored_report(
+    *, run_id: str, user_id: str,
+) -> tuple[dict[str, Any], str, str]:
+    """构建冻结报告结构＋双 Markdown（无副作用：不写产物、不回收）。
 
-    - 只接受终态 succeeded/failed 的 run（running→RUN_NOT_FINISHED，
-      cancelled→RUN_CANCELLED；跨用户→RUN_FORBIDDEN）；
-    - scope 取提案冻结值（提案不可读→RUN Proposal 缺失则拒绝，不编造）；
-    - 两个产物都写入成功后才调控制 cancel 回收；写入失败抛
-      REPORT_ARTIFACT_WRITE_FAILED 且不回收。
+    - 只接受本人终态 succeeded/failed 的 run（与 generate 同门）；
+    - License 取提案持久化结论；clean 取 run 持久化干净B结论
+      （无→not_run；调用方显式 clean 覆盖见 build_experiment_report）。
+    generate_run_report 与 formats 端点共用同一构建，保证三格式同源。
     """
     from nexus import experiment_runs as runs_module
     from nexus import proposals as proposals_module
@@ -292,13 +291,33 @@ async def generate_run_report(
     if not isinstance(persisted_license, dict) or not persisted_license:
         persisted_license = {"spdx": "", "status": "unknown",
                       "note": "提案未持久化 License 结论；复现引用前需核验允许复现用途"}
+    # SR6：clean 取 run 持久化干净B结论（无→not_run）。
+    persisted_clean: dict[str, Any] | None = None
+    if str(run.get("clean_status") or "") in ("passed", "failed"):
+        persisted_clean = {"status": str(run["clean_status"]),
+                           "note": str(run.get("clean_note") or "")}
     report = build_experiment_report(
         run=run, scope=scope,
         license_info=persisted_license,
         image=str((scope.get("resources") or {}).get("image") or ""),
-        image_digest=str(scope.get("image_digest") or ""))
-    markdown = render_report_markdown(report)
-    recipe_md = render_recipe_markdown(report)
+        image_digest=str(scope.get("image_digest") or ""),
+        clean=persisted_clean)
+    return report, render_report_markdown(report), render_recipe_markdown(report)
+
+
+async def generate_run_report(
+    *, run_id: str, user_id: str, backend: Any = None,
+) -> dict[str, Any]:
+    """生成 run 报告产物（报告＋配方）并关联本 run；成功后回收工作区。
+
+    - 只接受终态 succeeded/failed 的 run（running→RUN_NOT_FINISHED，
+      cancelled→RUN_CANCELLED；跨用户→RUN_FORBIDDEN）；
+    - scope 取提案冻结值（提案不可读→RUN Proposal 缺失则拒绝，不编造）；
+    - 两个产物都写入成功后才调控制 cancel 回收；写入失败抛
+      REPORT_ARTIFACT_WRITE_FAILED 且不回收。
+    """
+    report, markdown, recipe_md = await build_stored_report(
+        run_id=run_id, user_id=user_id)
     title_base = f"自主实验报告 · {run_id[:12]}"
     artifacts: list[dict[str, Any]] = []
     for artifact_type, title, content in (
@@ -329,4 +348,73 @@ async def generate_run_report(
         "comparison": report["comparison"],
         "clean_verification": report["clean_verification"],
         "artifacts": artifacts,
+    }
+
+
+class FormatError(Exception):
+    """正式格式域失败：携带机器可读 code（fail-closed 语义）。"""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+
+
+async def generate_run_formats(*, run_id: str, user_id: str) -> dict[str, Any]:
+    """生成 run 正式格式产物（Word .docx＋LaTeX .tex）并关联本 run。
+
+    - 同报告门：只接受本人终态 succeeded/failed 的 run（门码与报告一致，
+      便于调用方统一处理）；
+    - 内容与 T6 Markdown 同源（build_stored_report），derived_from 标记
+      experiment-report/1；转换不改写事实；
+    - 两个产物都写入成功才返回；任一失败抛 FORMAT_ARTIFACT_WRITE_FAILED。
+      不触碰沙箱（纯渲染），Ask 下可用。
+    """
+    from nexus import document_output as formats_module
+
+    try:
+        report, markdown, recipe_md = await build_stored_report(
+            run_id=run_id, user_id=user_id)
+    except ReportError as error:
+        raise FormatError(error.code, str(error)) from error
+    title_base = f"自主实验报告 · {run_id[:12]}"
+    try:
+        built = formats_module.build_formats(markdown, recipe_md, title_base)
+    except Exception as error:  # noqa: BLE001 - 转换异常 fail-closed
+        raise FormatError("FORMAT_BUILD_FAILED",
+                          f"格式构建失败（{type(error).__name__}）") from error
+    artifacts: list[dict[str, Any]] = []
+    written = await artifact_client.write_binary_artifact_via_backend(
+        artifact_type="word", title=title_base, raw=built["docx_bytes"],
+        user_id=user_id, run_id=run_id)
+    if written.get("status") != "success":
+        raise FormatError(
+            "FORMAT_ARTIFACT_WRITE_FAILED",
+            f"Word 产物写入失败（{written.get('code', '')}）：{written.get('detail', '')}"[:300])
+    artifacts.append(written["artifact"])
+    written_tex = await artifact_client.write_artifact_via_backend(
+        artifact_type="latex", title=f"{title_base}（LaTeX）",
+        content=built["tex"], user_id=user_id, run_id=run_id)
+    if written_tex.get("status") != "success":
+        raise FormatError(
+            "FORMAT_ARTIFACT_WRITE_FAILED",
+            f"LaTeX 产物写入失败（{written_tex.get('code', '')}）：{written_tex.get('detail', '')}"[:300])
+    artifacts.append(written_tex["artifact"])
+    checks = built["checks"]
+    return {
+        "run_id": run_id,
+        "content_version": REPORT_CONTENT_VERSION,
+        "derived_from": built["derived_from"],
+        "clean_verification": report["clean_verification"],
+        "artifacts": artifacts,
+        "checks": {
+            "docx": {"ok": bool(checks["docx"].get("ok")),
+                     "detail": str(checks["docx"].get("detail") or ""),
+                     "paragraphs": int(checks["docx"].get("checks", {}).get("paragraphs") or 0),
+                     "tables": int(checks["docx"].get("checks", {}).get("tables") or 0)},
+            "tex": {"ok": bool(checks["tex"].get("ok")),
+                    "detail": str(checks["tex"].get("detail") or "")},
+            "compile": {"compiled": bool(checks["compile"].get("compiled")),
+                        "code": str(checks["compile"].get("code") or ""),
+                        "detail": str(checks["compile"].get("detail") or "")},
+        },
     }

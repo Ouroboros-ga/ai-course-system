@@ -60,7 +60,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, requestNexusRunFormats, requestNexusRunCleanVerify, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -546,6 +546,50 @@ async function requestAutoReport(id) {
   } catch (err) {
     run.reportRequested = false
     showToast(err?.message || '报告生成失败', 'error')
+  }
+}
+
+// ── SR6 正式格式产物：Word .docx＋LaTeX .tex（确定性转换，不经 LLM） ──
+async function requestRunFormats(id) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const run = item?.run
+  const runId = item?.runId
+  if (!run || !runId || run.formatsRequested) return
+  run.formatsRequested = true
+  try {
+    const res = await requestNexusRunFormats(runId)
+    for (const a of res?.artifacts || []) {
+      if (a?.artifact_id && !(item.turn.artifacts || []).some((x) => x.artifact_id === a.artifact_id)) {
+        item.turn.artifacts = [...(item.turn.artifacts || []), a]
+      }
+    }
+    persistSessions()
+    showToast(`正式格式已生成：Word ${res?.checks?.docx?.ok ? '通过' : '异常'} · LaTeX ${res?.checks?.tex?.ok ? '通过' : '异常'} · 编译${res?.checks?.compile?.code || '—'}`, 'success')
+  } catch (err) {
+    run.formatsRequested = false
+    showToast(err?.message || '正式格式生成失败', 'error')
+  }
+}
+
+// ── SR6 干净验证：全新沙箱重放冻结配方（只在 Auto 下可用） ──
+async function requestCleanVerify(id) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const run = item?.run
+  const runId = item?.runId
+  if (!run || !runId || run.cleanRequested) return
+  run.cleanRequested = true
+  try {
+    const res = await requestNexusRunCleanVerify(runId, execMode.value || 'ask')
+    run.cleanStatus = res?.clean_verification || ''
+    persistSessions()
+    if (res?.deduped) {
+      showToast(`干净验证（已有结论）：${res?.clean_verification || '—'}`, 'success')
+    } else {
+      showToast(`干净验证：${res?.clean_verification || '—'}（${res?.matched ?? '—'}/${res?.total ?? '—'} 步一致）`, 'success')
+    }
+  } catch (err) {
+    run.cleanRequested = false
+    showToast(err?.message || '干净验证失败', 'error')
   }
 }
 
@@ -3078,6 +3122,8 @@ const emptySuggestions = computed(() =>
         @ask="openAskWindow"
         @analyze="analyzeRunResult"
         @report="requestAutoReport"
+        @formats="requestRunFormats"
+        @clean-verify="requestCleanVerify"
         @rerun="rerunFromWorkspace"
         @rename="renameRunFromWorkspace"
         @add-note="addRunNote"

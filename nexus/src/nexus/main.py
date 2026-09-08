@@ -1571,6 +1571,112 @@ async def repro_run_report(
         ) from error
 
 
+class CleanVerifyRequest(BaseModel):
+    """SR6 干净B请求体：重放调用实验沙箱，只接受 Auto（Ask 403）。"""
+
+    research_execution_mode: str | None = Field(default=None, max_length=16)
+
+    model_config = {"extra": "forbid"}
+
+
+@app.post(
+    "/api/v1/nexus/repro/runs/{run_id}/formats",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_run_formats(
+    run_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """SR6：自主 run 正式格式产物（Word .docx＋LaTeX .tex，确定性转换）。
+
+    与报告同门（本人终态 run）；内容与 T6 Markdown 同源同版本；不经 LLM、
+    不触碰沙箱（纯渲染，Ask 下可用）。跨用户/不存在一律 404。
+    """
+    from nexus import experiment_report as report_module
+    from nexus import experiment_runs as runs_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    run = runs_module.get_run(sanitize_session_id(run_id))
+    if run is None or (user_id or "") != run["owner"]:
+        raise HTTPException(status_code=404, detail="RUN_NOT_FOUND")
+    try:
+        return await report_module.generate_run_formats(
+            run_id=run["run_id"], user_id=user_id)
+    except report_module.FormatError as error:
+        status_map = {
+            "RUN_NOT_FOUND": 404,
+            "RUN_FORBIDDEN": 403,
+            "RUN_NOT_FINISHED": 409,
+            "RUN_CANCELLED": 409,
+            "RUN_PROPOSAL_UNAVAILABLE": 409,
+            "FORMAT_BUILD_FAILED": 502,
+            "FORMAT_ARTIFACT_WRITE_FAILED": 502,
+        }
+        raise HTTPException(
+            status_code=status_map.get(error.code, 409), detail=error.code
+        ) from error
+
+
+@app.post(
+    "/api/v1/nexus/repro/runs/{run_id}/clean-verify",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_run_clean_verify(
+    run_id: str,
+    body: CleanVerifyRequest,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """SR6：自主 run 干净B验证（全新沙箱重放冻结配方，比对退出码）。
+
+    只接受本人终态（succeeded/failed）run；结论幂等（已有 passed/failed
+    直接返回，不重放）；新鲜沙箱用后即回收。重放调用实验沙箱——执行门
+    强制 Auto（未知 400，非 auto 403，与 Ask/Auto 契约同口径）。
+    跨用户/不存在一律 404。
+    """
+    from nexus import experiment_clean as clean_module
+    from nexus import experiment_runs as runs_module
+
+    mode = (body.research_execution_mode or "ask").strip().lower()
+    if mode not in ("ask", "auto"):
+        raise HTTPException(status_code=400, detail="INVALID_RESEARCH_EXECUTION_MODE")
+    if mode != "auto":
+        raise HTTPException(status_code=403, detail="CLEAN_EXECUTION_DISABLED")
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    run = runs_module.get_run(sanitize_session_id(run_id))
+    if run is None or (user_id or "") != run["owner"]:
+        raise HTTPException(status_code=404, detail="RUN_NOT_FOUND")
+    try:
+        outcome = await clean_module.run_clean_verification(
+            run_id=run["run_id"], user_id=user_id)
+    except clean_module.CleanError as error:
+        status_map = {
+            "RUN_NOT_FOUND": 404,
+            "RUN_FORBIDDEN": 403,
+            "RUN_NOT_FINISHED": 409,
+            "RUN_CANCELLED": 409,
+            "RUN_PROPOSAL_UNAVAILABLE": 409,
+            "CLEAN_NO_REPLAYABLE_STEPS": 409,
+            "CLEAN_SANDBOX_UNAVAILABLE": 503,
+            "CLEAN_REPLAY_INTERRUPTED": 502,
+            "CLEAN_STEP_TIMEOUT": 504,
+        }
+        raise HTTPException(
+            status_code=status_map.get(error.code, 409), detail=error.code
+        ) from error
+    # 验证日志产物（best-effort： verdict 已落盘，日志写失败不推翻结论）。
+    from nexus import artifact_client
+
+    log_md = clean_module.render_clean_log_markdown(run, outcome)
+    written = await artifact_client.write_artifact_via_backend(
+        artifact_type="markdown", title=f"干净验证日志 · {run['run_id'][:12]}",
+        content=log_md, user_id=user_id, run_id=run["run_id"])
+    artifacts: list[dict[str, Any]] = []
+    if written.get("status") == "success":
+        artifacts.append(written["artifact"])
+    return {**outcome, "artifacts": artifacts,
+            "log_artifact_written": bool(artifacts)}
+
+
 # ---------------------------------------------------------------------------
 # NX-LB1/LB2：preset 投影＋结构化提案＋审批待办（Runtime 自有域编排）
 

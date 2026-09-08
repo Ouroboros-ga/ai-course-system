@@ -1158,7 +1158,8 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // T2 Ask/Auto：+sessions execution-mode 查询/保存×2 → 34 个。
   // T5：+runs/{id}/cancel 用户直接取消 → 35 个。
   // T6：+runs/{id}/report 自主报告 → 36 个。
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 36)
+  // SR6：+runs/{id}/formats 正式格式＋runs/{id}/clean-verify 干净验证 → 38 个。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 38)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })
@@ -1262,4 +1263,29 @@ test('T5 自主 run 工作台复用：attempt 投影＋reconciling＋Ask 复跑�
   assert.match(page, /startRunDetailPolling/)
   assert.match(page, /requestNexusRunReport\(runId\)/)
   assert.match(page, /@report="requestAutoReport"/)
+})
+
+test('SR6 正式输出：Word/LaTeX 导出＋干净验证（Auto 门，Ask 禁用）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  // 客户端：双函数＋allowFlatResponse，与报告链同形状。
+  assert.match(client, /export function requestNexusRunFormats\(runId\)/)
+  assert.match(client, /\/nexus\/runs\/.*\/formats/)
+  assert.match(client, /export function requestNexusRunCleanVerify\(runId, executionMode\)/)
+  assert.match(client, /\/nexus\/runs\/.*\/clean-verify/)
+  // 后端：双反代路由（D10 门数 38 另行锁定）。
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/formats"\)/)
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/clean-verify"\)/)
+  // 工作台：指标页报告区动作行（干净验证 Ask 禁用＋原因）。
+  assert.match(ws, /导出 Word\/LaTeX/)
+  assert.match(ws, /干净验证/)
+  assert.match(ws, /@click="emit\('formats', active\.id\)"/)
+  assert.match(ws, /@click="emit\('clean-verify', active\.id\)"/)
+  // 父组件：处理函数＋事件绑定（与报告链同模式）。
+  assert.match(page, /requestRunFormats/)
+  assert.match(page, /requestCleanVerify/)
+  assert.match(page, /@formats="requestRunFormats"/)
+  assert.match(page, /@clean-verify="requestCleanVerify"/)
 })

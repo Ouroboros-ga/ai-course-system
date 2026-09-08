@@ -20,6 +20,7 @@ import {
   LineChart,
   MessageSquare,
   RotateCw,
+  ShieldCheck,
   Square,
   TriangleAlert
 } from 'lucide-vue-next'
@@ -53,7 +54,8 @@ const props = defineProps({
   executionMode: { type: String, default: 'ask' },
 })
 
-const emit = defineEmits(['switch', 'cancel', 'ask', 'analyze', 'rerun', 'rename', 'add-note'])
+const emit = defineEmits(['switch', 'cancel', 'ask', 'analyze', 'rerun', 'rename', 'add-note',
+  'report', 'formats', 'clean-verify'])
 
 const tab = ref('logs')
 
@@ -462,6 +464,33 @@ const isReportable = computed(() => {
             <b>{{ run.verdict }}</b>
             <span class="nxw-verdict-src">源：GET /nexus/repro/jobs/{id}/report</span>
           </div>
+          <!-- SR6 正式输出：报告已生成后可导出 Word/LaTeX（纯渲染，Ask 可用）；
+               干净验证重放进沙箱，只在 Auto 下可用（服务端同样 403）。 -->
+          <div v-if="hasReport && isAutonomous" class="nxw-formats">
+            <SfxButton
+              variant="secondary"
+              size="sm"
+              :loading="!!run?.formatsRequested"
+              :disabled="!!run?.formatsRequested"
+              title="导出正式 Word（.docx，可编辑）与 LaTeX（main.tex）产物，可下载"
+              @click="emit('formats', active.id)"
+            >
+              <template #icon><FileText :size="13" /></template>
+              导出 Word/LaTeX
+            </SfxButton>
+            <SfxButton
+              variant="secondary"
+              size="sm"
+              :loading="!!run?.cleanRequested"
+              :disabled="isAsk || !!run?.cleanRequested"
+              :title="isAsk ? '干净验证重放进沙箱，Ask 模式不可用，切换到 Auto 后可用' : '在全新沙箱重放冻结配方，比对退出码（结论幂等）'"
+              @click="emit('clean-verify', active.id)"
+            >
+              <template #icon><ShieldCheck :size="13" /></template>
+              干净验证
+            </SfxButton>
+            <span v-if="run?.cleanStatus" class="nxw-note">干净验证：{{ run.cleanStatus }}</span>
+          </div>
           <table v-if="run.comparison && run.comparison.length" class="nxw-table">
             <thead>
               <tr><th>指标</th><th>实测</th><th>期望</th></tr>
@@ -767,6 +796,9 @@ const isReportable = computed(() => {
 .nxw-note {
   margin: 6px 0 0; font-size: 10.5px; line-height: 1.6; color: var(--text-disabled);
 }
+
+/* SR6 正式输出：指标判定下的 Word/LaTeX 导出与干净验证动作行 */
+.nxw-formats { display: flex; align-items: center; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
 
 /* 备注（NX-LB5） */
 .nxw-note-row { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-default); }

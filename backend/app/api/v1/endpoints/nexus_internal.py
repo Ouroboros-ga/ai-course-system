@@ -305,9 +305,34 @@ async def nexus_internal_write_artifact(
     x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
     session: Session = Depends(get_session),
 ):
-    """产物写入（M3）：对象存储 + Nexus 域元数据，一次成功才返回 artifact_id。"""
+    """产物写入（M3）：对象存储 + Nexus 域元数据，一次成功才返回 artifact_id。
+
+    SR6：word 类型走 content_b64 二进制分支（base64 非法/超限 422）。
+    """
+    import base64
+
     _require_service_token(authorization)
     user_id = str(_require_user_identity(x_nexus_user_id))
+    if payload.artifact_type == "word":
+        try:
+            raw = base64.b64decode(payload.content_b64, validate=True)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail="ARTIFACT_CONTENT_INVALID")
+        error = nexus_artifact_service.validate_binary_input(
+            payload.artifact_type, payload.title, raw
+        )
+        if error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error)
+        artifact = nexus_artifact_service.create_binary_artifact(
+            session,
+            user_id=user_id,
+            artifact_type=payload.artifact_type,
+            title=payload.title,
+            data=raw,
+            run_id=payload.run_id,
+        )
+        return unified_response(code=200, message="产物已写入", data=artifact)
     error = nexus_artifact_service.validate_artifact_input(
         payload.artifact_type, payload.title, payload.content
     )

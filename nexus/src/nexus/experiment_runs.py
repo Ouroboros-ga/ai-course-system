@@ -51,6 +51,9 @@ CREATE TABLE IF NOT EXISTS {schema}.nexus_experiment_runs (
     graph_thread_id TEXT NOT NULL DEFAULT '',
     cancel_requested INTEGER NOT NULL DEFAULT 0,
     detail TEXT NOT NULL DEFAULT '',
+    clean_status TEXT NOT NULL DEFAULT '',
+    clean_note TEXT NOT NULL DEFAULT '',
+    clean_checked_at DOUBLE PRECISION NOT NULL DEFAULT 0,
     created_at DOUBLE PRECISION NOT NULL DEFAULT 0,
     updated_at DOUBLE PRECISION NOT NULL DEFAULT 0
 );
@@ -80,6 +83,10 @@ def ensure_runs_table(dsn: str, schema: str) -> None:
                 ("graph_thread_id", "TEXT NOT NULL DEFAULT ''"),
                 ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
                 ("detail", "TEXT NOT NULL DEFAULT ''"),
+                # SR6 干净B结论列（老表补齐，可重入；旧行读作未验证）。
+                ("clean_status", "TEXT NOT NULL DEFAULT ''"),
+                ("clean_note", "TEXT NOT NULL DEFAULT ''"),
+                ("clean_checked_at", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
             ):
                 cur.execute(
                     f"ALTER TABLE {schema}.nexus_experiment_runs "
@@ -90,12 +97,14 @@ def ensure_runs_table(dsn: str, schema: str) -> None:
 _RUN_SELECT = (
     "run_id, owner, session_id, proposal_id, proposal_version, scope_hash, "
     "approval_id, status, attempt_no, attempts, graph_thread_id, "
-    "cancel_requested, detail, created_at, updated_at"
+    "cancel_requested, detail, clean_status, clean_note, clean_checked_at, "
+    "created_at, updated_at"
 )
 
 _RUN_KEYS = ("run_id", "owner", "session_id", "proposal_id", "proposal_version",
              "scope_hash", "approval_id", "status", "attempt_no", "attempts",
              "graph_thread_id", "cancel_requested", "detail",
+             "clean_status", "clean_note", "clean_checked_at",
              "created_at", "updated_at")
 
 
@@ -120,6 +129,10 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "graph_thread_id": row.get("graph_thread_id", "") or "",
         "cancel_requested": bool(int(row.get("cancel_requested", 0) or 0)),
         "detail": row.get("detail", "") or "",
+        # SR6 干净B结论（空=未验证；passed/failed 由重放落盘）。
+        "clean_status": row.get("clean_status", "") or "",
+        "clean_note": row.get("clean_note", "") or "",
+        "clean_checked_at": row.get("clean_checked_at", 0) or 0,
         "created_at": row.get("created_at", 0),
         "updated_at": row.get("updated_at", 0),
     }
@@ -145,8 +158,9 @@ def _insert_row(row: dict[str, Any]) -> None:
                         "(run_id, owner, session_id, proposal_id, proposal_version, "
                         "scope_hash, approval_id, status, attempt_no, attempts, "
                         "graph_thread_id, cancel_requested, detail, "
+                        "clean_status, clean_note, clean_checked_at, "
                         "created_at, updated_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                         "ON CONFLICT (run_id) DO NOTHING",
                         (
                             row["run_id"], row["owner"], row["session_id"],
@@ -157,6 +171,9 @@ def _insert_row(row: dict[str, Any]) -> None:
                             row.get("graph_thread_id", ""),
                             1 if row.get("cancel_requested") else 0,
                             row.get("detail", ""),
+                            row.get("clean_status", ""),
+                            row.get("clean_note", ""),
+                            row.get("clean_checked_at", 0) or 0,
                             row["created_at"], row["updated_at"],
                         ),
                     )
@@ -178,7 +195,8 @@ def _update_row(row: dict[str, Any]) -> None:
                     cur.execute(
                         f"UPDATE {schema}.nexus_experiment_runs SET status=%s, "
                         f"attempt_no=%s, attempts=%s, graph_thread_id=%s, "
-                        f"cancel_requested=%s, detail=%s, updated_at=%s "
+                        f"cancel_requested=%s, detail=%s, updated_at=%s, "
+                        f"clean_status=%s, clean_note=%s, clean_checked_at=%s "
                         f"WHERE run_id=%s",
                         (
                             row["status"], row["attempt_no"],
@@ -186,7 +204,11 @@ def _update_row(row: dict[str, Any]) -> None:
                             row.get("graph_thread_id", ""),
                             1 if row.get("cancel_requested") else 0,
                             row.get("detail", ""),
-                            row["updated_at"], row["run_id"],
+                            row["updated_at"],
+                            row.get("clean_status", ""),
+                            row.get("clean_note", ""),
+                            row.get("clean_checked_at", 0) or 0,
+                            row["run_id"],
                         ),
                     )
             return
@@ -251,6 +273,9 @@ def create_or_get_run(
         "graph_thread_id": "",
         "cancel_requested": False,
         "detail": "",
+        "clean_status": "",
+        "clean_note": "",
+        "clean_checked_at": 0,
         "created_at": now,
         "updated_at": now,
     }
@@ -327,6 +352,24 @@ def set_status(run_id: str, status: str, detail: str = "") -> dict[str, Any] | N
         return None
     updated = dict(run)
     updated.update({"status": status, "detail": (detail or "")[:2000],
+                    "updated_at": _now()})
+    _update_row(updated)
+    _memory_runs[run_id] = dict(updated)
+    return _row_to_dict(updated)
+
+
+def set_clean_verdict(run_id: str, status: str, note: str = "") -> dict[str, Any] | None:
+    """SR6 干净B结论落盘（passed/failed；调用方已做重放比对，此处只持久化）。
+
+    结论一旦落盘即稳定（attempt 终态后不可追加）；重复落盘覆盖并刷新时间。
+    """
+    run = get_run(run_id)
+    if run is None:
+        return None
+    updated = dict(run)
+    updated.update({"clean_status": (status or "")[:16],
+                    "clean_note": (note or "")[:2000],
+                    "clean_checked_at": _now(),
                     "updated_at": _now()})
     _update_row(updated)
     _memory_runs[run_id] = dict(updated)
