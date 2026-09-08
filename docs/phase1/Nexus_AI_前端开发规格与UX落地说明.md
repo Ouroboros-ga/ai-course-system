@@ -13,6 +13,15 @@
 > 分段控件 + 右侧 `.nx-ctx` 上下文面板 + mono 工具白名单）。历史描述保留，不再作为当前规范。
 > 启动页 v2 另修：模式切换抖动（建议条数 3↔4 加垂直居中导致整块平移）→ 改顶部对齐 + 锁行高。
 > 依据：`2026-09-07_Nexus_启动页重设计_v2.html`。
+>
+> **v3.2 变更（2026-09-08）**：T5 三件落地 + 界面口径收敛，§12.0 接线表按当日实测重写。
+> 1. **Ask/Auto 选择器换形态**：分段控件 → **ChatGPT 式下拉**（家良 2026-09-08 截图拍板）——
+>    收起只显示当前模式名，展开每项「名称 + 一句话差别 + 当前项 ✓」。§12.1 形态条目已改。
+> 2. **提案编辑器落地**（§12.4）：工作台「调整方案再运行」→ 弹层编辑白名单参数
+>    （schema 来自 `/repro/presets`，基线取 `config_snapshot`）→ 创建提案 + 送审 → 浮窗批准。
+> 3. **取消授权入口落地**（§12.6）：运行卡新增「授权取消」（一次性、5 分钟 TTL）。
+> 4. **删「N 项待接入」**：工具已配齐，chips 的待接入 popover 与启动页 ctx 的
+>    wired/unwired 开发中说明移除（缺席 ≠ 谎称已生效；三态真相仍在 nexusCapabilities.js）。
 
 ## 1. 产品入口与规划状态
 
@@ -186,7 +195,7 @@ NX-P1/P2：论文/仓库→One Claim/计划→批准→A→冻结→B→指标/�
 
 ## 12. 新增功能的前端显示界面（v3.1 增补 · 规格，非实现声明）
 
-### 12.0 接线状态（2026-09-07 实测）
+### 12.0 接线状态（2026-09-08 实测）
 
 后端路由以 `backend/app/api/v1/endpoints/nexus_proxy.py` 为准；前端以 `frontend/src/api/nexus.js` 的封装与实际调用计数为准。**"已封装 0 调用"是最需要警惕的状态**：接口写好了但没有任何入口，等于功能不存在。
 
@@ -197,26 +206,32 @@ NX-P1/P2：论文/仓库→One Claim/计划→批准→A→冻结→B→指标/�
 | 运行备注 | ✅ `GET/POST /runs/{id}/notes`（L1556/L1530） | `listNexusRunNotes` / `createNexusRunNote` | 2 | ✅ **2026-09-07 已实现**（工作台「备注」tab，§12.7） |
 | preset 投影（参数白名单 / 预算 / 指标基线） | ✅ `GET /repro/presets`（L979） | `listNexusReproPresets` | 1 | ✅ **2026-09-07 已实现**（左栏「预设 · 只读 / 可改参数」，§12.8） |
 | 审批待办恢复 | ✅ `GET /approvals?session_id&status`（L910） | `listNexusApprovals` | 1 | ✅ **2026-09-07 已实现**（浮窗 v2 多待办，§12.4） |
-| 提案：创建 / 读取 / 改参 / 请求审批 | ✅ `/repro/proposals` 四端点（L1025/1038/1051/1068） | 已封装 4 个 | **0** | ❌ 未建（diff 渲染已就绪，参数编辑器未做） |
-| 运行详情（display_title / run_number / version / 冻结配置） | ✅ `GET /runs/{id}`（L1458） | `getNexusRunDetail` | **0** | ❌ 未建（列表已带同名字段，暂不单独拉取） |
-| 取消授权签发 | ✅ `POST /runs/{id}/cancel-grant`（L1489） | `requestNexusRunCancelGrant` | **0** | ❌ 未建：**没有触发源** |
-| Research Ask / Auto | ❌ 未实现（§2.1 仅冻结规格） | 无 | — | ❌ 未建 |
+| 提案：创建 / 读取 / 改参 / 请求审批 | ✅ `/repro/proposals` 四端点（L1025/1038/1051/1068） | 已封装 4 个 | 2+ | ✅ **2026-09-08 已实现**（工作台「调整方案再运行」→ 提案编辑器 → 送审，§12.4） |
+| 运行详情（display_title / run_number / version / 冻结配置） | ✅ `GET /runs/{id}`（L1458） | `getNexusRunDetail` | 2 | ✅ 已接（提案基线读取 + run 详情轮询恢复） |
+| 取消授权签发 | ✅ `POST /runs/{id}/cancel-grant`（L1489） | `requestNexusRunCancelGrant` | 1 | ✅ **2026-09-08 已实现**（运行卡「授权取消」，§12.6） |
+| Research Ask / Auto | ✅ **T2/T5 已实现**（chat / execute 执行门 + `GET/PUT /sessions/{id}/execution-mode`） | `get/saveNexusSessionExecutionMode` | 3+ | ✅ **2026-09-08 已实现**（composer 下拉选择器，§12.1） |
 
-**两条不能做的，说明原因（不是遗漏）**：
+**前版两条「不能做」已被 T2/T5 落地推翻（2026-09-08 复核后改口，依据在案）**：
 
-1. **cancel-grant 不接** —— 该端点是给"模型请求取消"签发一次性授权用的（LB4：模型意图本身不构成授权）。
-   用户自己点取消走的是现有 `POST /repro/jobs/{job_id}/cancel`，**不需要 grant**。
-   目前没有"模型请求取消"的服务端事件可达前端，接了就是假入口。
-2. **Ask / Auto 不做** —— 后端 `research_execution_mode` 未实现（§2.1 仅冻结规格）。
-   按 fail-closed，不允许放一个点了没用的开关。等后端字段落地再接。
+1. ~~cancel-grant 不接~~ —— 触发面已明确：Runtime 的 `cancel_reproduction_run` 工具在
+   无授权时返回 `CANCEL_CONFIRMATION_REQUIRED`，由模型在对话里请用户确认
+   （`nexus_internal.py` 内部取消端点注释原文）。运行卡「授权取消」按钮就是该确认的
+   界面落点：一次性、5 分钟 TTL，绑定 (user, run, cancel_run)，模型工具核销后才真取消。
+2. ~~Ask / Auto 不做~~ —— `research_execution_mode`（仅 ask|auto，未知值 400）已在
+   chat 发送、`/repro/execute` 执行门（启动须 Research+Auto+本人批准）与会话偏好端点
+   三处生效。选择器见 §12.1。
 
 **同时更正一处过期事实**：~~`nexus_runs` 无 title 字段~~ —— LB1 已加 `title / run_number / version / parent_run_id / config_snapshot / preset_display_name / paper_title`（`nexus_run_service.py:60-68`、迁移 `83-91`）。本地命名回退（`experimentName()`）只是后端字段不可得时的过渡，不是长期方案。
 
 ### 12.1 Research Ask / Auto 选择器（§2.1 的界面细化）
 
 - **位置**：Research 模式 composer 工具栏**左侧第一个控件**，与附件按钮同排；General 整块不渲染（不是隐藏，是不存在）。
-- **形态**：与右上「研究对话／实验工作台」同一分段控件语汇（`.nx-seg`），两枚 `[Ask | Auto]`，高 26px；选中项白底墨字 + 序号转 accent。辅助文案为中文，不使用英文"Ask/Auto"单独成义：`研究与写作` / `研究与实验`。
-- **提示**：选中项下方一行 11px 灰字——Ask「自主研究与文档输出，不运行实验。」/ Auto「可在确认后自主配置、运行和修复实验。」
+- **形态（2026-09-08 改版，截图拍板）**：**ChatGPT 式紧凑下拉**——收起时一枚
+  SfxButton（tertiary sm，当前模式名 + 下拉箭头，与附件按钮同排同语汇）；展开向上弹菜单，
+  每项 = **名称 + 一句话差别 + 当前项 ✓**：`研究与写作`（自主研究、检索与文档输出，
+  不运行实验）/ `研究与实验`（确认一次后自主配置、运行和修复实验）。中文文案不使用
+  英文"Ask/Auto"单独成义。契约锚点类 `nx-exec-seg` 保留（apiContracts #90 以它定位）；
+  §13 胶囊禁令不适用——这不是分段控件，是菜单。~~原 `.nx-seg` 两枚分段形态作废~~。
 - **状态与恢复**：新会话默认 Ask；同一会话的研究对话与询问浮窗**共享同一选择**（单一状态源，不允许浮窗默认 Auto）；刷新后由服务端会话偏好恢复，偏好保存失败只本地缓存并如实提示，不假称"已跨设备保存"。
 - **切换不清空**历史/附件/Todo/研究结果/已有 run；不是新开智能体。
 - **Ask 收到"帮我运行"**：按钮不消失、不禁用，模型继续做可做的准备工作，并在卡片里给一枚 `切换到 Auto`  tertiary 按钮；不擅自切模式。
@@ -246,6 +261,13 @@ NX-P1/P2：论文/仓库→One Claim/计划→批准→A→冻结→B→指标/�
 - **旧票失效**：修改提案后旧批准不可用，浮窗改为「方案已更新，需重新确认」，`批准执行` 变为 primary 但提示重新审批；后端 409 时按服务端文案显示，不复用旧按钮态。
 - **指标基线**：参数改动导致不匹配已验证基线时，结果区标 `exploratory`，文案「配置已改，未建立可比较基线；以下为测量值，不代表复现通过」。**禁止沿用 1.88±0.06 判定**。
 - 参数只允许白名单字段，schema 来自 `GET /repro/presets`；越界/注入在输入框提交前就地提示。
+- **✅ 提案编辑器（2026-09-08 落地）**：工作台「调整方案再运行」→ 弹层只列服务端白名单参数
+  （`parameters.schema`，零前端硬编码），每行 = 参数名 + help + 数字输入 + 基线值 + 「改」标记；
+  基线优先取 `getNexusRunDetail` 的 `config_snapshot.parameters`，取不到回 preset 默认。
+  前端先做 int/float 与 min/max 校验（服务端 422 兜底透出 PARAM_UNKNOWN / PARAM_TYPE /
+  PARAM_OUT_OF_RANGE / PARENT_NOT_FOUND）；改动 metric_sensitive 参数时显示
+  「只出探索性结论」提示行；提交 = `createNexusProposal`（parent_run_id 指向原 run，
+  client_request_id 幂等）+ `requestNexusProposalApproval`，批准走浮窗既有核销。
 
 ### 12.5 浮窗上下文引用（NX-LB3）
 
@@ -261,6 +283,10 @@ NX-P1/P2：论文/仓库→One Claim/计划→批准→A→冻结→B→指标/�
 - **歧义必须澄清**：目标不明确或显式 run_id 与当前上下文冲突时，显示选择列表让用户指定；**绝不默认"最新运行"**。
 - 取消失败原样映射：超时显示"未知，稍后重查"不显示成功；`cancelling` 不提前转 `cancelled`；终态调用显示"已结束，无需取消"。
 - 改方案类工具只产出提案，**任何情况下不触发无审批执行**。
+- **✅ 授权入口（2026-09-08 落地）**：运行卡（running 态且 `run_id` 在）新增「授权取消」
+  tertiary 按钮，title 写明一次性与 5 分钟有效期；404 →「运行不存在或没有服务端记录」，
+  `RUN_SESSION_MISMATCH` →「回到发起该运行的会话再签发」；签发成功 toast 明确
+  「Nexus 现在可以取消本次运行」。按钮本身就是确认，不再叠一层弹窗。
 
 ### 12.7 运行备注与产物（NX-LB5）
 
@@ -268,9 +294,9 @@ NX-P1/P2：论文/仓库→One Claim/计划→批准→A→冻结→B→指标/�
 - 输入 ≤4000 字符，超长就地提示；`request_id` 幂等，重复提交不产生第二条。
 - 产物区只列**已授权 Artifact 引用**，可下载；未收集/已过期显示「不可用」，**不把 Worker 工作目录清单当下载链接**。全量日志归档 / 指标时序 / 批量下载仍 TARGET——不足时不画曲线、不给假的"下载全部"。
 
-### 12.8 preset 投影（前端未接）
+### 12.8 preset 投影（✅ 已接）
 
-`GET /repro/presets` 已上线但前端未封装。它是"无 preset 也能准备实验"和参数白名单的**唯一数据来源**——参数可改范围、默认值、预算上限、指标与来源、能力限制都只能来自这里，前端**禁止硬编码参数列表**。接入前，§12.4 的参数修改界面不开放。
+`GET /repro/presets` 前端已封装并在 real 模式挂载时拉取（工作台左栏与提案编辑器共同消费，`接前不开放 §12.4 编辑` 的限制随之解除）。它是"无 preset 也能准备实验"和参数白名单的**唯一数据来源**——参数可改范围、默认值、预算上限、指标与来源、能力限制都只能来自这里，前端**禁止硬编码参数列表**。接入前，§12.4 的参数修改界面不开放。
 
 ---
 

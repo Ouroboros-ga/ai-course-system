@@ -9,7 +9,8 @@
  *
  * 本轮可用性重构（2026-09-03）：
  * - 数据源切换收敛到侧栏底部状态区（唯一入口）；演示模式顶部保留一条状态说明条
- * - 首屏 Chips 只保留 ready 能力 + 课程绑定；wired/unwired 收进「◇ N 项待接入」popover
+ * - 首屏 Chips 只展示 ready 能力（工具已配齐，「N 项待接入」开发中说明已删；
+ *   三态真相仍在 nexusCapabilities.js，接线状态不靠界面贴条）
  * - 右栏大数字统计块改为「能力状态」列表（与 Chips 同一真相源，不再自相矛盾）
  * - 过程层统一「实验记录轨」视觉：surface-cool 底 + 状态点 + mono 时间戳
  * - 修复：isToolExpanded 未定义导致过程卡展开崩溃；多个模板类名与样式错位；
@@ -59,7 +60,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusProposalApproval } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -281,8 +282,162 @@ function analyzeRunResult(id) {
   })
 }
 
-function rerunFromWorkspace() {
-  showToast('复制本次冻结配置 → 新提案 → 重新审批后创建新运行（工作台复跑入口尚未实现，可先在对话里口述改参数）', 'info')
+// ── NX-LB2 调整方案再运行：基于父运行的冻结参数开新提案 → 送审 → 浮窗批准 ──
+// 白名单/范围来自 GET /repro/presets 的 parameters.schema（零前端硬编码）；
+// 基线优先取 run 详情 config_snapshot.parameters，取不到回 preset 默认值。
+const proposalDraft = ref(null)
+
+function rerunFromWorkspace(id) {
+  const item = sessionRuns.value.find((r) => r.id === (id || activeRunId.value))
+  const runId = item?.runId
+  const preset = item
+    ? reproPresets.value.find((p) => (p.preset_id || p.id) === item.run?.preset_id) || null
+    : null
+  const schema = preset?.parameters?.schema
+  if (!item || !runId) {
+    showToast('本次运行还没有服务端记录（run_id 缺失），不能基于它创建新提案', 'error')
+    return
+  }
+  if (!schema || !Object.keys(schema).length) {
+    showToast('该预设暂不支持参数化，可在对话里描述要调整的方向', 'info')
+    return
+  }
+  const values = {}
+  for (const [name, spec] of Object.entries(schema)) values[name] = String(spec.default ?? '')
+  proposalDraft.value = {
+    runId,
+    presetId: preset.preset_id,
+    presetName: preset.display_name || preset.preset_id,
+    runName: item.name,
+    schema,
+    baseline: { ...values },
+    values,
+    submitting: false,
+    error: ''
+  }
+  // 冻结基线异步补齐：只取白名单内的键；详情取不到就按 preset 默认值当基线
+  void (async () => {
+    try {
+      const det = await getNexusRunDetail(runId)
+      const frozen = det?.config_snapshot?.parameters
+      const d = proposalDraft.value
+      if (d && d.runId === runId && frozen && typeof frozen === 'object') {
+        for (const name of Object.keys(schema)) {
+          if (frozen[name] !== undefined && frozen[name] !== null) {
+            d.baseline[name] = String(frozen[name])
+            d.values[name] = String(frozen[name])
+          }
+        }
+      }
+    } catch { /* 保持默认基线 */ }
+  })()
+}
+
+function closeProposalEditor() {
+  if (proposalDraft.value?.submitting) return
+  proposalDraft.value = null
+}
+
+function paramChanged(name) {
+  const d = proposalDraft.value
+  return !!d && String(d.values[name]) !== String(d.baseline[name])
+}
+
+const proposalChangedCount = computed(() => {
+  const d = proposalDraft.value
+  if (!d) return 0
+  return Object.keys(d.schema).filter((n) => String(d.values[n]) !== String(d.baseline[n])).length
+})
+
+const metricSensitiveChanged = computed(() => {
+  const d = proposalDraft.value
+  if (!d) return false
+  return Object.entries(d.schema).some(
+    ([n, sp]) => sp.metric_sensitive && String(d.values[n]) !== String(d.baseline[n])
+  )
+})
+
+async function submitProposal() {
+  const d = proposalDraft.value
+  if (!d || d.submitting) return
+  // 前端先做类型/范围校验（与服务端 schema 同规则；422 兜底直接透出）
+  const params = {}
+  for (const [name, spec] of Object.entries(d.schema)) {
+    const raw = String(d.values[name] ?? '').trim()
+    const num = Number(raw)
+    if (!raw || !Number.isFinite(num)) {
+      d.error = name + '：需要数字'
+      return
+    }
+    if (spec.type === 'int' && !Number.isInteger(num)) {
+      d.error = name + '：需要整数'
+      return
+    }
+    if (num < spec.min || num > spec.max) {
+      d.error = name + '：允许范围 ' + spec.min + '–' + spec.max
+      return
+    }
+    params[name] = num
+  }
+  d.submitting = true
+  d.error = ''
+  try {
+    let reqId = ''
+    try { reqId = crypto.randomUUID() } catch { reqId = 'rerun-' + Date.now() }
+    const res = await createNexusProposal({
+      preset_id: d.presetId,
+      session_id: activeSessionId.value || 'default',
+      parent_run_id: d.runId,
+      parameters: params,
+      client_request_id: reqId
+    })
+    const p = res?.proposal || res || {}
+    await requestNexusProposalApproval(p.proposal_id, p.version)
+    proposalDraft.value = null
+    await loadPendingApprovals()
+    showToast('新提案已送审，请在输入框上方确认后才会执行', 'success')
+  } catch (err) {
+    const code = err?.errorCode || err?.response?.data?.code || ''
+    const map = {
+      PROPOSAL_PARAM_UNKNOWN: '参数不在该预设的白名单内',
+      PROPOSAL_PARAM_TYPE: '参数类型不符合 schema',
+      PROPOSAL_PARAM_OUT_OF_RANGE: '参数超出允许范围',
+      PROPOSAL_PRESET_UNSUPPORTED: '该预设暂不支持参数化',
+      PROPOSAL_PARENT_NOT_FOUND: '原运行不存在或已不可引用',
+      PROPOSAL_VERSION_CONFLICT: '提案版本冲突，请重试'
+    }
+    d.error = map[code] || err?.message || '提案创建失败，未执行任何操作'
+    d.submitting = false
+  }
+}
+
+// ── NX-LB4 取消授权签发：模型请求取消时，用户在此显式授权 ──
+// 模型意图本身不构成授权；grant 只由本端点（登录态）签发，
+// 一次性、5 分钟 TTL，绑定 (user, run, cancel_run)，模型工具核销后才真取消。
+async function grantCancelFor(turn) {
+  const run = turn?.reproRun
+  const runId = run?.runId || run?.run_id
+  if (!runId) {
+    showToast('本次运行还没有服务端记录，无法签发取消授权', 'error')
+    return
+  }
+  if (run.granting) return
+  run.granting = true
+  try {
+    await requestNexusRunCancelGrant(runId, activeSessionId.value || 'default')
+    showToast('已签发一次性取消授权（5 分钟内有效）：Nexus 现在可以取消本次运行', 'success')
+  } catch (err) {
+    const code = err?.errorCode || err?.response?.data?.code || ''
+    if (code === 'RUN_SESSION_MISMATCH') {
+      showToast('会话不匹配：请回到发起该运行的会话再签发', 'error')
+    } else if (err?.status === 404) {
+      showToast('运行不存在或没有服务端记录', 'error')
+    } else {
+      showToast('签发失败，请重试', 'error')
+    }
+  } finally {
+    run.granting = false
+  }
 }
 
 // ── NX-LB1 重命名：PATCH /runs/{run_id}，乐观锁 ──
@@ -1703,10 +1858,6 @@ const readyCapabilities = computed(() =>
   effectiveCapabilities.value.filter((c) => c.effective === EFFECTIVE_STATE.READY)
 )
 
-const pendingCapabilities = computed(() =>
-  effectiveCapabilities.value.filter((c) => c.effective !== EFFECTIVE_STATE.READY)
-)
-
 function chipLabel(cap) {
   return cap.id === 'web_search' ? 'Web 搜索 · 自动' : cap.label
 }
@@ -1745,10 +1896,10 @@ function capStateTagText(cap) {
   return '未建立'
 }
 
-/* ── 启动页右侧「本会话上下文」：能力三态的行级投影（v2）──
- * 只做展示映射，能力真相仍在 nexusCapabilities.js：
- *   ok   = 已生效 / half = 已连接·未生效 或 降级·未知 / no = 未建立
- * 三态文案沿用 P2-8 统一口径（capStateTagText）。 */
+/* ── 启动页右侧「本会话上下文」：只列本轮真正生效（ready 态）的能力 ──
+ * wired/unwired 的开发中说明已按 2026-09-08 决定从界面移除：
+ * 未接入的能力不显示行（缺席 ≠ 谎称已生效），降级/未知仍如实标出。
+ * 能力真相仍在 nexusCapabilities.js，这里只做展示映射。 */
 const CONTEXT_CAP_ROWS = [
   { id: 'web_search', k: 'Web 检索' },
   { id: 'cs_knowledge', k: 'CS 知识库' },
@@ -1764,15 +1915,15 @@ function capTagClass(cap) {
 }
 
 const contextRows = computed(() =>
-  CONTEXT_CAP_ROWS.map((r) => {
-    const cap = effectiveCapabilities.value.find((c) => c.id === r.id)
-    return {
+  CONTEXT_CAP_ROWS
+    .map((r) => ({ r, cap: effectiveCapabilities.value.find((c) => c.id === r.id) }))
+    .filter(({ cap }) => cap && cap.state === CAPABILITY_STATE.READY)
+    .map(({ r, cap }) => ({
       k: r.k,
-      v: cap ? capStateTagText(cap) : '未建立',
+      v: capStateTagText(cap),
       cls: capTagClass(cap),
       hint: capHint(r.id)
-    }
-  })
+    }))
 )
 
 const capIconMap = {
@@ -1839,6 +1990,20 @@ const sessionSources = computed(() => {
         }
       } else if (evt?.name === 'search_cs_knowledge') {
         for (const item of itemsOf(evt) || []) {
+          // CR5：语料块（title/reference_id）与精编概念（name）分开收录，
+          // 回源身份保留，展示截断不删除引用入口。
+          if (item?.result_type === 'corpus_chunk' || item?.chunk_id) {
+            if (!item?.title) continue
+            csKb.push({
+              name: item.title,
+              source: item.source_kind || '',
+              course: '',
+              reference_id: item.reference_id || '',
+              chunk_id: item.chunk_id || '',
+              license: item.license || '',
+            })
+            continue
+          }
           if (!item?.name) continue
           csKb.push({ name: item.name, source: item.source || '', course: item.course || '' })
         }
@@ -2825,36 +2990,25 @@ const emptySuggestions = computed(() =>
             <ChevronDown :size="15" class="nx-chevron" :class="{ 'is-open': modeDropdownOpen }" />
           </SfxButton>
 
-          <!-- 模式即工具白名单：切换在菜单里直接可见"能做什么"的变化 -->
+          <!-- 模式下拉（ChatGPT 式，2026-09-08 家良拍板二次简化）：只留 名称 + 一句话差别 + ✓。
+               工具白名单不进菜单——真实白名单由服务端在执行时裁决，菜单里铺 pill 只制造噪音；
+               一句话描述已在切换前把「它做什么」说清。 -->
           <div v-if="modeDropdownOpen" class="nx-dropdown-menu">
-            <div class="nx-dropdown-head">切换工作模式</div>
             <div
               v-for="(cfg, key) in NEXUS_MODE_CONFIG"
               :key="key"
               class="nx-dropdown-item"
-              :class="{ 'is-active': activeMode === key }"
               role="button"
               tabindex="0"
               @click="switchMode(key)"
               @keydown.enter.prevent="switchMode(key)"
               @keydown.space.prevent="switchMode(key)"
             >
-              <div class="nx-dropdown-item-icon">
-                <component :is="key === NEXUS_MODES.RESEARCH ? Microscope : Sparkles" :size="17" />
+              <div class="nx-dropdown-item-title">
+                {{ cfg.label }}
+                <Check v-if="activeMode === key" :size="14" class="nx-check" />
               </div>
-              <div class="nx-dropdown-item-content">
-                <div class="nx-dropdown-item-title">
-                  {{ cfg.label }}
-                  <Check v-if="activeMode === key" :size="14" class="nx-check" />
-                </div>
-                <div class="nx-dropdown-item-desc">{{ cfg.desc }}</div>
-                <div class="nx-dropdown-tools">
-                  <span class="nx-tools-label">可用工具</span>
-                  <span v-for="t in cfg.tools" :key="t" class="nx-tool-pill">
-                    {{ formatToolDisplayName(t) }}
-                  </span>
-                </div>
-              </div>
+              <div class="nx-dropdown-item-desc">{{ cfg.desc }}</div>
             </div>
           </div>
         </div>
@@ -2929,7 +3083,9 @@ const emptySuggestions = computed(() =>
         @add-note="addRunNote"
       />
 
-      <!-- Context Chips：首屏只保留 ready 能力 + 课程；其余收进「待接入」popover -->
+      <!-- Context Chips：只展示 ready 能力。
+           工具已配齐，wired/unwired 的开发中说明不再上界面（2026-09-08 家良拍板）；
+           能力接线真相仍由 nexusCapabilities.js 单源驱动，chips 自动跟随。 -->
       <!-- Context Chips：只放「本轮回答真正会用到的能力」。
            课程绑定入口已下沉——首屏在启动页引导条，对话中在右栏「上下文」面板
            （UX 评审 P1-4）。它属于低频设置，不该在每轮对话的顶部占一个 chip。 -->
@@ -2944,34 +3100,6 @@ const emptySuggestions = computed(() =>
             <component :is="capIconMap[cap.icon]" :size="13" class="nx-chip-icon" />
             <span>{{ chipLabel(cap) }}</span>
           </span>
-
-          <div
-            class="nx-chip is-pending nx-flyout"
-            role="button"
-            tabindex="0"
-            :aria-expanded="pendingOpen"
-            title="查看未接入能力"
-            @click.stop="pendingOpen = !pendingOpen"
-            @keydown.enter.stop.prevent="pendingOpen = !pendingOpen"
-            @keydown.space.stop.prevent="pendingOpen = !pendingOpen"
-          >
-            <span class="nx-chip-pending-mark" aria-hidden="true">◇</span>
-            <span>{{ pendingCapabilities.length }} 项待接入</span>
-            <ChevronDown :size="12" class="nx-chip-caret" :class="{ 'is-open': pendingOpen }" />
-            <div v-if="pendingOpen" class="nx-popover">
-              <div class="nx-popover-head">以下能力尚未接入运行时，接线后此界面自动生效</div>
-              <div v-for="cap in pendingCapabilities" :key="cap.id" class="nx-popover-cap">
-                <component :is="capIconMap[cap.icon]" :size="14" class="nx-popover-cap-icon" />
-                <div class="nx-popover-cap-body">
-                  <div class="nx-popover-cap-name">
-                    {{ cap.label }}
-                    <span class="nx-cap-tag" :class="cap.state">{{ capStateTagText(cap) }}</span>
-                  </div>
-                  <div class="nx-popover-cap-hint">{{ capHint(cap.id) }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -3352,6 +3480,16 @@ const emptySuggestions = computed(() =>
                   >
                     取消
                   </SfxButton>
+                  <SfxButton
+                    v-if="reproCancellable(turn.reproRun) && (turn.reproRun.runId || turn.reproRun.run_id)"
+                    variant="tertiary"
+                    size="sm"
+                    title="Nexus 请求取消本次运行时，你在此签发一次性授权（5 分钟内有效）"
+                    :loading="turn.reproRun.granting"
+                    @click.stop="grantCancelFor(turn)"
+                  >
+                    授权取消
+                  </SfxButton>
                   <!-- v6：会话内这张卡只做「引用条」——看清状态、能取消；
                         要看全量（日志/步骤/指标）去实验工作台，那里才是主舞台。 -->
                   <SfxButton
@@ -3689,7 +3827,8 @@ const emptySuggestions = computed(() =>
                 附件
               </SfxButton>
               <!-- T5 Ask/Auto：只在 Research 展示；General 隐藏且不发送。
-                   两者同样自主研究与文档输出，唯一差别是实验沙箱执行权限。
+                   下拉式（对齐 ChatGPT 模式切换的形态）：收起只占当前模式名，
+                   展开后每项一句话说清差别——模式差异在切换前就看得见。
                    同一会话的研究对话与询问浮窗共享 execMode；切 Ask 不取消已启动 run。 -->
               <div
                 v-if="isResearchMode"
@@ -3798,6 +3937,7 @@ const emptySuggestions = computed(() =>
          开合状态按设备持久化（page-design.md §3.4）。 -->
     <div v-if="!isTablet && !isMobileOrSmall" class="nx-detail-zone">
       <!-- 3.1 overlay 抽屉：覆盖主工作区右侧，不挤压主内容宽度 -->
+      <Transition name="nx-drawer">
       <section v-if="detailDrawerOpen" class="nx-detail-drawer">
         <header class="nx-dd-head">
           <div class="nx-dd-bar">
@@ -3976,6 +4116,7 @@ const emptySuggestions = computed(() =>
         </div>
         </div>
       </section>
+      </Transition>
 
       <!-- 3.2 48px 图标轨：常驻，点击切换面板 / 再点收起 -->
       <aside class="nx-detail-rail" aria-label="回应区面板">
@@ -4078,6 +4219,51 @@ const emptySuggestions = computed(() =>
         </div>
       </div>
     </SfxDrawer>
+
+    <!-- NX-LB2 提案编辑器：基于已完成的运行改参数 → 新提案 → 送审。
+         只列服务端白名单参数（parameters.schema），前端先校验，服务端兜底。 -->
+    <Transition name="nx-prop-fade">
+    <div v-if="proposalDraft" class="nx-prop-backdrop" @click.self="closeProposalEditor">
+      <div class="nx-prop" role="dialog" aria-modal="true" aria-label="调整方案再运行">
+        <div class="nx-prop-head">
+          <span class="nx-prop-title">调整方案 · {{ proposalDraft.presetName }}</span>
+          <span class="nx-prop-sub">基于 {{ proposalDraft.runName }}</span>
+        </div>
+        <div class="nx-prop-body">
+          <div v-for="(spec, name) in proposalDraft.schema" :key="name" class="nx-prop-row">
+            <div class="nx-prop-k">
+              <span class="nx-prop-name">{{ name }}</span>
+              <span class="nx-prop-help">{{ spec.help }}</span>
+            </div>
+            <div class="nx-prop-ctl">
+              <input
+                v-model="proposalDraft.values[name]"
+                class="nx-prop-input"
+                type="number"
+                :min="spec.min"
+                :max="spec.max"
+                :step="spec.type === 'float' ? '0.1' : '1'"
+              />
+              <span class="nx-prop-base">基线 {{ proposalDraft.baseline[name] }}</span>
+            </div>
+            <span v-if="paramChanged(name)" class="nx-prop-changed">改</span>
+          </div>
+          <p v-if="metricSensitiveChanged" class="nx-prop-warn">
+            修改了影响指标的参数：无已验证基线时，本次结果只出探索性结论，不宣称复现通过。
+          </p>
+          <p v-if="proposalDraft.error" class="nx-prop-error">{{ proposalDraft.error }}</p>
+        </div>
+        <div class="nx-prop-foot">
+          <span class="nx-prop-count">{{ proposalChangedCount ? '改动 ' + proposalChangedCount + ' 项' : '未改动' }}</span>
+          <span class="nx-prop-spacer" />
+          <SfxButton variant="secondary" size="sm" @click="closeProposalEditor">取消</SfxButton>
+          <SfxButton variant="primary" size="sm" :loading="proposalDraft.submitting" @click="submitProposal">
+            生成提案并送审
+          </SfxButton>
+        </div>
+      </div>
+    </div>
+    </Transition>
   </div>
   <div v-else class="nx-perm-denied">
     <AlertCircle :size="30" />
@@ -4642,7 +4828,10 @@ const emptySuggestions = computed(() =>
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  transition: background 0.14s ease, color 0.14s ease;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .nx-vs-btn:hover {
@@ -4855,7 +5044,7 @@ const emptySuggestions = computed(() =>
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  width: 320px;
+  width: 264px;
   background: var(--surface-panel);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
@@ -4864,16 +5053,8 @@ const emptySuggestions = computed(() =>
   z-index: 60;
 }
 
-.nx-dropdown-head {
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-  padding: var(--space-1) var(--space-2) var(--space-2);
-}
-
 .nx-dropdown-item {
-  display: flex;
-  gap: var(--space-3);
-  padding: var(--space-3);
+  padding: 9px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out);
@@ -4883,24 +5064,9 @@ const emptySuggestions = computed(() =>
   background: var(--surface-cool);
 }
 
-.nx-dropdown-item.is-active {
-  background: var(--nexus-accent-soft);
-}
-
-.nx-dropdown-item-icon {
-  color: var(--ink-700);
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.nx-dropdown-item-content {
-  flex: 1;
-  min-width: 0;
-}
-
 .nx-dropdown-item-title {
   font-weight: 600;
-  font-size: var(--ui-md-size);
+  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4919,25 +5085,6 @@ const emptySuggestions = computed(() =>
   line-height: var(--caption-line);
 }
 
-.nx-dropdown-tools {
-  margin-top: 6px;
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-}
-
-.nx-tools-label {
-  margin-right: 2px;
-}
-
-.nx-tool-pill {
-  background: var(--surface-soft);
-  padding: 1px 6px;
-  border-radius: var(--radius-xs);
-}
 
 /* ── Context Chips 行 ── */
 .nx-context-bar {
@@ -4966,6 +5113,10 @@ const emptySuggestions = computed(() =>
   color: var(--text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 /* ready：唯一允许"激活观感"的能力状态 */
@@ -4975,113 +5126,9 @@ const emptySuggestions = computed(() =>
 }
 
 /* 待接入聚合入口：虚线 + 菱形标记，中性不报警 */
-.nx-chip.is-pending {
-  border-style: dashed;
-  color: var(--text-secondary);
-  cursor: pointer;
-  background: transparent;
-}
-
-.nx-chip.is-pending:hover {
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-}
-
-.nx-chip-pending-mark {
-  color: var(--text-muted);
-  font-size: var(--caption-size);
-}
-
-.nx-chip-caret {
-  color: var(--text-muted);
-  transition: transform var(--duration-fast) var(--ease-out);
-}
-
-.nx-chip-caret.is-open {
-  transform: rotate(180deg);
-}
 
 .nx-chip-icon {
   color: var(--text-muted);
-}
-
-/* 待接入 popover */
-.nx-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  width: 312px;
-  background: var(--surface-panel);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  padding: var(--space-2);
-  z-index: 60;
-}
-
-.nx-popover-head {
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-  padding: var(--space-1) var(--space-2) var(--space-2);
-  line-height: var(--caption-line);
-}
-
-.nx-popover-cap {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border-radius: var(--radius-sm);
-}
-
-.nx-popover-cap:hover {
-  background: var(--surface-cool);
-}
-
-.nx-popover-cap-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.nx-popover-cap-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.nx-popover-cap-name {
-  font-size: var(--ui-sm-size);
-  font-weight: 500;
-  color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.nx-cap-tag {
-  font-size: var(--caption-size);
-  font-weight: 450;
-  padding: 0 6px;
-  height: 18px;
-  line-height: 18px;
-  border-radius: var(--radius-xs);
-}
-
-.nx-cap-tag.wired {
-  background: var(--amber-100);
-  color: var(--amber-700);
-}
-
-.nx-cap-tag.unwired {
-  background: var(--surface-soft);
-  color: var(--text-muted);
-}
-
-.nx-popover-cap-hint {
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-  margin-top: 2px;
-  line-height: var(--caption-line);
 }
 
 /* ── 状态条（演示说明 / 运行时不可达） ── */
@@ -6424,18 +6471,20 @@ const emptySuggestions = computed(() =>
   /* 对齐设计板 Board B：14px 圆角 + shadow-md 级投影，浮层感要出来 */
   border-radius: 14px 0 0 14px;
   box-shadow: -12px 0 32px rgba(16, 26, 49, 0.1);
-  animation: nx-drawer-in var(--duration-normal) var(--ease-out);
 }
 
-@keyframes nx-drawer-in {
-  from {
-    opacity: 0;
-    transform: translateX(16px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+/* 抽屉进出场：--duration-normal（design.md §4 抽屉/面板）。
+   进场同时补退场——此前只有 keyframes 进场，关掉是瞬间消失。 */
+.nx-drawer-enter-active,
+.nx-drawer-leave-active {
+  transition:
+    opacity var(--duration-normal) var(--ease-out),
+    transform var(--duration-normal) var(--ease-out);
+}
+.nx-drawer-enter-from,
+.nx-drawer-leave-to {
+  opacity: 0;
+  transform: translateX(16px);
 }
 
 .nx-dd-head {
@@ -6544,6 +6593,9 @@ const emptySuggestions = computed(() =>
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   flex-shrink: 0;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 /* 3.2 图标轨 */
@@ -6569,6 +6621,9 @@ const emptySuggestions = computed(() =>
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   position: relative;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .nx-dr-item:hover {
@@ -6917,6 +6972,9 @@ const emptySuggestions = computed(() =>
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
 }
 
 .nx-course-picker-item:hover {
@@ -6997,4 +7055,125 @@ const emptySuggestions = computed(() =>
   justify-content: flex-end;
   gap: var(--space-2);
 }
+
+/* ══════════ NX-LB2 提案编辑器（调整方案再运行） ══════════ */
+.nx-prop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(18, 24, 38, 0.44);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+}
+.nx-prop {
+  width: 560px;
+  max-width: 100%;
+  max-height: min(72vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.nx-prop-head {
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.nx-prop-title { font-size: 14px; font-weight: 600; color: var(--ink-900); }
+.nx-prop-sub { font-size: var(--caption-size); color: var(--text-muted); }
+.nx-prop-body { flex: 1; overflow-y: auto; padding: 6px 18px 12px; }
+.nx-prop-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.nx-prop-row:last-of-type { border-bottom: 0; }
+.nx-prop-k { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.nx-prop-name { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.nx-prop-help { font-size: var(--caption-size); color: var(--text-muted); }
+.nx-prop-ctl { display: flex; align-items: center; gap: 8px; }
+.nx-prop-input {
+  width: 88px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  background: var(--surface-canvas);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.nx-prop-input:focus { outline: none; border-color: var(--border-strong); }
+.nx-prop-base {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.nx-prop-changed {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-900);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
+}
+.nx-prop-warn,
+.nx-prop-error { margin-top: 10px; font-size: 11.5px; line-height: 1.7; }
+.nx-prop-warn { color: var(--text-secondary); }
+.nx-prop-error { color: var(--red-700); }
+.nx-prop-foot {
+  padding: 12px 18px 14px;
+  border-top: 1px solid var(--border-default);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.nx-prop-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+.nx-prop-spacer { flex: 1; }
+/* ══════════ 切换动画 ══════════
+ * 全部只动 opacity / transform，不碰布局属性（避免重排引起的位置抖动）。
+ * 时长与缓动一律取 design.md §4 令牌：菜单 120ms、模态与抽屉 200ms。 */
+
+/* 执行模式菜单：向上淡入，--duration-fast */
+.nx-exec-fade-enter-active,
+.nx-exec-fade-leave-active {
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+.nx-exec-fade-enter-from,
+.nx-exec-fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+/* 提案编辑器：--duration-normal；面板轻微上浮，遮罩纯淡入 */
+.nx-prop-fade-enter-active,
+.nx-prop-fade-leave-active {
+  transition: opacity var(--duration-normal) var(--ease-out);
+}
+.nx-prop-fade-enter-from,
+.nx-prop-fade-leave-to { opacity: 0; }
+.nx-prop-fade-enter-active .nx-prop,
+.nx-prop-fade-leave-active .nx-prop {
+  transition: transform var(--duration-normal) var(--ease-out);
+}
+.nx-prop-fade-enter-from .nx-prop,
+.nx-prop-fade-leave-to .nx-prop { transform: translateY(8px); }
 </style>
