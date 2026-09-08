@@ -414,3 +414,58 @@ Runtime 日志零错误。常驻链路（审批→调度→Adapter→控制→�
   任务容器零残留（均为合成 run，无真实数据）。
 - T6 在此关闭。本批（T0–T6）完成一次确认自主实验闭环：提案→审批→执行→
   修复→恢复→报告，端到端可跑。转 T7（真实能力验收）与 SR6（正式输出）。
+
+## T7（2026-09-09）：执行前核验门＋License 持久化＋真实仓库只读走读（未提交）
+
+新增 `nexus/src/nexus/license_policy.py`（纯函数门：修订 SHA 固定＋
+SPDX 白名单 MIT/Apache-2.0/BSD/ISC/CC0/Unlicense/PSF；未固定→
+REVISION_NOT_PINNED，未核验→LICENSE_UNVERIFIED，白名单外→
+LICENSE_NOT_ALLOWED）；新增 `nexus/tests/test_t7_license_gate.py`（8 项）。
+修改 `proposals.py`（license 列持久化＋换仓重置 unknown＋冻结携带）、
+`approvals.py`（frozen_license 列＋核销冻结）、`experiment_intake.py`
+（核验结论落盘）、`tools/reproduction.py`＋`experiment_agent.py`
+（核销后＋图启动前双门，fail-closed；图首消息带 pinned checkout 指令）、
+`experiment_report.py`（报告取持久化 License，旧行回退 unknown）、
+`main.py`（T7 三码→409）。`uv.lock` 零改动。
+
+- 旧测试适配（门收紧的诚实更新）：`test_autonomous_approval`
+  （_scope 修订固定＋MIT verified；HTTP 直建无结论→Auto 409
+  LICENSE_UNVERIFIED，已核验提案经模块建＋HTTP 审批/执行 200 幂等）、
+  `test_experiment_agent`（脚本两处 scope 修订固定＋MIT verified）。
+- 回归：nexus 全套件 **226 passed**（218＋T7 新增 8）；
+  前端契约 94/95（唯一失败仍为 CourseLayout 他线旧断言，与本批无关）；
+  Backend 未动（跨环境 HTTP 代理，无直接 import）。
+- 真实仓库只读走读（生产 `GitHubReader`，真实网络，只读 GET，无执行，
+  无写入/部署；2026-09-09 本地实证）：
+  - A `karpathy/micrograd`：License MIT verified，
+    revision `7bc720e951fe422b8f8814aa5aa1b64121d26b4c`（master，
+    与 GitHub branches API 一致），env `setup.py`，README 2048 字节
+    （截断上限）；`prepare` 建自主提案 success（mode smoke，
+    revision_pinned true，missing_inputs []），门 GATE_OK。
+    选择依据：tiny 标量 autograd（CPU 纯 Python，README 示例无 torch
+    可跑，`pip install micrograd`＋`from micrograd.engine import Value`），
+    非 nanoGPT 别名，走 README/setup.py 路线。
+  - B `pallets/flask`：License BSD-3-Clause verified，
+    revision `d318b683471101618febed18996405ad26462110`（main，
+    与 branches API 一致），env `pyproject.toml`（flit_core，
+    与 A 不同环境入口），README 1639 字节；`prepare`＋门同样 GATE_OK。
+    选择依据：BSD-3-Clause CPU Web 框架，pyproject 声明，
+    smoke 经 import＋test client，与 A 形成双路线对照。
+- Ask/Auto 门（代码＋单测层面）：Ask 直调/携票据仍 403
+  EXPERIMENT_EXECUTION_DISABLED 零提交（旧测试保持）；Auto＋已核验
+  提案建 run 成功，报告含持久化 MIT（`test_verified_proposal_…`
+  实证先写产物后回收顺序不变）；HTTP 直建（未核验）Auto 409，
+  不建 run——“一次确认”语义不变，确认的是已核验提案。
+
+未验证项（需部署授权后另行线上实证，不在本批本地冒充）：
+- 真实容器＋脚本化模型的合成仓库修复全链（T7-A/B：requires
+  requirements 缺包/路径错误合成 fixture＋真容器；fixture 只放
+  `deploy/repro-runtime/tests/fixtures/`，本次未建）。
+- 真实模型（DeepSeek）自主读错修复（预写修复命令不算自主性实证）＋
+  真实用户 Ask/Auto UI 全链（提供材料→Auto 一次确认→Console→刷新→
+  下载报告/配方，确认次数记录；失败链/资源上限/跨用户拒绝）。
+- repo2docker 构建路线仍 fail-closed（`ROUTE_NOT_DELIVERED`，未交付，
+  不等同基础镜像安装；本次 B 选 pyproject 但走 base_container，
+  repo2docker 未翻转）。
+- 线上真实 PG 的 license/frozen_license 列补齐（lifespan ensure 已备，
+  待部署后看日志＋冒烟）；正式 Word/LaTeX 与干净 B 仍归 SR6。

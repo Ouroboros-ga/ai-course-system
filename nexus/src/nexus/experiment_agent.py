@@ -338,6 +338,34 @@ async def _execute_under_lock(
     if run["status"] != "running":
         return {"status": run["status"], "run_id": run_id,
                 "attempt_no": run["attempt_no"], "deduped": True}
+    # T7 执行前核验门（纵深防御：执行核已验，此处再验当前提案快照；
+    # 旧提案无 License/未固定同样拦，fail-closed 落盘，不启动沙箱）。
+    _gate_scope: dict[str, Any] = {}
+    _gate_license: dict[str, Any] = {"spdx": "", "status": "unknown"}
+    _gate_repo_url = ""
+    _gate_revision = ""
+    try:
+        from nexus import license_policy as license_policy_module
+        from nexus import proposals as proposals_module
+
+        _proposal = proposals_module.get_proposal(run.get("proposal_id", ""))
+        if _proposal is not None and _proposal.get("kind") == "autonomous_experiment":
+            _gate_scope = dict(_proposal.get("scope") or {})
+            _gate_license = dict(_proposal.get("license") or _gate_license)
+            _gate_repo_url = str(_gate_scope.get("repo_url") or "")
+            _gate_revision = str(_gate_scope.get("repo_revision") or "")
+        gate = license_policy_module.verify_execution_gate(
+            scope=_gate_scope, license_info=_gate_license)
+        if not gate["ok"]:
+            runs_module.set_status(run_id, "failed", f"{gate['code']}: {gate['detail']}")
+            return {"status": "failed", "run_id": run_id, "code": gate["code"]}
+    except Exception as error:  # noqa: BLE001 - 门自身异常 fail-closed
+        if isinstance(error, Exception) and "RUN_" in type(error).__name__:
+            raise
+        # verify 本身纯函数不抛；此处仅防提案读取异常。
+        logger.warning("execution gate check failed for %s: %s", run_id, type(error).__name__)
+        runs_module.set_status(run_id, "failed", f"GATE_UNAVAILABLE: {type(error).__name__}")
+        return {"status": "failed", "run_id": run_id, "code": "GATE_UNAVAILABLE"}
     active_backend = backend
     if active_backend is None:
         try:
@@ -377,6 +405,11 @@ async def _execute_under_lock(
 
         proposal = proposals_module.get_proposal(run.get("proposal_id", ""))
         scope_objective = str((proposal or {}).get("objective", ""))
+        # T7 门已验，此处复用门快照的仓库/修订（提案不可读则沿用门值）。
+        if proposal is not None and proposal.get("kind") == "autonomous_experiment":
+            _gate_scope = dict(proposal.get("scope") or _gate_scope)
+            _gate_repo_url = str(_gate_scope.get("repo_url") or _gate_repo_url)
+            _gate_revision = str(_gate_scope.get("repo_revision") or _gate_revision)
     except Exception:  # noqa: BLE001 - 提案不可读不阻断（scope 已冻结在 run）
         scope_objective = ""
     last_exit: int | None = None
@@ -389,9 +422,17 @@ async def _execute_under_lock(
     file_summaries: dict[str, str] = {}
     used_operation_ids: set[str] = set()
     try:
+        pin_line = ""
+        if _gate_repo_url and _gate_revision:
+            pin_line = (
+                f"仓库 {_gate_repo_url} 必须 checkout 到 commit {_gate_revision} "
+                "（已固定的配方修订；不得用分支 HEAD 替代，执行后以 git rev-parse "
+                "核对，配方按此修订记录）。"
+            )
         async for _stream_mode, payload in agent.astream(
                 {"messages": [{"role": "user", "content": (
                     f"实验目标：{scope_objective or '按批准 scope 执行'}。"
+                    f"{pin_line}"
                     "先看 README 与环境声明，然后安装、试跑，失败就地修复继续。")}]} ,
                 {"configurable": {"thread_id": thread_id}},
                 stream_mode=["updates"]):

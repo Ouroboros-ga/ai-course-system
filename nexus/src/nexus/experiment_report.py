@@ -286,10 +286,15 @@ async def generate_run_report(
     if proposal is None or proposal.get("kind") != "autonomous_experiment":
         raise ReportError("RUN_PROPOSAL_UNAVAILABLE", "绑定的自主提案不可读，无法生成报告")
     scope = proposal.get("scope") or {}
+    # T7：License 取提案持久化结论（intake 核验快照）；旧行缺失回退 unknown
+    # ＋备注（不伪装 verified，执行前核验门已在执行侧拦过）。
+    persisted_license = proposal.get("license")
+    if not isinstance(persisted_license, dict) or not persisted_license:
+        persisted_license = {"spdx": "", "status": "unknown",
+                      "note": "提案未持久化 License 结论；复现引用前需核验允许复现用途"}
     report = build_experiment_report(
         run=run, scope=scope,
-        license_info={"spdx": "", "status": "unknown",
-                      "note": "提案未持久化 License 结论；复现引用前需核验允许复现用途"},
+        license_info=persisted_license,
         image=str((scope.get("resources") or {}).get("image") or ""),
         image_digest=str(scope.get("image_digest") or ""))
     markdown = render_report_markdown(report)

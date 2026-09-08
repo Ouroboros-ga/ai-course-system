@@ -178,11 +178,12 @@ class _Flow:
             user_id=self.user_id, session_id=self.session_id, preset=None,
             kind="autonomous_experiment", scope={
                 "objective": "配置并试跑", "repo_url": "https://github.com/example/r",
-                "repo_revision": "abc", "source_refs": [], "data_refs": [],
+                "repo_revision": "deadbeef1234567890", "source_refs": [], "data_refs": [],
                 "network_profile": "pypi-allowed",
                 "resources": {"cpu": 1.0, "memory_mb": 2048, "disk_mb": 5120,
                               "wall_time_s": 1800},
-                "mode": "smoke", "allow_environment_repair": True})
+                "mode": "smoke", "allow_environment_repair": True},
+            license_info={"spdx": "MIT", "status": "verified"})
         req = proposals_module.request_approval_for_proposal(
             proposal["proposal_id"], user_id=self.user_id,
             expected_version=proposal["version"])
@@ -414,11 +415,12 @@ async def test_bound_run_records_file_tool_attempts():
         user_id="u-t4", session_id="s-t4", preset=None,
         kind="autonomous_experiment", scope={
             "objective": "配置并试跑", "repo_url": "https://github.com/example/r",
-            "repo_revision": "abc", "source_refs": [], "data_refs": [],
+            "repo_revision": "deadbeef1234567890", "source_refs": [], "data_refs": [],
             "network_profile": "pypi-allowed",
             "resources": {"cpu": 1.0, "memory_mb": 2048, "disk_mb": 5120,
                           "wall_time_s": 1800},
-            "mode": "smoke", "allow_environment_repair": True})
+            "mode": "smoke", "allow_environment_repair": True},
+        license_info={"spdx": "MIT", "status": "verified"})
     req = proposals_module.request_approval_for_proposal(
         proposal["proposal_id"], user_id="u-t4", expected_version=1)
     aid = req["approval"]["approval_id"]

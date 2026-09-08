@@ -295,6 +295,9 @@ def budget_for_proposal(preset: dict[str, Any]) -> dict[str, Any]:
 
 
 def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
+    license_info = row.get("license")
+    if not isinstance(license_info, dict):
+        license_info = {"spdx": "", "status": "unknown"}
     out = {
         "proposal_id": row["proposal_id"],
         "user_id": row["user_id"],
@@ -316,6 +319,11 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         # T2：自主 scope 与授权 hash（preset 行缺省空；plan_hash 即 scope_hash）。
         "scope": row.get("scope", {}),
         "scope_hash": row.get("scope_hash", "") or "",
+        # T7：License 持久化（intake 核验结论；执行前核验门消费，不入 hash）。
+        "license": {
+            "spdx": str(license_info.get("spdx") or ""),
+            "status": str(license_info.get("status") or "unknown") or "unknown",
+        },
         "status": row["status"],
         "client_request_id": row.get("client_request_id", ""),
         "history": row.get("history", []),
@@ -338,16 +346,18 @@ def _row_from_pg(found: Any) -> dict[str, Any]:
     keys = ("proposal_id", "user_id", "session_id", "version", "kind", "preset_id",
             "parent_run_id", "objective", "parameters", "environment",
             "repo_revision", "revision_status", "data", "steps", "budget",
-            "metric_policy", "plan_hash", "scope", "scope_hash", "status",
-            "client_request_id", "history", "created_at", "updated_at")
+            "metric_policy", "plan_hash", "scope", "scope_hash", "license",
+            "status", "client_request_id", "history", "created_at", "updated_at")
     row = dict(zip(keys, found))
     for k in ("parameters", "environment", "data", "steps", "budget", "metric_policy",
-              "scope", "history"):
+              "scope", "history", "license"):
         row[k] = _loads(row[k])
     if not isinstance(row["history"], list):
         row["history"] = []
     if not isinstance(row.get("scope"), dict):
         row["scope"] = {}
+    if not isinstance(row.get("license"), dict):
+        row["license"] = {"spdx": "", "status": "unknown"}
     # 老行（迁移前写入）无 kind 列值 → 归一 preset。
     if row.get("kind") not in PROPOSAL_KINDS:
         row["kind"] = PROPOSAL_KIND_PRESET
@@ -376,6 +386,7 @@ CREATE TABLE IF NOT EXISTS {schema}.nexus_proposals (
     plan_hash TEXT NOT NULL DEFAULT '',
     scope JSONB NOT NULL DEFAULT '{{}}',
     scope_hash TEXT NOT NULL DEFAULT '',
+    license JSONB NOT NULL DEFAULT '{{}}',
     status TEXT NOT NULL DEFAULT 'draft',
     client_request_id TEXT NOT NULL DEFAULT '',
     history JSONB NOT NULL DEFAULT '[]',
@@ -412,6 +423,8 @@ def ensure_proposals_table(dsn: str, schema: str) -> None:
                 ("kind", "TEXT NOT NULL DEFAULT 'preset'"),
                 ("scope", "JSONB NOT NULL DEFAULT '{}'"),
                 ("scope_hash", "TEXT NOT NULL DEFAULT ''"),
+                # T7：License 持久化列（老表补齐，可重入；旧行读作 unknown）。
+                ("license", "JSONB NOT NULL DEFAULT '{}'"),
             ):
                 cur.execute(
                     f"ALTER TABLE {schema}.nexus_proposals "
@@ -459,18 +472,31 @@ def _history_entry(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_license_info(value: Any) -> dict[str, str]:
+    """归一化 License 持久化形状（spdx/status；缺失→unknown）。"""
+    if not isinstance(value, dict):
+        return {"spdx": "", "status": "unknown"}
+    return {
+        "spdx": str(value.get("spdx") or ""),
+        "status": str(value.get("status") or "unknown") or "unknown",
+    }
+
+
 def create_proposal(
     *, user_id: str, session_id: str, preset: dict[str, Any] | None = None,
     parent_run: dict[str, Any] | None = None,
     objective: str = "", parameters: dict[str, Any] | None = None,
     data: dict[str, Any] | None = None, client_request_id: str = "",
     kind: str = PROPOSAL_KIND_PRESET, scope: dict[str, Any] | None = None,
+    license_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """建草案（不执行）。client_request_id 幂等：同用户重复请求返原草案。
 
     kind 缺省 preset（旧语义不变）；kind=autonomous_experiment 时消费
     ExperimentScope，不要求 preset（preset 须为 None），plan_hash 即
     scope_hash，steps 为空（实际命令写 attempt，不冻结初始命令）。
+    T7：自主提案可附 license_info（intake 核验结论），持久化供执行前
+    核验门消费；不入 scope_hash（授权范围不变，License 只做执行门）。
     """
     now = _now()
     kind = (kind or PROPOSAL_KIND_PRESET).strip()
@@ -508,6 +534,7 @@ def create_proposal(
             "plan_hash": scope_hash,
             "scope": normalized_scope,
             "scope_hash": scope_hash,
+            "license": _normalize_license_info(license_info),
             "status": "draft",
             "client_request_id": client_request_id,
             "history": [],
@@ -541,6 +568,7 @@ def create_proposal(
         "plan_hash": body["plan_hash"],
         "scope": {},
         "scope_hash": "",
+        "license": {"spdx": "", "status": "unknown"},
         "status": "draft",
         "client_request_id": client_request_id,
         "history": [],
@@ -570,9 +598,9 @@ def _insert_row(row: dict[str, Any]) -> None:
                         "(proposal_id, user_id, session_id, version, kind, preset_id, "
                         "parent_run_id, objective, parameters, environment, "
                         "repo_revision, revision_status, data, steps, budget, "
-                        "metric_policy, plan_hash, scope, scope_hash, status, "
+                        "metric_policy, plan_hash, scope, scope_hash, license, status, "
                         "client_request_id, history, created_at, updated_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (
                             row["proposal_id"], row["user_id"], row["session_id"],
                             row["version"], row["kind"], row["preset_id"],
@@ -587,6 +615,7 @@ def _insert_row(row: dict[str, Any]) -> None:
                             row["plan_hash"],
                             json.dumps(row.get("scope", {}), ensure_ascii=False),
                             row.get("scope_hash", ""),
+                            json.dumps(row.get("license", {}), ensure_ascii=False),
                             row["status"], row["client_request_id"],
                             json.dumps(row["history"], ensure_ascii=False),
                             row["created_at"], row["updated_at"],
@@ -602,8 +631,8 @@ _PROPOSAL_SELECT = (
     "proposal_id, user_id, session_id, version, kind, preset_id, "
     "parent_run_id, objective, parameters, environment, "
     "repo_revision, revision_status, data, steps, budget, "
-    "metric_policy, plan_hash, scope, scope_hash, status, client_request_id, "
-    "history, created_at, updated_at"
+    "metric_policy, plan_hash, scope, scope_hash, license, status, "
+    "client_request_id, history, created_at, updated_at"
 )
 
 
@@ -675,7 +704,7 @@ def _persist_row(row: dict[str, Any]) -> None:
                 cur.execute(
                     f"UPDATE {schema}.nexus_proposals SET version=%s, objective=%s, "
                     f"parameters=%s, steps=%s, metric_policy=%s, plan_hash=%s, "
-                    f"scope=%s, scope_hash=%s, "
+                    f"scope=%s, scope_hash=%s, license=%s, "
                     f"status=%s, history=%s, updated_at=%s WHERE proposal_id=%s",
                     (
                         row["version"], row["objective"],
@@ -685,6 +714,7 @@ def _persist_row(row: dict[str, Any]) -> None:
                         row["plan_hash"],
                         json.dumps(row.get("scope", {}), ensure_ascii=False),
                         row.get("scope_hash", ""),
+                        json.dumps(row.get("license", {}), ensure_ascii=False),
                         row["status"],
                         json.dumps(row["history"], ensure_ascii=False),
                         row["updated_at"],
@@ -721,11 +751,14 @@ def patch_proposal(
     proposal_id: str, *, user_id: str, expected_version: int,
     objective: str | None = None, parameters: dict[str, Any] | None = None,
     scope: dict[str, Any] | None = None,
+    license_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """改提案：版本乐观锁（冲突 409 类错误）；仅 draft 可改；改后旧批准自然失效。
 
     preset 提案：objective/parameters（全量语义，缺省回默认值）；
     自主提案：objective/scope（parameters 传非空拒绝，scope 重校验重算 hash）。
+    T7：自主提案可附 license_info（重核验结论）；换仓库未附新结论时重置为
+    unknown（fail-closed，执行门会拦），不沿用旧仓库结论。
     未传的键保持原值。返回 {"proposal": 行, "diff": 结构化差异}。
     """
     from nexus.tools.reproduction import REPRO_PRESETS
@@ -751,10 +784,18 @@ def patch_proposal(
             raise ProposalError("PROPOSAL_PARAM_UNKNOWN", "自主提案不支持 parameters")
         new_objective = current["objective"] if objective is None else objective
         new_scope = dict(current.get("scope") or {})
+        old_repo = str(new_scope.get("repo_url") or "")
         if scope is not None:
             merged = {**new_scope, **scope}
             new_scope = validate_autonomous_scope(merged)
         new_hash = scope_hash_for(new_scope)
+        # T7：License 跟随仓库（换仓未附新结论→重置 unknown，不沿用旧结论）。
+        if license_info is not None:
+            new_license = _normalize_license_info(license_info)
+        elif scope is not None and str(new_scope.get("repo_url") or "") != old_repo:
+            new_license = {"spdx": "", "status": "unknown"}
+        else:
+            new_license = _normalize_license_info(current.get("license"))
         updated = dict(current)
         updated.update({
             "version": int(current["version"]) + 1,
@@ -768,6 +809,7 @@ def patch_proposal(
             "plan_hash": new_hash,
             "scope": new_scope,
             "scope_hash": new_hash,
+            "license": new_license,
             "updated_at": _now(),
         })
         history = list(current.get("history") or [])
@@ -942,6 +984,7 @@ def request_approval_for_proposal(
                     "scope_hash": row["scope_hash"],
                     "frozen_steps": [],
                     "frozen_scope": dict(row.get("scope") or {}),
+                    "frozen_license": dict(row.get("license") or {}),
                 },
             )
         except Exception as error:  # noqa: BLE001
@@ -1036,7 +1079,7 @@ def list_preset_projections() -> list[dict[str, Any]]:
 def public_proposal_view(row: dict[str, Any] | None) -> dict[str, Any] | None:
     """提案公开投影：完整方案＋校验结果（供浮窗/审阅展示，无内部令牌）。
 
-    自主提案额外带 kind/scope/scope_hash（审批卡本身不展示 hash，见
+    自主提案额外带 kind/scope/scope_hash/license（审批卡本身不展示 hash，见
     工具 _public_approval 的自主卡片投影）。
     """
     if row is None:
@@ -1064,4 +1107,5 @@ def public_proposal_view(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if view["kind"] == PROPOSAL_KIND_AUTONOMOUS:
         view["scope"] = row.get("scope", {})
         view["scope_hash"] = row.get("scope_hash", "")
+        view["license"] = row.get("license", {"spdx": "", "status": "unknown"})
     return view

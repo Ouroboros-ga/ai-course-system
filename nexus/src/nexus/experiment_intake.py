@@ -316,7 +316,8 @@ async def prepare(
     try:
         row = proposals_module.create_proposal(
             user_id=user_id or "", session_id=session_id or "",
-            preset=None, kind="autonomous_experiment", scope=scope)
+            preset=None, kind="autonomous_experiment", scope=scope,
+            license_info=license_info)
     except proposals_module.ProposalError as error:
         return {
             "status": "rejected", "code": error.code, "detail": str(error),

@@ -62,7 +62,7 @@ def _scope(mode="smoke"):
     return {
         "objective": "配置环境并试跑",
         "repo_url": "https://github.com/example/repo-a",
-        "repo_revision": "abc1234",
+        "repo_revision": "abc1234def5678",
         "source_refs": ["https://arxiv.org/abs/1234.5678"],
         "data_refs": ["synthetic-fixture"],
         "network_profile": "pypi-allowed",
@@ -71,6 +71,11 @@ def _scope(mode="smoke"):
         "mode": mode,
         "allow_environment_repair": True,
     }
+
+
+def _verified_license():
+    """T7：执行门要求已核验＋白名单 License（旧测试补齐，不改门语义）。"""
+    return {"spdx": "MIT", "status": "verified"}
 
 
 class _ApprovalFlow:
@@ -86,6 +91,7 @@ class _ApprovalFlow:
         proposal = proposals_module.create_proposal(
             user_id=self.user_id, session_id=self.session_id,
             preset=None, kind="autonomous_experiment", scope=_scope(mode),
+            license_info=_verified_license(),
         )
         req = proposals_module.request_approval_for_proposal(
             proposal["proposal_id"], user_id=self.user_id,
@@ -134,7 +140,8 @@ async def test_repair_does_not_consume_second_approval(approval_flow):
 def test_autonomous_proposal_needs_no_preset():
     row = proposals_module.create_proposal(
         user_id="u1", session_id="s1", preset=None,
-        kind="autonomous_experiment", scope=_scope())
+        kind="autonomous_experiment", scope=_scope(),
+        license_info=_verified_license())
     assert row["kind"] == "autonomous_experiment"
     assert row["preset_id"] == ""
     assert row["scope"]["repo_url"] == "https://github.com/example/repo-a"
@@ -142,13 +149,15 @@ def test_autonomous_proposal_needs_no_preset():
     # 同 scope 重建 → 同 hash（确定性）；不同 repo → 不同 hash。
     again = proposals_module.create_proposal(
         user_id="u1", session_id="s1", preset=None,
-        kind="autonomous_experiment", scope=_scope())
+        kind="autonomous_experiment", scope=_scope(),
+        license_info=_verified_license())
     assert again["scope_hash"] == row["scope_hash"]
     other = dict(_scope())
     other["repo_url"] = "https://github.com/example/repo-b"
     changed = proposals_module.create_proposal(
         user_id="u1", session_id="s1", preset=None,
-        kind="autonomous_experiment", scope=other)
+        kind="autonomous_experiment", scope=other,
+        license_info=_verified_license())
     assert changed["scope_hash"] != row["scope_hash"]
 
 
@@ -164,7 +173,8 @@ def test_preset_kind_still_default():
 async def test_scope_change_invalidates_old_approval():
     proposal = proposals_module.create_proposal(
         user_id="u1", session_id="s1", preset=None,
-        kind="autonomous_experiment", scope=_scope())
+        kind="autonomous_experiment", scope=_scope(),
+        license_info=_verified_license())
     req = proposals_module.request_approval_for_proposal(
         proposal["proposal_id"], user_id="u1",
         expected_version=proposal["version"])
@@ -299,7 +309,8 @@ def test_approval_card_hides_scope_hash():
     """审批卡只显示目标/资源/最长时间/自动排错范围，不暴露 scope_hash。"""
     proposal = proposals_module.create_proposal(
         user_id="u1", session_id="s1", preset=None,
-        kind="autonomous_experiment", scope=_scope())
+        kind="autonomous_experiment", scope=_scope(),
+        license_info=_verified_license())
     req = proposals_module.request_approval_for_proposal(
         proposal["proposal_id"], user_id="u1",
         expected_version=proposal["version"])
@@ -314,7 +325,12 @@ def test_approval_card_hides_scope_hash():
 
 
 async def test_autonomous_http_flow_and_execution_mode_gate(monkeypatch):
-    """HTTP 全链：自主提案→审批→批准→Auto 执行建 run；Ask 执行 403；未知模式 400。"""
+    """HTTP 全链：自主提案→审批→批准→Auto 执行建 run；Ask 执行 403；未知模式 400。
+
+    T7：HTTP 直建提案无 License 核验结论（fail-closed），Auto 执行 409
+    LICENSE_UNVERIFIED；已核验提案（intake 路径，经模块建）走 HTTP
+    审批/执行成功（一次确认语义不变）。
+    """
     monkeypatch.delenv("NEXUS_API_KEY", raising=False)
     user = {"X-Nexus-User-Id": "u-http"}
     async with AsyncClient(transport=ASGITransport(app=app),
@@ -366,21 +382,42 @@ async def test_autonomous_http_flow_and_execution_mode_gate(monkeypatch):
                   "mode": "research", "research_execution_mode": "turbo"},
             headers=user)
         assert bad_mode.status_code == 400
-        # Auto 执行 → 运行中 run；重试同票据返回原 run。
-        first = await client.post(
+        # T7：直建提案无 License 结论 → Auto 409 LICENSE_UNVERIFIED（零执行）。
+        direct = await client.post(
             "/api/v1/nexus/repro/execute",
             json={"approval_id": aid, "session_id": "s-http",
+                  "mode": "research", "research_execution_mode": "auto"},
+            headers=user)
+        assert direct.status_code == 409
+        assert "LICENSE_UNVERIFIED" in direct.json()["detail"]
+        # 已核验提案（intake 路径）：模块建＋HTTP 审批/执行成功；重试幂等。
+        verified = proposals_module.create_proposal(
+            user_id="u-http", session_id="s-http", preset=None,
+            kind="autonomous_experiment", scope=_scope(),
+            license_info=_verified_license())
+        vreq = await client.post(
+            f"/api/v1/nexus/repro/proposals/{verified['proposal_id']}/request-approval",
+            json={"expected_version": 1}, headers=user)
+        assert vreq.status_code == 200, vreq.text
+        vaid = vreq.json()["approval"]["approval_id"]
+        vdecided = await client.post(
+            f"/api/v1/nexus/approvals/{vaid}/decide",
+            json={"decision": "approved"}, headers=user)
+        assert vdecided.status_code == 200
+        first = await client.post(
+            "/api/v1/nexus/repro/execute",
+            json={"approval_id": vaid, "session_id": "s-http",
                   "mode": "research", "research_execution_mode": "auto"},
             headers=user)
         assert first.status_code == 200, first.text
-        assert first.json()["run_id"] == aid
+        assert first.json()["run_id"] == vaid
         second = await client.post(
             "/api/v1/nexus/repro/execute",
-            json={"approval_id": aid, "session_id": "s-http",
+            json={"approval_id": vaid, "session_id": "s-http",
                   "mode": "research", "research_execution_mode": "auto"},
             headers=user)
         assert second.status_code == 200
-        assert second.json()["run_id"] == aid
+        assert second.json()["run_id"] == vaid
         assert second.json().get("deduped") is True
 
 

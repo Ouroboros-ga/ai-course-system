@@ -903,8 +903,9 @@ async def execute_autonomous_experiment(    *, approval_id: str, user_id: str, s
     """T2 自主执行核：一次确认启动，排错不消耗新批准（N1/N3 授权）。
 
     流程：执行门（Research+Auto+本人批准，无门信息 fail-closed）→ 原子核销
-    （版本+scope_hash 重验＋CAS 锁定提案，旧批准随 scope 漂移失效）→ run
-    登记（run_id=approval_id，幂等返回原 run）。
+    （版本+scope_hash 重验＋CAS 锁定提案，旧批准随 scope 漂移失效）→ T7
+    执行前核验门（修订固定＋License，冻结快照）→ run 登记
+    （run_id=approval_id，幂等返回原 run）。
 
     不碰旧 preset Worker（新自由命令不发其 /jobs）；实际安装/试跑/修复由
     T4 实验图经沙箱执行，本核只返回运行中的 run（attempt 零条起）。
@@ -954,6 +955,15 @@ async def execute_autonomous_experiment(    *, approval_id: str, user_id: str, s
     if not isinstance(frozen, dict) or not frozen.get("scope_hash"):
         raise approvals.ApprovalError(
             "APPROVAL_PROPOSAL_CHANGED", "批准绑定的冻结 scope 缺失，请重新走审批")
+    # T7 执行前核验门（修订固定＋License；冻结快照，不读可变现行提案）。
+    # 未固定/未核验/白名单外一律拒绝执行（票据已消费＋提案已锁定，用户须
+    # 经 intake 固定 revision/确认 License 后建新提案；与 P1-A 失败语义一致）。
+    from nexus import license_policy as license_policy_module
+
+    gate = license_policy_module.verify_execution_gate(
+        scope=frozen.get("scope") or {}, license_info=frozen.get("license"))
+    if not gate["ok"]:
+        raise approvals.ApprovalError(gate["code"], gate["detail"])
     try:
         run = runs_module.create_or_get_run(
             run_id=approval_id, owner=user_id, session_id=session_id,

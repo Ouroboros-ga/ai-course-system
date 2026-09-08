@@ -77,6 +77,12 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
             frozen_scope = json.loads(frozen_scope)
         except ValueError:
             frozen_scope = {}
+    frozen_license = row.get("frozen_license", {})
+    if isinstance(frozen_license, str):
+        try:
+            frozen_license = json.loads(frozen_license)
+        except ValueError:
+            frozen_license = {}
     return {
         "approval_id": row["approval_id"],
         "user_id": row["user_id"],
@@ -99,6 +105,8 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "proposal_kind": row.get("proposal_kind", "") or "",
         "scope_hash": row.get("scope_hash", "") or "",
         "frozen_scope": frozen_scope if isinstance(frozen_scope, dict) else {},
+        # T7：冻结 License 快照（执行前核验门消费；旧票据缺省空→unknown）。
+        "frozen_license": frozen_license if isinstance(frozen_license, dict) else {},
     }
 
 
@@ -106,14 +114,14 @@ _APPROVAL_SELECT = (
     "approval_id, user_id, session_id, tool, preset_id, "
     "plan_hash, budget, status, job_id, detail, created_at, expires_at, "
     "proposal_id, proposal_version, proposal_hash, frozen_steps, "
-    "proposal_kind, scope_hash, frozen_scope"
+    "proposal_kind, scope_hash, frozen_scope, frozen_license"
 )
 
 _APPROVAL_KEYS = ("approval_id", "user_id", "session_id", "tool", "preset_id",
                   "plan_hash", "budget", "status", "job_id", "detail",
                   "created_at", "expires_at", "proposal_id", "proposal_version",
                   "proposal_hash", "frozen_steps", "proposal_kind",
-                  "scope_hash", "frozen_scope")
+                  "scope_hash", "frozen_scope", "frozen_license")
 
 
 def _row_from_pg_values(found: Any) -> dict[str, Any]:
@@ -144,7 +152,8 @@ CREATE TABLE IF NOT EXISTS {schema}.nexus_approvals (
     expires_at DOUBLE PRECISION NOT NULL DEFAULT 0,
     proposal_kind TEXT NOT NULL DEFAULT '',
     scope_hash TEXT NOT NULL DEFAULT '',
-    frozen_scope TEXT NOT NULL DEFAULT '{{}}'
+    frozen_scope TEXT NOT NULL DEFAULT '{{}}',
+    frozen_license TEXT NOT NULL DEFAULT '{{}}'
 );
 CREATE INDEX IF NOT EXISTS idx_nexus_approvals_user
     ON {schema}.nexus_approvals (user_id, created_at DESC);
@@ -182,6 +191,8 @@ def ensure_approvals_table(dsn: str, schema: str) -> None:
                 ("proposal_kind", "TEXT NOT NULL DEFAULT ''"),
                 ("scope_hash", "TEXT NOT NULL DEFAULT ''"),
                 ("frozen_scope", "TEXT NOT NULL DEFAULT '{}'"),
+                # T7 冻结 License 列（旧票据缺省空→unknown，执行门拦）。
+                ("frozen_license", "TEXT NOT NULL DEFAULT '{}'"),
             ):
                 cur.execute(
                     f"ALTER TABLE {schema}.nexus_approvals "
@@ -206,6 +217,7 @@ def create_approval(
     T2 自主绑定追加：{"proposal_kind": "autonomous_experiment",
     "scope_hash", "frozen_scope"}——此时 preset 可为空，plan_hash 取
     scope_hash，预算由 scope 资源派生。
+    T7 追加 frozen_license（提案 License 快照；旧票据缺省空→unknown）。
     """
     now = _now()
     binding = proposal_binding or {}
@@ -220,6 +232,9 @@ def create_approval(
         scope_hash = str(binding.get("scope_hash", "") or "")
         if not scope_hash:
             scope_hash = scope_hash_for(frozen_scope)
+        frozen_license = binding.get("frozen_license") or {}
+        if not isinstance(frozen_license, dict):
+            frozen_license = {}
         row = {
             "approval_id": new_approval_id(),
             "user_id": user_id or "",
@@ -240,6 +255,10 @@ def create_approval(
             "proposal_kind": "autonomous_experiment",
             "scope_hash": scope_hash,
             "frozen_scope": dict(frozen_scope),
+            "frozen_license": {
+                "spdx": str(frozen_license.get("spdx") or ""),
+                "status": str(frozen_license.get("status") or "unknown") or "unknown",
+            },
         }
         _insert_approval_row(row)
         return _row_to_dict(row)
@@ -263,6 +282,7 @@ def create_approval(
         "proposal_kind": "",
         "scope_hash": "",
         "frozen_scope": {},
+        "frozen_license": {},
     }
     _insert_approval_row(row)
     return _row_to_dict(row)
@@ -284,8 +304,8 @@ def _insert_approval_row(row: dict[str, Any]) -> None:
                         "(approval_id, user_id, session_id, tool, preset_id, plan_hash, "
                         "budget, status, job_id, detail, created_at, expires_at, "
                         "proposal_id, proposal_version, proposal_hash, frozen_steps, "
-                        "proposal_kind, scope_hash, frozen_scope) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        "proposal_kind, scope_hash, frozen_scope, frozen_license) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (
                             row["approval_id"], row["user_id"], row["session_id"],
                             row["tool"], row["preset_id"], row["plan_hash"],
@@ -297,6 +317,7 @@ def _insert_approval_row(row: dict[str, Any]) -> None:
                             json.dumps(row["frozen_steps"], ensure_ascii=False),
                             row["proposal_kind"], row["scope_hash"],
                             json.dumps(row["frozen_scope"], ensure_ascii=False),
+                            json.dumps(row.get("frozen_license", {}), ensure_ascii=False),
                         ),
                     )
             return
@@ -469,6 +490,8 @@ def consume_approval(
             "plan_hash": locked["plan_hash"],
             "scope": dict(locked.get("scope") or {}),
             "scope_hash": locked.get("scope_hash", "") or "",
+            # T7：冻结 License 快照（核销时锁定行；旧行缺省 unknown）。
+            "license": dict(locked.get("license") or {"spdx": "", "status": "unknown"}),
         }
     elif plan_hash_for(preset) != current["plan_hash"]:
         raise ApprovalError(

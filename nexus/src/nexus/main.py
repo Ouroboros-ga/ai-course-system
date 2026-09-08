@@ -1438,6 +1438,10 @@ async def repro_execute_approved(
             "RUN_SESSION_MISMATCH": 403,
             "RUN_NOT_FOUND": 404,
             "RUN_TERMINAL": 409,
+            # T7 执行前核验门（需经 intake 固定 revision/确认 License 后建新提案）。
+            "REVISION_NOT_PINNED": 409,
+            "LICENSE_UNVERIFIED": 409,
+            "LICENSE_NOT_ALLOWED": 409,
         }
         raise HTTPException(
             status_code=status_map.get(error.code, 409), detail=error.code
