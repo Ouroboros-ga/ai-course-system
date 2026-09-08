@@ -364,40 +364,6 @@ def _row_from_pg(found: Any) -> dict[str, Any]:
     return _row_to_dict(row)
 
 
-PROPOSALS_DDL = """
-CREATE SCHEMA IF NOT EXISTS {schema};
-CREATE TABLE IF NOT EXISTS {schema}.nexus_proposals (
-    proposal_id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT '',
-    session_id TEXT NOT NULL DEFAULT '',
-    version INTEGER NOT NULL DEFAULT 1,
-    kind TEXT NOT NULL DEFAULT 'preset',
-    preset_id TEXT NOT NULL DEFAULT '',
-    parent_run_id TEXT NOT NULL DEFAULT '',
-    objective TEXT NOT NULL DEFAULT '',
-    parameters JSONB NOT NULL DEFAULT '{{}}',
-    environment JSONB NOT NULL DEFAULT '{{}}',
-    repo_revision TEXT NOT NULL DEFAULT '',
-    revision_status TEXT NOT NULL DEFAULT '',
-    data JSONB NOT NULL DEFAULT '{{}}',
-    steps JSONB NOT NULL DEFAULT '[]',
-    budget JSONB NOT NULL DEFAULT '{{}}',
-    metric_policy JSONB NOT NULL DEFAULT '{{}}',
-    plan_hash TEXT NOT NULL DEFAULT '',
-    scope JSONB NOT NULL DEFAULT '{{}}',
-    scope_hash TEXT NOT NULL DEFAULT '',
-    license JSONB NOT NULL DEFAULT '{{}}',
-    status TEXT NOT NULL DEFAULT 'draft',
-    client_request_id TEXT NOT NULL DEFAULT '',
-    history JSONB NOT NULL DEFAULT '[]',
-    created_at DOUBLE PRECISION NOT NULL DEFAULT 0,
-    updated_at DOUBLE PRECISION NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_nexus_proposals_user_session
-    ON {schema}.nexus_proposals (user_id, session_id, updated_at DESC);
-"""
-
-
 def _pg_settings() -> tuple[str, str] | None:
     from nexus.config import get_settings
 
@@ -406,30 +372,6 @@ def _pg_settings() -> tuple[str, str] | None:
     if not dsn:
         return None
     return dsn, settings.postgres_schema
-
-
-def ensure_proposals_table(dsn: str, schema: str) -> None:
-    """幂等建表＋T2 列补齐（老表逐列 ADD COLUMN IF NOT EXISTS，可重入）。
-
-    与 approvals.ensure_approvals_table 同模式：新列只追加、有默认值，
-    旧代码忽略新列（回退见验收记录）。
-    """
-    import psycopg
-
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        with conn.cursor() as cur:
-            cur.execute(PROPOSALS_DDL.format(schema=schema))
-            for column, ddl in (
-                ("kind", "TEXT NOT NULL DEFAULT 'preset'"),
-                ("scope", "JSONB NOT NULL DEFAULT '{}'"),
-                ("scope_hash", "TEXT NOT NULL DEFAULT ''"),
-                # T7：License 持久化列（老表补齐，可重入；旧行读作 unknown）。
-                ("license", "JSONB NOT NULL DEFAULT '{}'"),
-            ):
-                cur.execute(
-                    f"ALTER TABLE {schema}.nexus_proposals "
-                    f"ADD COLUMN IF NOT EXISTS {column} {ddl}"
-                )
 
 
 def _build_body(
@@ -588,7 +530,6 @@ def _insert_row(row: dict[str, Any]) -> None:
     if pg is not None:
         dsn, schema = pg
         try:
-            ensure_proposals_table(dsn, schema)
             import psycopg
 
             with psycopg.connect(dsn, autocommit=True) as conn:

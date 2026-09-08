@@ -596,5 +596,65 @@ nexus **261 passed**；repro-runtime **20 passed / 6 skipped**（live docker 需
 ### 仍未验证（不因本轮修复而改变）
 
 真实模型在真实沙箱内的自主修复与成功态（DeepSeek key 待轮换）、repo2docker 路线、
-LaTeX 编译证明、线上真实 PG 的迁移列与恢复/取消全链、宿主隔离脚本
-`deploy/repro-runtime/scripts/verify_host.sh` 的服务器实跑。
+LaTeX 编译证明、线上真实 PG 的迁移列与恢复/取消全链。
+
+## 线上验证（2026-09-09 00:17 +08:00，部署 `054b5f27`）
+
+发布：`SMARTCARB_SKIP_MIGRATIONS=1 SMARTCARB_SKIP_PRUNE=1 smartcarb-release.sh 054b5f27 5`。
+
+- 发布脚本替换：服务器副本为 8/18 旧版（无迁移、无 Nexus 同步），先备份
+  （`smartcarb-release.sh.bak-20260909`）再换上仓库版。**过程中发现并修复仓库版
+  脚本的真 bug**：前端依赖软链写成 `$SHARED_DIR/node_modules/frontend`（少一层
+  `/node_modules`），首轮构建即失败；改为 `.../frontend/node_modules` 后构建通过
+  （20.13s）。该修复待提交。
+- 结果：`current` → `releases/054b5f27`；`nexus-runtime/RELEASE_INFO` =
+  `054b5f27`；backend / nexus-runtime / repro-runtime 三服务 active；openapi 200、
+  首页 301、nexus `/health` ok、repro-runtime `/health` ok（runs=21）；近 10 分钟
+  零 error 日志。部署代码标记核对通过（`console_snapshot_for`/`scope_hash`/
+  `file_tool`/`can_execute`/`EXPERIMENT_EXECUTION_DISABLED` 均到位）。
+- **迁移未执行**：本次修复不含迁移；线上 DB 仍为 `0068`，而代码 head 为
+  `dk20260909v2`（4 个语料 RAG 迁移待应用，属既有状态，非本次引入）。是否应用
+  需单独决定。
+- repro-runtime 同步：`deploy/repro-runtime/` → `/opt/smartcarb/repro-runtime/`
+  （排除 `.venv/data/.token`），`diff -r` 干净，重启后健康。
+- **真实容器契约验证 9/9**（合成 run `nx-verify-*`）：
+  1. ensure 带 `scope_hash`＋`resources` → 返回 `image_digest=sha256:4f2ba29b…`、
+     `wall_time_s=600`、`deadline_at` 正确；
+  2. `docker_args=['--memory=1024m','--cpus=1.0','--storage-opt=size=2048m',
+     '--pids-limit=512']` —— 由已确认 resources 派生，且 `--storage-opt` 被存储
+     驱动接受（无降级 note）；
+  3. 同 scope 重复 ensure → `deduped=true`；4. 异 `scope_hash` → 409；
+  5. 越界路径 `/etc/passwd` → 422 `PATH_OUTSIDE_WORKSPACE`；
+  6. 工作区内写入/读取往返一致；7. 容器内真实命令 `echo ok-$(uname -m)` →
+     exit 0、输出 `ok-x86_64`；8. cancel → `cancelled`；9. `docker ps -a` 零残留。
+- **宿主隔离断言 6/6**（`scripts/verify_host.sh`，首次实跑）：
+  Memory=2147483648、PidsLimit=512、Privileged=false、NetworkMode=bridge、
+  Mounts=0、无 docker.sock。
+
+未验证：真实模型端到端（DeepSeek key 尾号 `b27d` 仍失效）、backend A3 门的线上
+登录态实测（单测已覆盖，`test_execute_explicit_ask_rejected_before_runtime`）。
+
+### 迁移应用（2026-09-09 00:30 +08:00，用户授权后执行）
+
+- `0068 → dk20260908v1 → dk20260908v2 → dk20260909v1 → dk20260909v2 (head)`，
+  在 PG 上按事务执行，共新建 **15 张表**（discipline_*）。
+- **暴露的权限问题（已修，用户授权）**：PG15+ 下应用账号 `ai_course_app` 对
+  `public` 无 CREATE 权限，且迁移账号 `ai_course_migration` 新建的表未授权给应用
+  账号——首轮 `upgrade head` 报 `permission denied for schema public`，应用读新表报
+  `permission denied for table`。以迁移账号执行 `GRANT SELECT/INSERT/UPDATE/DELETE
+  ON ALL TABLES` ＋ `USAGE/SELECT ON ALL SEQUENCES` ＋ `ALTER DEFAULT PRIVILEGES`
+  （后续迁移新建对象自动授权）；复核：缺权限的 discipline 表 **0**，15/15 表应用
+  可读，写探针（事务内回滚）通过。
+- 复核：alembic `current` = `dk20260909v2 (head)`；三服务 active、openapi 200、
+  首页 301、零 error 日志。
+
+### 发布脚本修复（部署中发现，待提交）
+
+1. **前端依赖软链路径错误**：`$SHARED_DIR/node_modules/frontend` 少一层
+   `/node_modules`，首轮发布在 vite 入口即失败。已改为
+   `$SHARED_DIR/node_modules/frontend/node_modules`。
+2. **迁移步骤用错账号且环境加载不健壮**：`alembic` 直接用应用 DSN 会在
+   `CREATE TABLE` 处 permission denied；环境文件含人工维护的非 shell 行，在
+   `set -e` 下加载会中断发布。已改为：优先用 `AI_COURSE_MIGRATION_DB_*` 构造迁移
+   DSN（`postgres.env` 纳入加载列表），环境文件加载容错（失败不阻断）。端到端复验：
+  `dsn_built=yes` → `upgrade head` 幂等空跑 → `current` = head。

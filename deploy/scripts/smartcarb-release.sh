@@ -11,7 +11,8 @@
 #   5. 重启后端并做健康检查（openapi + 首页）
 #   6. Nexus 独立运行时同步：nexus/ → /opt/smartcarb/nexus-runtime（保留旧副本，
 #      uv.lock 变化才 uv sync --frozen）并重启 nexus-runtime + 健康检查
-#   7. 调用 smartcarb-prune-releases.sh 清理旧 release
+#   7. 同步 repro-runtime 控制面并健康检查（6c）
+#   8. 调用 smartcarb-prune-releases.sh 清理旧 release
 #
 # CR6 说明：切 current **不会**恢复/更新独立 Nexus Runtime（独立目录 + 独立 venv），
 # 迁移也不再假设由他人执行——三步都在本脚本内显式完成。仅当本次发布确认无迁移、
@@ -31,6 +32,7 @@ NODE_HOME=/opt/node-v22-current
 BACKEND_VENV="${SMARTCARB_BACKEND_VENV:-$SHARED_DIR/venvs/backend-py312}"
 BACKEND_PY="$BACKEND_VENV/bin/python"
 NEXUS_DIR="$DEPLOY_ROOT/nexus-runtime"
+REPRO_DIR="$DEPLOY_ROOT/repro-runtime"
 REF="${1:-dev-liu}"
 KEEP="${2:-5}"
 
@@ -75,7 +77,7 @@ cd "$RELEASE_DIR"
 if [ ! -f frontend/dist/index.html ]; then
   echo "==> 构建前端 dist（复用共享依赖缓存）"
   rm -f frontend/node_modules
-  ln -sfn "$SHARED_DIR/node_modules/frontend" frontend/node_modules
+  ln -sfn "$SHARED_DIR/node_modules/frontend/node_modules" frontend/node_modules
   (cd frontend && export PATH="$NODE_HOME/bin:$PATH" && node node_modules/vite/bin/vite.js build)
   [ -f frontend/dist/index.html ] || { echo "前端构建失败: 无 dist/index.html" >&2; exit 1; }
 else
@@ -89,10 +91,33 @@ if [ "${SMARTCARB_SKIP_MIGRATIONS:-0}" != "1" ]; then
   [ -x "$BACKEND_PY" ] || _fail "后端 venv 不存在: $BACKEND_PY"
   echo "==> Alembic 迁移（upgrade head）"
   set -a
-  for env_file in backend.env database.env runtime-paths.env; do
-    [ -f "$ENV_DIR/$env_file" ] && . "$ENV_DIR/$env_file"
+  for env_file in backend.env database.env postgres.env runtime-paths.env; do
+    if [ -f "$ENV_DIR/$env_file" ]; then
+      # 环境文件由人工维护，可能含非 shell 行（中文注释/说明）；加载失败不阻断发布。
+      set +e
+      . "$ENV_DIR/$env_file" 2>/dev/null
+      set -e
+    fi
   done
   set +a
+  # 迁移账号优先：应用账号无 schema public CREATE 权限（PG15+ 默认），
+  # 直接用应用 DSN 跑 alembic 会在 CREATE TABLE 处 permission denied。
+  MIGRATION_DSN="$("$BACKEND_PY" - <<'PY' 2>/dev/null
+import os
+from urllib.parse import urlsplit, urlunsplit, quote
+app = os.environ.get("AI_COURSE_DATABASE_URL", "")
+user = os.environ.get("AI_COURSE_MIGRATION_DB_USER", "")
+password = os.environ.get("AI_COURSE_MIGRATION_DB_PASSWORD", "")
+if app and user and password:
+    parts = urlsplit(app)
+    netloc = f"{quote(user)}:{quote(password)}@{parts.hostname}:{parts.port or 5432}"
+    print(urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment)))
+PY
+)"
+  if [ -n "$MIGRATION_DSN" ]; then
+    echo "==> 使用迁移账号执行 Alembic（AI_COURSE_MIGRATION_DB_*）"
+    export AI_COURSE_DATABASE_URL="$MIGRATION_DSN"
+  fi
   cd "$RELEASE_DIR/backend"
   HEAD_COUNT="$("$BACKEND_PY" -m alembic -c alembic.ini heads \
     | sed -n 's/.*(head).*/x/p' | wc -l)"
@@ -162,6 +187,26 @@ if [ "${SMARTCARB_SKIP_NEXUS:-0}" != "1" ]; then
   else
     echo "==> Nexus 依赖未变化，跳过 uv sync"
   fi
+  # 6b. Nexus 域显式迁移（任务书 T2／P2 §9.7：不写启动时 DDL）
+  if [ "${SMARTCARB_SKIP_NEXUS_MIGRATIONS:-0}" != "1" ]; then
+    echo "==> Nexus 域迁移（scripts/apply_nexus_migrations.py）"
+    [ -x "$NEXUS_DIR/.venv/bin/python" ] \
+      || _fail "Nexus venv 不存在：$NEXUS_DIR/.venv（先 uv sync）"
+    set -a
+    if [ -f "$ENV_DIR/nexus.env" ]; then
+      set +e; . "$ENV_DIR/nexus.env" 2>/dev/null; set -e
+    fi
+    set +a
+    if [ -z "${NEXUS_POSTGRES_DSN:-}" ]; then
+      echo "==> 未配置 NEXUS_POSTGRES_DSN，跳过 Nexus 域迁移（内存/无 PG 部署）"
+    else
+      (cd "$NEXUS_DIR" && .venv/bin/python scripts/apply_nexus_migrations.py) \
+        || _fail "Nexus 域迁移失败；已中止发布（nexus-runtime 未重启）"
+    fi
+  else
+    echo "==> 跳过 Nexus 域迁移（SMARTCARB_SKIP_NEXUS_MIGRATIONS=1）"
+  fi
+
   printf 'commit=%s\nbranch=%s\nreleased_at=%s\n' \
     "$SHA" "${BRANCH:-<locked>}" "$(date -Is)" > "$NEXUS_DIR/RELEASE_INFO"
   systemctl restart nexus-runtime
@@ -181,6 +226,36 @@ if [ "${SMARTCARB_SKIP_NEXUS:-0}" != "1" ]; then
   fi
 else
   echo "==> 跳过 Nexus Runtime 同步（SMARTCARB_SKIP_NEXUS=1，需人工确认无 Nexus 变更）"
+fi
+
+# 6c. 自主实验执行控制面同步（deploy/repro-runtime → $REPRO_DIR；独立 venv/数据）
+if [ "${SMARTCARB_SKIP_REPRO_RUNTIME:-0}" != "1" ]; then
+  if [ -d "$RELEASE_DIR/deploy/repro-runtime" ] \
+      && systemctl cat repro-runtime >/dev/null 2>&1; then
+    echo "==> 同步 repro-runtime 控制面 -> $REPRO_DIR"
+    mkdir -p "$REPRO_DIR"
+    rsync -a --delete --exclude '.venv' --exclude 'data' --exclude '.token' \
+      --exclude '__pycache__' --exclude '.pytest_cache' \
+      "$RELEASE_DIR/deploy/repro-runtime/" "$REPRO_DIR/"
+    systemctl restart repro-runtime
+    repro_ready=0
+    for i in $(seq 1 "$HEALTH_RETRIES"); do
+      if curl -fsS -o /dev/null http://127.0.0.1:8401/health 2>/dev/null; then
+        repro_ready=1
+        echo "==> repro-runtime 就绪（第 ${i} 次探测）"
+        break
+      fi
+      sleep "$HEALTH_INTERVAL"
+    done
+    if [ "$repro_ready" -ne 1 ]; then
+      echo "repro-runtime 健康检查失败；控制面代码已同步，请人工排查" >&2
+      exit 1
+    fi
+  else
+    echo "==> 跳过 repro-runtime 同步（无单元或无目录）"
+  fi
+else
+  echo "==> 跳过 repro-runtime 同步（SMARTCARB_SKIP_REPRO_RUNTIME=1）"
 fi
 
 # 7. 记录本次发布（回退清单）并清理旧 release

@@ -135,31 +135,6 @@ def _is_expired(row: dict[str, Any], now: float | None = None) -> bool:
     return (now if now is not None else _now()) >= float(row["expires_at"])
 
 
-APPROVALS_DDL = """
-CREATE SCHEMA IF NOT EXISTS {schema};
-CREATE TABLE IF NOT EXISTS {schema}.nexus_approvals (
-    approval_id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT '',
-    session_id TEXT NOT NULL DEFAULT '',
-    tool TEXT NOT NULL DEFAULT '',
-    preset_id TEXT NOT NULL DEFAULT '',
-    plan_hash TEXT NOT NULL DEFAULT '',
-    budget JSONB NOT NULL DEFAULT '{{}}',
-    status TEXT NOT NULL DEFAULT 'pending',
-    job_id TEXT NOT NULL DEFAULT '',
-    detail TEXT NOT NULL DEFAULT '',
-    created_at DOUBLE PRECISION NOT NULL DEFAULT 0,
-    expires_at DOUBLE PRECISION NOT NULL DEFAULT 0,
-    proposal_kind TEXT NOT NULL DEFAULT '',
-    scope_hash TEXT NOT NULL DEFAULT '',
-    frozen_scope TEXT NOT NULL DEFAULT '{{}}',
-    frozen_license TEXT NOT NULL DEFAULT '{{}}'
-);
-CREATE INDEX IF NOT EXISTS idx_nexus_approvals_user
-    ON {schema}.nexus_approvals (user_id, created_at DESC);
-"""
-
-
 def _pg_settings() -> tuple[str, str] | None:
     """PG 可用返回 (dsn, schema)，否则 None（调用方走内存）。"""
     from nexus.config import get_settings
@@ -169,35 +144,6 @@ def _pg_settings() -> tuple[str, str] | None:
     if not dsn:
         return None
     return dsn, settings.postgres_schema
-
-
-def ensure_approvals_table(dsn: str, schema: str) -> None:
-    """幂等建表（lifespan/首次写入前调用；失败抛异常由调用方降级）。
-
-    NX-LB2：老表缺提案绑定列时逐列补（PG ADD COLUMN IF NOT EXISTS，
-    可重入；回退见提案验收记录——旧代码忽略新列）。
-    """
-    import psycopg
-
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        with conn.cursor() as cur:
-            cur.execute(APPROVALS_DDL.format(schema=schema))
-            for column, ddl in (
-                ("proposal_id", "TEXT NOT NULL DEFAULT ''"),
-                ("proposal_version", "INTEGER NOT NULL DEFAULT 0"),
-                ("proposal_hash", "TEXT NOT NULL DEFAULT ''"),
-                ("frozen_steps", "TEXT NOT NULL DEFAULT '[]'"),
-                # T2 自主绑定列（旧表补齐，可重入；旧代码忽略新列）。
-                ("proposal_kind", "TEXT NOT NULL DEFAULT ''"),
-                ("scope_hash", "TEXT NOT NULL DEFAULT ''"),
-                ("frozen_scope", "TEXT NOT NULL DEFAULT '{}'"),
-                # T7 冻结 License 列（旧票据缺省空→unknown，执行门拦）。
-                ("frozen_license", "TEXT NOT NULL DEFAULT '{}'"),
-            ):
-                cur.execute(
-                    f"ALTER TABLE {schema}.nexus_approvals "
-                    f"ADD COLUMN IF NOT EXISTS {column} {ddl}"
-                )
 
 
 def create_approval(
@@ -294,7 +240,6 @@ def _insert_approval_row(row: dict[str, Any]) -> None:
     if pg is not None:
         dsn, schema = pg
         try:
-            ensure_approvals_table(dsn, schema)
             import psycopg
 
             with psycopg.connect(dsn, autocommit=True) as conn:

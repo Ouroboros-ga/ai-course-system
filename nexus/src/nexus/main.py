@@ -67,31 +67,25 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
         try:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-            from nexus.persistence import dsn_with_schema, ensure_threads_table_async
+            from nexus.persistence import dsn_with_schema, missing_nexus_tables
 
             schema = settings.postgres_schema
-            step = "ensure_schema_threads_table"
-            await ensure_threads_table_async(dsn, schema)
-            step = "ensure_approvals_table"
-            from nexus.approvals import ensure_approvals_table
-
-            await asyncio.to_thread(ensure_approvals_table, dsn, schema)
-            step = "ensure_proposals_table"
-            from nexus.proposals import ensure_proposals_table
-
-            await asyncio.to_thread(ensure_proposals_table, dsn, schema)
-            step = "ensure_experiment_runs_table"
-            from nexus.experiment_runs import ensure_runs_table
-
-            await asyncio.to_thread(ensure_runs_table, dsn, schema)
+            # 任务书 T2／P2 §9.7：不写启动时 DDL。此处只读检查，缺表如实报错
+            # （建表/改列一律走 nexus/migrations/ + scripts/apply_nexus_migrations.py）。
+            step = "verify_nexus_schema"
+            missing = await asyncio.to_thread(missing_nexus_tables, dsn, schema)
+            if missing:
+                logger.error(
+                    "Nexus 域表缺失：%s（先执行 nexus/scripts/apply_nexus_migrations.py）",
+                    ", ".join(missing))
             step = "reset_stale_clean_verifying"
-            from nexus.experiment_runs import reset_verifying_to_idle
+            from nexus.experiment_runs import reap_stale_runs, reset_verifying_to_idle
 
             await asyncio.to_thread(reset_verifying_to_idle)
-            step = "ensure_session_prefs_table"
-            from nexus.execution_mode import ensure_prefs_table
-
-            await asyncio.to_thread(ensure_prefs_table, dsn, schema)
+            step = "reap_stale_runs"
+            reaped = await asyncio.to_thread(reap_stale_runs)
+            if reaped:
+                logger.info("收敛陈旧 run（零尝试超时）：%s 条", reaped)
             step = "saver_setup"
             cm = AsyncPostgresSaver.from_conn_string(dsn_with_schema(dsn, schema))
             saver = await cm.__aenter__()

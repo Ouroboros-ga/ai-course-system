@@ -35,34 +35,6 @@ class RunError(Exception):
         self.code = code
 
 
-RUNS_DDL = """
-CREATE SCHEMA IF NOT EXISTS {schema};
-CREATE TABLE IF NOT EXISTS {schema}.nexus_experiment_runs (
-    run_id TEXT PRIMARY KEY,
-    owner TEXT NOT NULL DEFAULT '',
-    session_id TEXT NOT NULL DEFAULT '',
-    proposal_id TEXT NOT NULL DEFAULT '',
-    proposal_version INTEGER NOT NULL DEFAULT 0,
-    scope_hash TEXT NOT NULL DEFAULT '',
-    approval_id TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'running',
-    attempt_no INTEGER NOT NULL DEFAULT 0,
-    attempts JSONB NOT NULL DEFAULT '[]',
-    graph_thread_id TEXT NOT NULL DEFAULT '',
-    cancel_requested INTEGER NOT NULL DEFAULT 0,
-    detail TEXT NOT NULL DEFAULT '',
-    clean_status TEXT NOT NULL DEFAULT '',
-    clean_note TEXT NOT NULL DEFAULT '',
-    clean_checked_at DOUBLE PRECISION NOT NULL DEFAULT 0,
-    clean_rule TEXT NOT NULL DEFAULT '',
-    created_at DOUBLE PRECISION NOT NULL DEFAULT 0,
-    updated_at DOUBLE PRECISION NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_nexus_experiment_runs_owner
-    ON {schema}.nexus_experiment_runs (owner, updated_at DESC);
-"""
-
-
 def _pg_settings() -> tuple[str, str] | None:
     from nexus.config import get_settings
 
@@ -71,43 +43,6 @@ def _pg_settings() -> tuple[str, str] | None:
     if not dsn:
         return None
     return dsn, settings.postgres_schema
-
-
-def ensure_runs_table(dsn: str, schema: str) -> None:
-    """幂等建表＋T4 列补齐（老表逐列 ADD COLUMN IF NOT EXISTS，可重入）。"""
-    import psycopg
-
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        with conn.cursor() as cur:
-            cur.execute(RUNS_DDL.format(schema=schema))
-            for column, ddl in (
-                ("graph_thread_id", "TEXT NOT NULL DEFAULT ''"),
-                ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
-                ("detail", "TEXT NOT NULL DEFAULT ''"),
-                # SR6 干净B结论列（老表补齐，可重入；旧行读作未验证）。
-                ("clean_status", "TEXT NOT NULL DEFAULT ''"),
-                ("clean_note", "TEXT NOT NULL DEFAULT ''"),
-                ("clean_checked_at", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
-                ("clean_rule", "TEXT NOT NULL DEFAULT ''"),
-            ):
-                cur.execute(
-                    f"ALTER TABLE {schema}.nexus_experiment_runs "
-                    f"ADD COLUMN IF NOT EXISTS {column} {ddl}"
-                )
-
-
-_RUN_SELECT = (
-    "run_id, owner, session_id, proposal_id, proposal_version, scope_hash, "
-    "approval_id, status, attempt_no, attempts, graph_thread_id, "
-    "cancel_requested, detail, clean_status, clean_note, clean_checked_at, "
-    "clean_rule, created_at, updated_at"
-)
-
-_RUN_KEYS = ("run_id", "owner", "session_id", "proposal_id", "proposal_version",
-             "scope_hash", "approval_id", "status", "attempt_no", "attempts",
-             "graph_thread_id", "cancel_requested", "detail",
-             "clean_status", "clean_note", "clean_checked_at", "clean_rule",
-             "created_at", "updated_at")
 
 
 def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
@@ -151,7 +86,6 @@ def _insert_row(row: dict[str, Any]) -> None:
     if pg is not None:
         dsn, schema = pg
         try:
-            ensure_runs_table(dsn, schema)
             import psycopg
 
             with psycopg.connect(dsn, autocommit=True) as conn:
@@ -398,7 +332,6 @@ def reset_verifying_to_idle() -> int:
     if pg is not None:
         dsn, schema = pg
         try:
-            ensure_runs_table(dsn, schema)
             import psycopg
 
             with psycopg.connect(dsn, autocommit=True) as conn:
@@ -462,6 +395,46 @@ def is_cancel_requested(run_id: str) -> bool:
         logger.warning("cancel flag read failed: %s", error)
         return False
     return bool((run or {}).get("cancel_requested"))
+
+
+def reap_stale_runs(*, max_idle_s: float = 3600.0) -> int:
+    """收敛"从未启动"的陈旧 run（running 且 attempts=0 且超时未更新）。
+
+    - 只处理零尝试的 run：有 attempt 的 run 可能正在执行，绝不误杀；
+    - 阈值下限 60 秒（防误配 0 把刚建的 run 立即收敛）；
+    - 返回收敛行数（PG 单条 UPDATE；内存全表扫描）。
+    """
+    cutoff = _now() - max(60.0, float(max_idle_s or 3600.0))
+    detail = "STALE_NO_ATTEMPT: 超时未启动（零尝试），已收敛为 failed；如需重跑请新建提案。"
+    pg = _pg_settings()
+    if pg is not None:
+        dsn, schema = pg
+        try:
+            import psycopg
+
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"UPDATE {schema}.nexus_experiment_runs "
+                        f"SET status='failed', detail=%s, updated_at=%s "
+                        f"WHERE status='running' AND attempt_no=0 "
+                        f"AND updated_at < %s",
+                        (detail, _now(), cutoff),
+                    )
+                    return int(cur.rowcount or 0)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("reap stale runs pg failed: %s", error)
+    count = 0
+    for run_id, row in list(_memory_runs.items()):
+        if (row.get("status") == "running"
+                and int(row.get("attempt_no") or 0) == 0
+                and float(row.get("updated_at") or 0) < cutoff):
+            updated = dict(row)
+            updated.update({"status": "failed", "detail": detail,
+                            "updated_at": _now()})
+            _memory_runs[run_id] = updated
+            count += 1
+    return count
 
 
 def clear_memory_store() -> None:

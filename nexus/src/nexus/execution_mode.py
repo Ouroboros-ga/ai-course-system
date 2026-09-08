@@ -60,18 +60,6 @@ def _pref_key(user_id: str, session_id: str) -> str:
     return f"{user_id or ''}\u0000{session_id or ''}"
 
 
-PREFS_DDL = """
-CREATE SCHEMA IF NOT EXISTS {schema};
-CREATE TABLE IF NOT EXISTS {schema}.nexus_session_prefs (
-    user_id TEXT NOT NULL DEFAULT '',
-    session_id TEXT NOT NULL DEFAULT '',
-    research_execution_mode TEXT NOT NULL DEFAULT 'ask',
-    updated_at DOUBLE PRECISION NOT NULL DEFAULT 0,
-    PRIMARY KEY (user_id, session_id)
-);
-"""
-
-
 def _pg_settings() -> tuple[str, str] | None:
     from nexus.config import get_settings
 
@@ -80,14 +68,6 @@ def _pg_settings() -> tuple[str, str] | None:
     if not dsn:
         return None
     return dsn, settings.postgres_schema
-
-
-def ensure_prefs_table(dsn: str, schema: str) -> None:
-    import psycopg
-
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        with conn.cursor() as cur:
-            cur.execute(PREFS_DDL.format(schema=schema))
 
 
 def save_preference(user_id: str, session_id: str, mode_value: str) -> None:
@@ -101,7 +81,6 @@ def save_preference(user_id: str, session_id: str, mode_value: str) -> None:
         return
     dsn, schema = pg
     try:
-        ensure_prefs_table(dsn, schema)
         import psycopg
 
         with psycopg.connect(dsn, autocommit=True) as conn:

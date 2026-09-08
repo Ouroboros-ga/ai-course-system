@@ -234,6 +234,38 @@ async def test_recovery_cross_user_denied(recovery_flow):
     assert "FORBIDDEN" in str(getattr(exc.value, "code", exc.value))
 
 
+def test_reap_stale_zero_attempt_run():
+    """B：零尝试且超时的 running run 收敛为 failed（线上僵尸 run 同因）。"""
+    import time as _time
+
+    runs_module.create_or_get_run(
+        run_id="stale-1", owner="u", session_id="s", proposal_id="p",
+        proposal_version=1, scope_hash="h" * 32, approval_id="a")
+    runs_module._memory_runs["stale-1"]["updated_at"] = _time.time() - 7200
+    assert runs_module.reap_stale_runs(max_idle_s=3600) == 1
+    stored = runs_module.get_run("stale-1")
+    assert stored["status"] == "failed"
+    assert "STALE_NO_ATTEMPT" in stored["detail"]
+
+
+def test_reap_leaves_running_with_attempts_and_fresh_runs():
+    """收敛器只碰零尝试的陈旧 run：执行中的（有 attempt）与新建的不动。"""
+    import time as _time
+
+    runs_module.create_or_get_run(
+        run_id="busy-1", owner="u", session_id="s", proposal_id="p",
+        proposal_version=1, scope_hash="h" * 32, approval_id="a")
+    runs_module.record_attempt("busy-1", actual_command="pip install x",
+                               exit_code=None)
+    runs_module._memory_runs["busy-1"]["updated_at"] = _time.time() - 7200
+    runs_module.create_or_get_run(
+        run_id="fresh-1", owner="u", session_id="s", proposal_id="p",
+        proposal_version=1, scope_hash="h" * 32, approval_id="a")
+    assert runs_module.reap_stale_runs(max_idle_s=3600) == 0
+    assert runs_module.get_run("busy-1")["status"] == "running"
+    assert runs_module.get_run("fresh-1")["status"] == "running"
+
+
 async def test_completed_attempts_never_replayed(recovery_flow):
     """已完成 attempt 的 op 不再提交：恢复只续查未完成的尾部。"""
     from nexus import experiment_store as store_module

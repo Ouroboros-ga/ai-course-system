@@ -56,40 +56,32 @@ def dsn_with_schema(dsn: str, schema: str) -> str:
     return f"{dsn}{sep}options=-csearch_path%3D{schema}%2Cpublic"
 
 
-THREADS_DDL = """
-CREATE SCHEMA IF NOT EXISTS {schema};
-CREATE TABLE IF NOT EXISTS {schema}.nexus_threads (
-    thread_id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT '',
-    session_id TEXT NOT NULL DEFAULT '',
-    title TEXT NOT NULL DEFAULT '',
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-ALTER TABLE {schema}.nexus_threads ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
-"""
+# Nexus 域表清单（schema 检查用；建表/改列一律走 nexus/migrations/，见
+# scripts/apply_nexus_migrations.py——任务书 T2／P2 §9.7 禁止启动时 DDL）。
+NEXUS_TABLES = (
+    "nexus_threads",
+    "nexus_proposals",
+    "nexus_approvals",
+    "nexus_experiment_runs",
+    "nexus_session_prefs",
+)
 
 
-def ensure_threads_table_sync(conn_string: str, schema: str) -> None:
-    """同步建表（供 lifespan/清理脚本复用，失败抛异常由调用方处理）。"""
+def missing_nexus_tables(conn_string: str, schema: str) -> list[str]:
+    """只读检查：返回缺失的 Nexus 域表（不建表、不改 schema）。
+
+    lifespan 用它把"未跑迁移"如实记进日志，而不是隐式建表。
+    """
     import psycopg
 
-    ddl = THREADS_DDL.format(schema=schema)
-    with psycopg.connect(conn_string, autocommit=True) as conn:
+    with psycopg.connect(conn_string) as conn:
         with conn.cursor() as cur:
-            cur.execute(ddl)
-
-
-async def ensure_threads_table_async(conn_string: str, schema: str) -> None:
-    """异步建表：lifespan 内调用，不阻塞事件循环太久（单次 DDL）。"""
-    import psycopg
-
-    ddl = THREADS_DDL.format(schema=schema)
-    # psycopg3 异步连接：按需导入，避免无 PG 环境 import 失败。
-    from psycopg import AsyncConnection
-
-    async with await AsyncConnection.connect(conn_string, autocommit=True) as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(ddl)
+            cur.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = %s", (schema,),
+            )
+            existing = {str(row[0]) for row in cur.fetchall()}
+    return [name for name in NEXUS_TABLES if name not in existing]
 
 
 def touch_thread_sync(
