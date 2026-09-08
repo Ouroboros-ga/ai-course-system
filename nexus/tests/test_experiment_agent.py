@@ -449,6 +449,35 @@ async def test_bound_run_records_file_tool_attempts():
     assert set(op_ids) <= set(posted)
 
 
+def test_operation_attribution_exact_for_sequential_calls():
+    """T5-1：顺序调用下 attempt→operation 精确 1:1（并行批量不冒充）。
+
+   用 FakeBackend 的提交日志回放：顺序结果全部精确命中；已被认领的
+    不重复发放（并行错位时返回空串，不给错 id）。
+    """
+    from nexus import experiment_agent as agent_module
+
+    class _FakeBackend:
+        submitted_ops = [
+            ("r-op-0001", "ls -a /workspace"),
+            ("r-op-0002", "cat /workspace/README.md"),
+            ("r-op-0003", "pip install fakepkg"),
+        ]
+        last_operation_id = "r-op-0003"
+
+    used: set[str] = set()
+    assert agent_module.attribute_operation(
+        _FakeBackend, "cat /workspace/README.md", used) == "r-op-0002"
+    assert agent_module.attribute_operation(
+        _FakeBackend, "pip install fakepkg", used) == "r-op-0003"
+    # funnel 脚本（命令文本对不上 tool 参数）回退最近未认领。
+    assert agent_module.attribute_operation(
+        _FakeBackend, "write_file /workspace/a.txt", used) == "r-op-0001"
+    # 全部认领后不再发放（宁缺毋错）。
+    assert agent_module.attribute_operation(
+        _FakeBackend, "echo hi", used) == ""
+
+
 async def test_bound_run_cancel_before_start_stays_cancelled():
     """取消旗在启动前已置位：直接 cancelled，不提交任何 operation。"""
     import httpx

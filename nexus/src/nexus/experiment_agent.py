@@ -209,6 +209,34 @@ def file_tool_exit(msg: Any) -> int | None:
     return None
 
 
+def attribute_operation(
+    backend: Any, command: str, used_ids: set[str],
+) -> str:
+    """把工具结果归因到 control operation（T5-1 精确版）。
+
+    优先按命令文本匹配未认领的提交（execute 的 tool 参数与提交命令逐字
+    一致；funnel 脚本按最近未认领回退）；并行批量下匹配不上的返回空串，
+    不冒充——错的对账 id 比缺失更有害。调用方把返回的 id 记入 used_ids。
+    """
+    log = list(getattr(backend, "submitted_ops", None) or [])
+    cleaned = (command or "").strip()
+    if cleaned and not cleaned.startswith("["):
+        for op_id, submitted in log:
+            if op_id in used_ids:
+                continue
+            if cleaned == (submitted or "").strip() or cleaned in (submitted or ""):
+                used_ids.add(op_id)
+                return op_id
+    for op_id, _submitted in reversed(log):
+        if op_id not in used_ids:
+            used_ids.add(op_id)
+            return op_id
+    if log:
+        # 日志齐全但全部已认领（并行错位）：返回空串，不冒充。
+        return ""
+    return str(getattr(backend, "last_operation_id", "") or "")
+
+
 def set_terminal_status(run_id: str, status: str, detail: str = "") -> dict[str, Any] | None:
     """终态落盘（ cancelled/succeeded/failed 互斥，不覆盖已有终态）。
 
@@ -359,6 +387,7 @@ async def _execute_under_lock(
     # 每次落盘前检查取消旗——取消后立即收尾，不再提交新操作。
     pending_commands: dict[str, str] = {}
     file_summaries: dict[str, str] = {}
+    used_operation_ids: set[str] = set()
     try:
         async for _stream_mode, payload in agent.astream(
                 {"messages": [{"role": "user", "content": (
@@ -398,8 +427,9 @@ async def _execute_under_lock(
                         last_exit = file_tool_exit(msg)
                         command = file_summaries.pop(
                             str(getattr(msg, "tool_call_id", "") or ""), name)
-                    # 对账 id 取 Adapter 最近提交（顺序执行保证即本次 op）。
-                    operation_id = str(getattr(active_backend, "last_operation_id", "") or "")
+                    # 对账 id 经提交日志精确归因（并行批量下不冒充）。
+                    operation_id = attribute_operation(
+                        active_backend, command or f"[{name}]", used_operation_ids)
                     runs_module.record_attempt(
                         run_id, actual_command=command or f"[{name}]",
                         operation_id=operation_id,

@@ -114,6 +114,9 @@ class HttpSandboxBackend(BaseSandbox):
         self._ensured = False
         # T4 图层续跑用：最近一次 execute 提交/查询的 operation_id。
         self.last_operation_id = ""
+        # T5-1：提交日志（operation_id, command），供执行器把工具结果
+        # 精确归因到 control operation（并行调用下 last_operation_id 会错位）。
+        self.submitted_ops: list[tuple[str, str]] = []
 
     @property
     def id(self) -> str:
@@ -298,6 +301,7 @@ class HttpSandboxBackend(BaseSandbox):
         self._ensure_sandbox()
         operation_id = self._new_operation_id()
         self.last_operation_id = operation_id
+        self.submitted_ops.append((operation_id, command))
         data = self._post(
             f"/sandboxes/{quote(self._run_id, safe='')}/operations",
             {"operation_id": operation_id, "command": command,
@@ -339,6 +343,7 @@ class HttpSandboxBackend(BaseSandbox):
         await self._aensure_sandbox()
         operation_id = self._new_operation_id()
         self.last_operation_id = operation_id
+        self.submitted_ops.append((operation_id, command))
         data = await self._apost(
             f"/sandboxes/{quote(self._run_id, safe='')}/operations",
             {"operation_id": operation_id, "command": command,

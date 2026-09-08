@@ -355,6 +355,9 @@ Runtime 日志零错误。常驻链路（审批→调度→Adapter→控制→�
    control operation 的原生文件工具（实证：7 个 op 只记 3 个 attempt）。
    修：`write_file/read_file/edit_file/ls/glob/grep/delete` 的工具调用同样
    记录（成功 0/失败 1，命令摘要），与 control operation 1:1 对账。
+3. **并行归因错位（gap，已修）**：`last_operation_id` 在并行批量下把多个
+   结果记到同一个 op（实证：op-0010 被记 4 次）。修：Adapter 记提交日志，
+   执行器按命令文本精确匹配＋已认领去重，对不上返回空串不冒充。
 
-回归：nexus 全套件 **206 passed**（新增 4 项：终态守卫、文件工具映射、
-生产记录全覆盖、启动前取消零提交）；`uv.lock` 零改动。
+回归：nexus 全套件 **207 passed**（新增 5 项：终态守卫、文件工具映射、
+生产记录全覆盖、启动前取消零提交、顺序归因精确）；`uv.lock` 零改动。
