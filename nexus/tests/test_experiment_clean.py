@@ -124,6 +124,28 @@ def _backend_for(container, run_id):
         transport=httpx.MockTransport(container.responder))
 
 
+def test_replay_backend_op_ids_unique_per_replay():
+    """op id 跨重放唯一（控制面同 id 不运行两次；复用会 409 误杀）。
+
+    同一干净 id 建两个 Backend：op 序列号相同但 nonce 不同 → ids 全异；
+    前缀仍为 `{clean_id}-op-`（可与控制面对账）。
+    """
+    from nexus import experiment_clean as clean_module
+
+    backend_a = clean_module._ReplayBackend(
+        run_id="apv_x-clean1", base_url="http://control.test", token="t",
+        transport=httpx.MockTransport(_ReplayContainer().responder),
+        _nonce="aaa")
+    backend_b = clean_module._ReplayBackend(
+        run_id="apv_x-clean1", base_url="http://control.test", token="t",
+        transport=httpx.MockTransport(_ReplayContainer().responder),
+        _nonce="bbb")
+    ids_a = {backend_a._new_operation_id() for _ in range(3)}
+    ids_b = {backend_b._new_operation_id() for _ in range(3)}
+    assert ids_a.isdisjoint(ids_b)
+    assert all(i.startswith("apv_x-clean1-op-") for i in ids_a | ids_b)
+
+
 def test_clean_sandbox_id_isolated_and_bounded():
     clean_id = clean_module.clean_sandbox_id("apv_123456789012")
     assert clean_id == "apv_123456789012-clean1"

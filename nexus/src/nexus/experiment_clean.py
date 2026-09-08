@@ -26,6 +26,8 @@ import logging
 import time
 from typing import Any
 
+from nexus.experiment_sandbox import HttpSandboxBackend as _HttpSandboxBackendBase
+
 logger = logging.getLogger("nexus.experiment_clean")
 
 CLEAN_SANDBOX_SUFFIX = "-clean1"
@@ -68,8 +70,11 @@ async def replay_steps(
 ) -> dict[str, Any]:
     """在给定 backend（已绑定干净沙箱 id）中按序重放并比对退出码。
 
-    backend：HttpSandboxBackend（aexecute 真异步）；step_timeout_s 单步
-    上限（超时先回收沙箱再抛 CLEAN_STEP_TIMEOUT，不记 verdict）。
+    backend：HttpSandboxBackend（aexecute 真异步；op id 须跨重放唯一，
+    见 _ReplayBackend nonce 后缀——控制面"同 id 不运行两次"，复用 id
+    会 409 误杀）；step_timeout_s 单步上限（超时如实抛
+    CLEAN_STEP_TIMEOUT，不记 verdict，不回收沙箱——回收会把沙箱打成
+    终态，后续重放 409 RUN_TERMINAL；容器复用，ids 唯一即无冲突）。
     返回 {"verdict", "matched", "total", "results": [...]}。
     """
     steps = replayable_steps(run)
@@ -88,11 +93,6 @@ async def replay_steps(
                              f"重放中断（{error.code}）：{error}") from error
         observed = response.exit_code
         if observed is None:
-            # 超时≠通过：先回收可能卡住的沙箱（下次重放拿新容器），再如实抛错。
-            try:
-                await backend.cancel()
-            except Exception:  # noqa: BLE001 - 回收 best-effort
-                pass
             raise CleanError(
                 "CLEAN_STEP_TIMEOUT",
                 f"步骤#{step['attempt_no']} 超时未出退出码（`{step['command'][:80]}`）；"
@@ -114,9 +114,15 @@ async def replay_steps(
 
 
 def _backend_for_clean(clean_id: str) -> Any:
-    """由服务端配置构造干净沙箱绑定 Backend（与实验图同源配置）。"""
+    """由服务端配置构造干净沙箱绑定 Backend（与实验图同源配置）。
+
+    op id 带 per-replay nonce 后缀（_ReplayBackend）：控制面"同 id
+    不运行两次"，重试复用 id 会 409 误杀；nonce 保证每次重放 ids 唯一。
+    """
+    import uuid
+
     from nexus.config import get_settings
-    from nexus.experiment_sandbox import ExperimentSandboxError, HttpSandboxBackend
+    from nexus.experiment_sandbox import ExperimentSandboxError
 
     settings = get_settings()
     base_url = (getattr(settings, "repro_control_url", "") or "").rstrip("/")
@@ -126,7 +132,25 @@ def _backend_for_clean(clean_id: str) -> Any:
             "SANDBOX_NOT_CONFIGURED",
             "执行控制服务未配置（NEXUS_REPRO_CONTROL_URL 为空）；干净验证未执行。",
         )
-    return HttpSandboxBackend(run_id=clean_id, base_url=base_url, token=token)
+    return _ReplayBackend(run_id=clean_id, base_url=base_url, token=token,
+                          _nonce=uuid.uuid4().hex[:8])
+
+
+class _ReplayBackend(_HttpSandboxBackendBase):
+    """重放专用 Backend：op id 追加 per-replay nonce（控制面去重要求）。
+
+    基类在模块导入时解析（experiment_sandbox 只依赖 deepagents/httpx，
+    无 nexus 包内循环）。
+    """
+
+    def __init__(self, *args: Any, _nonce: str = "", **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._replay_nonce = (_nonce or "").strip()[:16]
+
+    def _new_operation_id(self) -> str:
+        self._op_seq += 1
+        suffix = f"-{self._replay_nonce}" if self._replay_nonce else ""
+        return f"{self._run_id}-op-{self._op_seq:04d}{suffix}"
 
 
 async def run_clean_verification(
