@@ -58,7 +58,8 @@ def _auth(token: str) -> dict[str, str]:
 def _grant_fixture(monkeypatch, session, student_user):
     monkeypatch.setattr(nexus_proxy.settings, "NEXUS_RUNTIME_URL", RUNTIME_URL)
     monkeypatch.setattr(nexus_proxy.settings, "NEXUS_RUNTIME_API_KEY", SERVICE_TOKEN)
-    nexus_internal.settings.NEXUS_INTERNAL_TOKEN = INTERNAL_TOKEN
+    monkeypatch.setattr(nexus_internal.settings, "NEXUS_INTERNAL_TOKEN",
+                        INTERNAL_TOKEN)
     session.add(PlatformPermissionAssignment(
         user_id=student_user.id,
         permission=PlatformPermission.NEXUS_USE,
@@ -95,19 +96,17 @@ def _console_snapshot(run_id, status="running", console_status="running"):
 
 
 def test_autonomous_linkage_accepts_empty_job_id(client, session, monkeypatch):
-    nexus_internal.settings.NEXUS_INTERNAL_TOKEN = INTERNAL_TOKEN
-    try:
-        response = client.post(
-            "/api/v1/nexus-internal/repro-runs",
-            json={"run_id": "apv_t5_link", "session_id": SID,
-                  "tool": "autonomous_experiment", "job_id": "",
-                  "status": "running", "proposal_id": "pp_t5",
-                  "config_snapshot": {"kind": "autonomous_experiment"}},
-            headers={"Authorization": f"Bearer {INTERNAL_TOKEN}",
-                     "X-Nexus-User-Id": "99"},
-        )
-    finally:
-        nexus_internal.settings.NEXUS_INTERNAL_TOKEN = ""
+    monkeypatch.setattr(nexus_internal.settings, "NEXUS_INTERNAL_TOKEN",
+                        INTERNAL_TOKEN)
+    response = client.post(
+        "/api/v1/nexus-internal/repro-runs",
+        json={"run_id": "apv_t5_link", "session_id": SID,
+              "tool": "autonomous_experiment", "job_id": "",
+              "status": "running", "proposal_id": "pp_t5",
+              "config_snapshot": {"kind": "autonomous_experiment"}},
+        headers={"Authorization": f"Bearer {INTERNAL_TOKEN}",
+                 "X-Nexus-User-Id": "99"},
+    )
     assert response.status_code == 200
     row = nexus_run_service.get_owned_run(session, user_id="99", run_id="apv_t5_link")
     assert row is not None and row["tool"] == "autonomous_experiment"

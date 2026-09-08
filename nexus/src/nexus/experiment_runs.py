@@ -323,7 +323,9 @@ def record_attempt(
         "actual_command": command[:2000],
         "config_changes": dict(config_changes or {}),
         "started_at": _now(),
-        "finished_at": None,
+        # 生产语义：attempt 在 operation 完成后才追加，故完成时间即落盘时间；
+        # exit_code 为空（合成/在途行）时如实留空，时长显示为空。
+        "finished_at": _now() if exit_code is not None else None,
         "exit_code": exit_code,
         "log_ref": (log_ref or "")[:500],
         "artifact_refs": [],

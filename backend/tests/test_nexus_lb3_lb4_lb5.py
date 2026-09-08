@@ -216,7 +216,8 @@ def test_run_context_log_bounds_direct():
 
 
 def test_cancel_grant_endpoints_and_internal_flow(
-    client, session, nexus_student_token, student_user, worker_configured
+    client, session, nexus_student_token, student_user, worker_configured,
+    monkeypatch,
 ):
     uid = str(student_user.id)
     _record(session, "lb4-r1", user=uid, session_id=SID, job_id="job-lb4-1")
@@ -225,7 +226,9 @@ def test_cancel_grant_endpoints_and_internal_flow(
         "X-Nexus-User-Id": uid,
         "X-Nexus-Session-Id": SID,
     }
-    nexus_internal.settings.NEXUS_INTERNAL_TOKEN = "internal-tok"
+    # B9：用 monkeypatch 写 token（直接赋值会泄漏到后续测试，造成顺序污染）。
+    monkeypatch.setattr(nexus_internal.settings, "NEXUS_INTERNAL_TOKEN",
+                        "internal-tok")
 
     # 无授权 → confirmation_required（一次性授权必须由用户签发）。
     no_grant = client.post(
@@ -264,14 +267,15 @@ def test_cancel_grant_endpoints_and_internal_flow(
 
 
 def test_internal_cancel_terminal_run_needs_no_grant(
-    client, session, nexus_student_token, student_user
+    client, session, nexus_student_token, student_user, monkeypatch
 ):
     uid = str(student_user.id)
     _record(session, "lb4-r2", user=uid, session_id=SID, job_id="job-lb4-2",
             status="succeeded")
     headers = {"Authorization": "Bearer internal-tok",
                "X-Nexus-User-Id": uid, "X-Nexus-Session-Id": SID}
-    nexus_internal.settings.NEXUS_INTERNAL_TOKEN = "internal-tok"
+    monkeypatch.setattr(nexus_internal.settings, "NEXUS_INTERNAL_TOKEN",
+                        "internal-tok")
     response = client.post("/api/v1/nexus-internal/runs/lb4-r2/cancel",
                            headers=headers)
     assert response.status_code == 200
@@ -281,11 +285,12 @@ def test_internal_cancel_terminal_run_needs_no_grant(
 
 
 def test_internal_run_endpoints_reject_cross_session_and_bad_token(
-    client, session, nexus_student_token, student_user
+    client, session, nexus_student_token, student_user, monkeypatch
 ):
     uid = str(student_user.id)
     _record(session, "lb4-r3", user=uid, session_id=SID, job_id="job-lb4-3")
-    nexus_internal.settings.NEXUS_INTERNAL_TOKEN = "internal-tok"
+    monkeypatch.setattr(nexus_internal.settings, "NEXUS_INTERNAL_TOKEN",
+                        "internal-tok")
     owner = {"Authorization": "Bearer internal-tok",
              "X-Nexus-User-Id": uid, "X-Nexus-Session-Id": "other-session"}
     cross = client.get("/api/v1/nexus-internal/runs/lb4-r3/status", headers=owner)
@@ -349,11 +354,12 @@ def test_run_notes_append_idempotent_and_isolated(
 
 
 def test_agent_notes_marked_agent_via_internal(
-    client, session, nexus_student_token, student_user
+    client, session, nexus_student_token, student_user, monkeypatch
 ):
     uid = str(student_user.id)
     _record(session, "lb5-r3", user=uid, session_id=SID, job_id="job-lb5-3")
-    nexus_internal.settings.NEXUS_INTERNAL_TOKEN = "internal-tok"
+    monkeypatch.setattr(nexus_internal.settings, "NEXUS_INTERNAL_TOKEN",
+                        "internal-tok")
     headers = {"Authorization": "Bearer internal-tok",
                "X-Nexus-User-Id": uid, "X-Nexus-Session-Id": SID}
     response = client.post("/api/v1/nexus-internal/runs/lb5-r3/notes",

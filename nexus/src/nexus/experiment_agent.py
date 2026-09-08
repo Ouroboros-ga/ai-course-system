@@ -275,7 +275,12 @@ async def _lock_for(run_id: str) -> asyncio.Lock:
 
 
 def _backend_from_settings(run_id: str):
-    """由服务端配置构造 run 绑定 Backend；未配置抛 ExperimentSandboxError。"""
+    """由服务端配置构造 run 绑定 Backend；未配置抛 ExperimentSandboxError。
+
+    §2：携带 run 的授权 scope_hash 与提案冻结的 resources（控制面据此
+    幂等校验与派生容器限额）。
+    """
+    from nexus import experiment_runs as runs_module
     from nexus.config import get_settings
     from nexus.experiment_sandbox import ExperimentSandboxError, HttpSandboxBackend
 
@@ -287,7 +292,21 @@ def _backend_from_settings(run_id: str):
             "SANDBOX_NOT_CONFIGURED",
             "执行控制服务未配置（NEXUS_REPRO_CONTROL_URL 为空）；实验未执行。",
         )
-    return HttpSandboxBackend(run_id=run_id, base_url=base_url, token=token)
+    scope_hash = ""
+    resources: dict[str, Any] = {}
+    run = runs_module.get_run(run_id)
+    if run is not None:
+        scope_hash = str(run.get("scope_hash") or "")
+        try:
+            from nexus import proposals as proposals_module
+
+            proposal = proposals_module.get_proposal(run.get("proposal_id", ""))
+            if proposal is not None:
+                resources = dict((proposal.get("scope") or {}).get("resources") or {})
+        except Exception:  # noqa: BLE001 - 提案不可读不阻断（资源走部署默认）
+            resources = {}
+    return HttpSandboxBackend(run_id=run_id, base_url=base_url, token=token,
+                              scope_hash=scope_hash, resources=resources)
 
 
 async def execute_bound_run(
@@ -462,10 +481,16 @@ async def _execute_under_lock(
                     executed += 1
                     if name == "execute":
                         last_exit = parse_exit_code(content)
+                        attempt_exit = last_exit
+                        attempt_kind = "execute"
                         command = pending_commands.pop(
                             str(getattr(msg, "tool_call_id", "") or ""), "")
                     else:
-                        last_exit = file_tool_exit(msg)
+                        # 文件工具只记 attempt（与 control operation 1:1 对账），
+                        # 不参与终态判定——否则"命令失败后读一次文件收尾"会被
+                        # 误判为执行成功（诚实性要求：exit 0 ≠ 复现成功）。
+                        attempt_exit = file_tool_exit(msg)
+                        attempt_kind = "file_tool"
                         command = file_summaries.pop(
                             str(getattr(msg, "tool_call_id", "") or ""), name)
                     # 对账 id 经提交日志精确归因（并行批量下不冒充）。
@@ -473,8 +498,9 @@ async def _execute_under_lock(
                         active_backend, command or f"[{name}]", used_operation_ids)
                     runs_module.record_attempt(
                         run_id, actual_command=command or f"[{name}]",
+                        config_changes={"kind": attempt_kind},
                         operation_id=operation_id,
-                        exit_code=last_exit, log_ref=content[-2000:])
+                        exit_code=attempt_exit, log_ref=content[-2000:])
     except Exception as error:  # noqa: BLE001 - 图异常 fail-closed 落盘
         logger.warning("experiment graph failed for %s: %s", run_id, type(error).__name__)
         ended = set_terminal_status(run_id, "failed", f"实验图异常：{type(error).__name__}")

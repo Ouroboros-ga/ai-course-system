@@ -689,6 +689,25 @@ def test_chat_rejects_unknown_execution_mode_before_runtime(
     assert "INVALID_RESEARCH_EXECUTION_MODE" in execute_response.text
 
 
+def test_execute_explicit_ask_rejected_before_runtime(
+    client, nexus_student_token, runtime_configured
+):
+    """A3：显式 Ask 执行请求在后端直接 403，零转发（与 Runtime 同码）。"""
+
+    async def _must_not_reach(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Ask 执行请求不得透传上游")
+
+    with mock_runtime(_must_not_reach):
+        response = client.post(
+            "/api/v1/nexus/repro/execute",
+            json={"approval_id": "apv_1", "session_id": "s1",
+                  "mode": "research", "research_execution_mode": "ask"},
+            headers=_auth(nexus_student_token),
+        )
+    assert response.status_code == 403
+    assert "EXPERIMENT_EXECUTION_DISABLED" in response.text
+
+
 def test_chat_forwards_legal_execution_mode(
     client, nexus_student_token, runtime_configured
 ):

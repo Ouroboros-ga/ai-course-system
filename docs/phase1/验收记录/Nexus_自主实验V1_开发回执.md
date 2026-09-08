@@ -550,3 +550,51 @@ LICENSE_NOT_ALLOWED）；新增 `nexus/tests/test_t7_license_gate.py`（8 项）
 - 未关闭项：LaTeX 编译证明（需 TeX Live 工具链，apt 安装另需授权）；
   真实模型执行成功态（DeepSeek key 尾号 b27d 持续 invalid，待轮换）；
   真实用户 UI 全链手工走读（按钮已上线，随密钥恢复后补测）。
+
+## 全量审核与修复（2026-09-08/09，基线 `c1e217d0`）
+
+审核：[全量审核记录](Nexus_自主实验V1_全量审核_2026-09-08.md)（6 路并行分册＋审核人逐条复核，无 P0、9 项 P1）；
+修复：[修复计划](Nexus_自主实验V1_修复计划_2026-09-08.md)。本节**订正本回执中的不实/过期表述**并记录修复后事实。
+
+### 回执订正
+
+1. T1-b"生产沿用'预构建＋pull=never'"→ 代码实为 `pull="missing"`。**已修**：
+   `REPRO_TASK_PULL` 默认 `never`，缺镜像启动失败如实报错，不静默联网拉取。
+2. T6"配方：…＋镜像 digest"→ `scope` 无该字段，生产路径恒为空。**已修**：
+   digest 由控制面 `docker inspect` 采集并经 lifecycle 透出，报告生成时写入配方
+   （控制面不可达如实留空）。
+3. T2"自主审批卡…（scope_hash 不下发）"→ `GET /nexus/approvals` 列表曾下发
+   `scope_hash`。**已修**：列表不再下发。
+4. 任务书 T2"后端和工具各自校验"→ 后端此前只做词形 400。**已修**：显式 Ask 在
+   `nexus_proxy` 直接 403 `EXPERIMENT_EXECUTION_DISABLED`，零转发零提交。
+5. 各节"（未提交）"为写作时状态；T2–T7 已分别提交于 `f8379d3e`/`432c195d`/
+   `07c90a63`/`cd54d1ff`/`ac148ab2` 等。
+6. T0 复选框"记录 preset/审批/Console 调用链"与 SWE-ReX commit 未写：调用链见
+   本回执 T2–T6 各节模块清单；swe-rex 精确版本由 `deploy/repro-runtime/uv.lock`
+   锁定（1.4.0）。
+
+### 修复后新增（均带回归测试）
+
+- 终态判定只认 `execute`：文件工具只记 attempt，不再把失败 run 判成 succeeded；
+- 控制面 §2 契约补齐：ensure 携带 `scope_hash`（异 hash → 409 `SCOPE_HASH_MISMATCH`）
+  与 `resources`（派生 `--memory/--cpus/--storage-opt`，超服务端上限 422；磁盘配额
+  不被存储驱动支持时降级并记 note）；文件路径限定工作区＋symlink 逃逸拒绝
+  （容器内 `readlink -f` 校验）；
+- run 级 `wall_time_s` 到期拒绝新操作（409 `WALL_TIME_EXCEEDED`），已有结果保留；
+- T5 恢复接线：console 入口经 `console_snapshot_for` 接管查询（零 submit），
+  失联/未配置仍 `reconciling`；
+- `record_attempt` 落 `finished_at`（运行时长不再恒空）；报告 Markdown 结论行写明
+  run 状态，消除"报告成功/run failed"的误读；
+- 后端测试顺序污染修复（token 赋值改 `monkeypatch`）。
+
+### 修复后回归（2026-09-09）
+
+nexus **261 passed**；repro-runtime **20 passed / 6 skipped**（live docker 需真实
+环境）；backend nexus 域 **101 passed / 12 skipped / 0 failed**；前端契约与构建见
+修复计划回执节。
+
+### 仍未验证（不因本轮修复而改变）
+
+真实模型在真实沙箱内的自主修复与成功态（DeepSeek key 待轮换）、repo2docker 路线、
+LaTeX 编译证明、线上真实 PG 的迁移列与恢复/取消全链、宿主隔离脚本
+`deploy/repro-runtime/scripts/verify_host.sh` 的服务器实跑。

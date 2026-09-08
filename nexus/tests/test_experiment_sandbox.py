@@ -11,6 +11,7 @@ FakeTransport；传输超时后同 operation_id 查询，不生成新命令；�
 
 from __future__ import annotations
 
+import base64
 import json
 
 import httpx
@@ -37,6 +38,7 @@ class _FakeControlService:
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
         self.ensure_calls: list[str] = []
+        self.ensure_bodies: list[dict] = []
         self.operation_posts: list[dict] = []
         self.operation_queries: list[str] = []
         self.file_puts: list[tuple[str, bytes]] = []
@@ -62,6 +64,7 @@ class _FakeControlService:
         path = request.url.path
         if request.method == "PUT" and "/files" not in path:
             self.ensure_calls.append(path)
+            self.ensure_bodies.append(json.loads(request.content or b"{}"))
             return httpx.Response(200, json={"sandbox_id": "sb-test",
                                              "status": "ready"})
         if request.method == "POST" and path.endswith("/operations"):
@@ -134,6 +137,43 @@ def test_task_book_fixture_native_tools_funnel_through_transport():
     assert commands[-1] == "cat /workspace/probe.txt"
     assert service.file_puts == [("/workspace/probe.txt", b"before")]
     assert backend.last_operation_id.startswith("run-t1-op-")
+
+
+def test_ensure_payload_carries_scope_hash_and_resources():
+    """A2/A4：ensure 携带授权 scope_hash 与已确认 resources（§2 契约）。"""
+    service = _FakeControlService()
+    resources = {"cpu": 1.0, "memory_mb": 1024, "disk_mb": 2048,
+                 "wall_time_s": 600}
+    backend = _backend(service, scope_hash="a" * 32, resources=resources)
+    backend.execute("echo hi")
+    assert service.ensure_bodies == [{"scope_hash": "a" * 32,
+                                      "resources": resources}]
+
+
+def test_read_and_grep_funnel_through_transport():
+    """T1 点名：原生 read/grep 的实际命令同样进入 FakeTransport。"""
+    service = _FakeControlService()
+    service.scripts.extend([{"output_tail": "hello"},
+                            {"output_tail": "match"}])
+    backend = _backend(service)
+    backend.read("/workspace/probe.txt")
+    backend.grep("after", "/workspace")
+    commands = [p["command"] for p in service.operation_posts]
+    assert len(commands) == 2, "read/grep 各产生一次 operation 提交"
+    # read 的路径在远端脚本里是 base64 常量（deepagents 已发布实现）；
+    # grep 的 pattern/路径是字面量。
+    encoded = base64.b64encode(b"/workspace/probe.txt").decode()
+    assert any(encoded in c for c in commands), "read 的实际路径进入传输层"
+    assert any("after" in c and "/workspace" in c for c in commands)
+
+
+def test_client_rejects_path_outside_workspace():
+    """A2：客户端侧路径限定任务工作区，越界直接拒绝、不上传。"""
+    service = _FakeControlService()
+    backend = _backend(service)
+    result = backend.write("/etc/passwd", "x")
+    assert result.error and "工作区" in result.error
+    assert service.file_puts == [], "越界路径不得进入文件传输"
 
 
 async def test_execute_timeout_returns_tail_without_resubmit():

@@ -69,11 +69,25 @@ class _Intake:
 
     async def prepare(self, target, objective=""):
         from nexus import experiment_intake as intake_module
+        from nexus.tools import reproduction as repro_module
 
-        result = await intake_module.prepare(
-            target, objective, user_id=self.user_id,
-            session_id=self.session_id, reader=self.reader,
-            searcher=self.searcher)
+        # 真实计数：把 Worker 提交入口换成会计数的转发（prepare 若真提交，
+        # 计数必然 >0——空断言不算护栏）。
+        real_submit = repro_module._submit_to_worker
+        intake = self
+
+        async def _counting_submit(preset):
+            intake.worker_submit_count += 1
+            return await real_submit(preset)
+
+        repro_module._submit_to_worker = _counting_submit
+        try:
+            result = await intake_module.prepare(
+                target, objective, user_id=self.user_id,
+                session_id=self.session_id, reader=self.reader,
+                searcher=self.searcher)
+        finally:
+            repro_module._submit_to_worker = real_submit
         return result
 
 

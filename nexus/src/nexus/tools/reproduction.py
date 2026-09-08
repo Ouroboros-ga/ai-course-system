@@ -199,6 +199,7 @@ def _require_execution_allowed(
     legacy_open=False（无门信息也拒绝）。
     """
     from nexus import approvals as approvals_module
+    from nexus import execution_mode as exec_mode_module
 
     if mode is None and execution_mode is None:
         if legacy_open:
@@ -207,7 +208,7 @@ def _require_execution_allowed(
             "EXPERIMENT_EXECUTION_DISABLED",
             "缺少执行模式上下文，自主实验拒绝执行",
         )
-    if mode == "research" and (execution_mode or "ask") == "auto":
+    if exec_mode_module.can_execute(mode or "", execution_mode):
         return
     raise approvals_module.ApprovalError(
         "EXPERIMENT_EXECUTION_DISABLED",

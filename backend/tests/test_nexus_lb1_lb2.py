@@ -323,6 +323,36 @@ def test_presets_proxy_returns_runtime_projection(
     assert response.json()["presets"][0]["display_name"] == "nanoGPT"
 
 
+def test_proposal_kind_and_scope_passthrough(
+    client, nexus_student_token, student_user, runtime_configured
+):
+    """B8：自主提案的 kind/scope 原样透传 Runtime（T2 判别字段不丢）。"""
+    seen: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content or b"{}")
+        return httpx.Response(200, json={
+            "proposal": {"proposal_id": "pp-auto", "version": 1}})
+
+    scope = {
+        "objective": "配置并试跑", "repo_url": "https://github.com/example/r",
+        "repo_revision": "deadbeef1234567890", "source_refs": [], "data_refs": [],
+        "network_profile": "pypi-allowed",
+        "resources": {"cpu": 1.0, "memory_mb": 2048, "disk_mb": 5120,
+                      "wall_time_s": 1800},
+        "mode": "smoke", "allow_environment_repair": True,
+    }
+    with mock_runtime(handler):
+        response = client.post(
+            "/api/v1/nexus/repro/proposals",
+            json={"session_id": "s9", "kind": "autonomous_experiment",
+                  "scope": scope, "objective": "配置并试跑"},
+            headers=_auth(nexus_student_token))
+    assert response.status_code == 200
+    assert seen["body"]["kind"] == "autonomous_experiment"
+    assert seen["body"]["scope"] == scope
+
+
 # ---------------------------------------------------------------------------
 # LB2：提案代理（透传＋本地 422）
 # ---------------------------------------------------------------------------

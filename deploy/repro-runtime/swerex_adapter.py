@@ -159,6 +159,43 @@ class SwerexDockerAdapter:
             logger.warning("run %s docker rm rc=%s: %s", self.run_id, code,
                            out[:200])
 
+    async def image_digest(self) -> str:
+        """容器实际镜像 ID（sha256:…）；无 docker CLI/容器时返回空串。
+
+        用于配方如实记录镜像来源（tag 可被重指，digest 不会）。
+        """
+        name = self.container_name
+        if not name:
+            return ""
+        try:
+            code, out = _docker_cli("inspect", "--format", "{{.Image}}", name)
+        except DockerBackendUnavailableError:
+            return ""
+        text = (out or "").strip()
+        if code != 0 or not text:
+            return ""
+        return text.splitlines()[-1].strip()[:128]
+
+    async def resolve_real_path(self, path: str) -> str:
+        """容器内 `readlink -f` 解析真实路径（symlink 逃逸校验用）。
+
+        路径不存在时 GNU readlink -f 仍返回解析后的字面路径（exit 0）；
+        解析失败（无 CLI/容器）抛 DockerBackendUnavailableError，调用方如实映射。
+        """
+        import shlex
+
+        if self._deployment is None:
+            raise DockerBackendUnavailableError(
+                "NOT_STARTED", "实例未启动；先 start() 再解析路径")
+        result = await self.execute(
+            f"readlink -f -- {shlex.quote(path)}", timeout_s=30.0)
+        if result["exit_code"] != 0:
+            raise DockerBackendUnavailableError(
+                "RESOLVE_FAILED",
+                f"路径解析失败（exit={result['exit_code']}）：{result['output'][:200]}")
+        lines = [line.strip() for line in str(result["output"]).splitlines() if line.strip()]
+        return lines[-1] if lines else path
+
     async def is_alive(self) -> bool:
         if self._deployment is None:
             return False

@@ -49,6 +49,11 @@ class _ScriptedContainer:
 
     def _run(self, command):
         self.executions.append(command)
+        if command.startswith("ls -a /workspace"):
+            names = sorted(
+                path.rsplit("/", 1)[-1] for path in self.files
+                if path.startswith("/workspace/"))
+            return 0, "\n".join([".", ".."] + names)
         if command.startswith("pip install fakepkg"):
             self.installed.add("fakepkg")
             return 0, "Successfully installed fakepkg"
@@ -76,6 +81,17 @@ class _ScriptedContainer:
                 return {}
 
         path = request.url.path
+        if request.method == "PUT" and "/files/" in path:
+            # 文件上传先于 ensure 分支判定（否则被 ensure 吞掉，无法验证内容
+            # 真的到达容器）。
+            fpath = "/" + path.split("/files/", 1)[-1]
+            self.uploads.append(fpath)
+            try:
+                self.files[fpath] = request.content.decode("utf-8")
+            except UnicodeDecodeError:
+                self.files[fpath] = ""
+            return httpx.Response(200, json={"path": fpath,
+                                             "bytes": len(request.content)})
         if request.method == "PUT" and "/sandboxes/" in path:
             return httpx.Response(200, json={"sandbox_id": "sbx-t4",
                                              "status": "ready"})
@@ -113,29 +129,56 @@ def _tool_call(name, args, call_id):
     return {"name": name, "args": args, "id": call_id}
 
 
-def _scripted_model():
-    """按固定剧本发工具调用：读→装→跑（败）→修→跑（成）。"""
+def _ready_run(user_id: str, session_id: str | None = None) -> dict:
+    """建一个已批准＋已核销、可直接执行的 run（License verified＋修订固定）。"""
+    session_id = session_id or f"s-{user_id}"
+    proposal = proposals_module.create_proposal(
+        user_id=user_id, session_id=session_id, preset=None,
+        kind="autonomous_experiment", scope={
+            "objective": "配置并试跑", "repo_url": "https://github.com/example/r",
+            "repo_revision": "deadbeef1234567890", "source_refs": [], "data_refs": [],
+            "network_profile": "pypi-allowed",
+            "resources": {"cpu": 1.0, "memory_mb": 2048, "disk_mb": 5120,
+                          "wall_time_s": 1800},
+            "mode": "smoke", "allow_environment_repair": True},
+        license_info={"spdx": "MIT", "status": "verified"})
+    req = proposals_module.request_approval_for_proposal(
+        proposal["proposal_id"], user_id=user_id,
+        expected_version=proposal["version"])
+    aid = req["approval"]["approval_id"]
+    approvals.decide_approval(aid, user_id, "approved")
+    approvals.consume_approval(aid, user_id=user_id, session_id=session_id,
+                               preset={})
+    return runs_module.create_or_get_run(
+        run_id=aid, owner=user_id, session_id=session_id,
+        proposal_id=proposal["proposal_id"], proposal_version=1,
+        scope_hash=proposal["scope_hash"], approval_id=aid)
+
+
+def _scripted_model(script=None):
+    """按剧本发工具调用（默认：读→装→跑（败）→修→跑（成））。"""
     from langchain_openai import ChatOpenAI
     from pydantic import PrivateAttr
 
     from nexus.experiment_agent import _ExperimentChatOpenAI
 
-    script = [
-        AIMessage(content="", tool_calls=[
-            _tool_call("write_file", {"file_path": "/workspace/probe.txt",
-                                      "content": "probe"}, "c0")]),
-        AIMessage(content="", tool_calls=[
-            _tool_call("execute", {"command": "cat /workspace/README.md"}, "c1")]),
-        AIMessage(content="", tool_calls=[
-            _tool_call("execute", {"command": "pip install -r requirements.txt"}, "c2")]),
-        AIMessage(content="", tool_calls=[
-            _tool_call("execute", {"command": "python train.py"}, "c3")]),
-        AIMessage(content="", tool_calls=[
-            _tool_call("execute", {"command": "pip install fakepkg"}, "c4")]),
-        AIMessage(content="", tool_calls=[
-            _tool_call("execute", {"command": "python train.py"}, "c5")]),
-        AIMessage(content="修复完成：补装 fakepkg 后 train.py 退出码 0，loss=0.5。"),
-    ]
+    if script is None:
+        script = [
+            AIMessage(content="", tool_calls=[
+                _tool_call("write_file", {"file_path": "/workspace/probe.txt",
+                                          "content": "probe"}, "c0")]),
+            AIMessage(content="", tool_calls=[
+                _tool_call("execute", {"command": "cat /workspace/README.md"}, "c1")]),
+            AIMessage(content="", tool_calls=[
+                _tool_call("execute", {"command": "pip install -r requirements.txt"}, "c2")]),
+            AIMessage(content="", tool_calls=[
+                _tool_call("execute", {"command": "python train.py"}, "c3")]),
+            AIMessage(content="", tool_calls=[
+                _tool_call("execute", {"command": "pip install fakepkg"}, "c4")]),
+            AIMessage(content="", tool_calls=[
+                _tool_call("execute", {"command": "python train.py"}, "c5")]),
+            AIMessage(content="修复完成：补装 fakepkg 后 train.py 退出码 0，loss=0.5。"),
+        ]
 
     class _Scripted(_ExperimentChatOpenAI):
         _script: list = PrivateAttr(default_factory=list)
@@ -240,18 +283,21 @@ class _Flow:
         result.tool_events = tool_events
         result.executions = [c for k, n, c in tool_events
                              if k == "call" and n == "execute"]
-        failures = [c for k, n, c in tool_events
+        fail_idx = [i for i, (k, n, c) in enumerate(tool_events)
                     if k == "result" and n == "execute" and "ModuleNotFoundError" in c]
-        successes = [c for k, n, c in tool_events
-                     if k == "result" and n == "execute" and "exit code 0" in c]
-        result.observed_failure_before_repair = bool(failures) and bool(successes)
+        ok_idx = [i for i, (k, n, c) in enumerate(tool_events)
+                  if k == "result" and n == "execute" and "exit code 0" in c]
+        # 时序断言：失败必须发生在（最后一次）成功之前，而非"各出现过一次"。
+        result.observed_failure_before_repair = (
+            bool(fail_idx) and bool(ok_idx) and min(fail_idx) < max(ok_idx))
         last_codes = re.findall(r"exit code (\d+)", " | ".join(
             c for k, n, c in tool_events if k == "result" and n == "execute"))
         result.final_exit_code = int(last_codes[-1]) if last_codes else None
-        # 原生文件工具经正式 Adapter 进沙箱：write_file 调用成功（内容经
-        # execute  funnel 或 upload 传输，容器侧 operation_posts 为证）。
-        result.used_framework_file_tools = any(
-            k == "call" and n == "write_file" for k, n, _c in tool_events)
+        # 原生文件工具经正式 Adapter 进沙箱：模型发起 write_file 且内容实际
+        # 到达容器（PUT /files 记录为证），不是"只发起了调用"。
+        result.used_framework_file_tools = (
+            any(k == "call" and n == "write_file" for k, n, _c in tool_events)
+            and bool(self.container.uploads))
         result.final_text = final_text
         result.proposal_id = proposal["proposal_id"]
         result.run_id = run["run_id"]
@@ -451,6 +497,65 @@ async def test_bound_run_records_file_tool_attempts():
     assert set(op_ids) <= set(posted)
 
 
+async def test_file_tool_tail_does_not_fake_success():
+    """A1 回归：末次工具是成功的文件工具时，run 与报告都不得判成功。
+
+    剧本：execute 失败（缺包）→ read_file 成功收尾。文件工具只作对账
+    attempt，不参与终态判定（否则"读一次文件"就把失败伪装成成功）。
+    """
+    import httpx
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from nexus import experiment_agent as agent_module
+    from nexus import experiment_report as report_module
+    from nexus.experiment_sandbox import HttpSandboxBackend
+
+    container = _ScriptedContainer()
+    proposal = proposals_module.create_proposal(
+        user_id="u-a1", session_id="s-a1", preset=None,
+        kind="autonomous_experiment", scope={
+            "objective": "配置并试跑", "repo_url": "https://github.com/example/r",
+            "repo_revision": "deadbeef1234567890", "source_refs": [], "data_refs": [],
+            "network_profile": "pypi-allowed",
+            "resources": {"cpu": 1.0, "memory_mb": 2048, "disk_mb": 5120,
+                          "wall_time_s": 1800},
+            "mode": "smoke", "allow_environment_repair": True},
+        license_info={"spdx": "MIT", "status": "verified"})
+    req = proposals_module.request_approval_for_proposal(
+        proposal["proposal_id"], user_id="u-a1",
+        expected_version=proposal["version"])
+    aid = req["approval"]["approval_id"]
+    approvals.decide_approval(aid, "u-a1", "approved")
+    approvals.consume_approval(aid, user_id="u-a1", session_id="s-a1", preset={})
+    run = runs_module.create_or_get_run(
+        run_id=aid, owner="u-a1", session_id="s-a1",
+        proposal_id=proposal["proposal_id"], proposal_version=1,
+        scope_hash=proposal["scope_hash"], approval_id=aid)
+    backend = HttpSandboxBackend(
+        run_id=run["run_id"], base_url="http://control.test", token="t",
+        transport=httpx.MockTransport(container.responder))
+    script = [
+        AIMessage(content="", tool_calls=[
+            _tool_call("execute", {"command": "python train.py"}, "c0")]),
+        AIMessage(content="", tool_calls=[
+            _tool_call("read_file", {"file_path": "/workspace/train.py"}, "c1")]),
+        AIMessage(content="查看文件后停止。"),
+    ]
+    result = await agent_module.execute_bound_run(
+        run_id=run["run_id"], owner="u-a1", session_id="s-a1",
+        backend=backend, model=_scripted_model(script), checkpointer=InMemorySaver())
+    assert result["status"] == "failed", "文件工具收尾不得把失败 run 判成成功"
+    stored = runs_module.get_run(run["run_id"])
+    kinds = [str((a.get("config_changes") or {}).get("kind") or "")
+             for a in stored["attempts"]]
+    assert "file_tool" in kinds, "文件工具仍须落 attempt（对账语义不变）"
+    report = report_module.build_experiment_report(
+        run=stored, scope=proposal["scope"],
+        license_info={"spdx": "MIT", "status": "verified"})
+    assert report["execution_succeeded"] is False
+    assert report["metric_verdict"] == "not_evaluated"
+
+
 def test_operation_attribution_exact_for_sequential_calls():
     """T5-1：顺序调用下 attempt→operation 精确 1:1（并行批量不冒充）。
 
@@ -502,3 +607,57 @@ async def test_bound_run_cancel_before_start_stays_cancelled():
     assert result["status"] == "cancelled"
     assert container.operation_posts == []
     assert runs_module.get_run(run["run_id"])["status"] == "cancelled"
+
+
+async def test_repo2docker_route_fails_closed_not_delivered():
+    """T4：命中 repo2docker 声明 → ROUTE_NOT_DELIVERED，不假装已集成。"""
+    import httpx
+
+    from nexus import experiment_agent as agent_module
+    from nexus.experiment_sandbox import HttpSandboxBackend
+
+    container = _ScriptedContainer()
+    container.files["/workspace/environment.yml"] = "name: fixture\n"
+    run = _ready_run("u-r2d")
+    backend = HttpSandboxBackend(
+        run_id=run["run_id"], base_url="http://control.test", token="t",
+        transport=httpx.MockTransport(container.responder))
+    result = await agent_module.execute_bound_run(
+        run_id=run["run_id"], owner="u-r2d", session_id="s-u-r2d",
+        backend=backend, model=_scripted_model())
+    assert result["status"] == "failed"
+    assert result["code"] == "ROUTE_NOT_DELIVERED"
+    stored = runs_module.get_run(run["run_id"])
+    assert stored["attempts"][0]["config_changes"]["route"] == "repo2docker"
+    assert all("ls -a /workspace" in p["command"]
+               for p in container.operation_posts), \
+        "构建器未交付：除路由探测外不得执行任何命令"
+
+
+async def test_single_executor_lock_dedupes_concurrent_entry():
+    """T4：同 run 并发进入只有一个执行者，另一个返回 deduped 且不落状态。"""
+    from nexus import experiment_agent as agent_module
+
+    run = _ready_run("u-lock")
+    lock = await agent_module._lock_for(run["run_id"])
+    async with lock:
+        result = await agent_module.execute_bound_run(
+            run_id=run["run_id"], owner="u-lock", session_id="s-u-lock")
+    assert result["deduped"] is True
+    assert runs_module.get_run(run["run_id"])["status"] == "running"
+
+
+async def test_control_not_configured_fails_run_not_silent_running(monkeypatch):
+    """T4：控制服务未配置 → run 落 failed（SANDBOX_NOT_CONFIGURED），不静默 running。"""
+    from nexus import experiment_agent as agent_module
+    from nexus.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "repro_control_url", "")
+    run = _ready_run("u-nocfg")
+    result = await agent_module.execute_bound_run(
+        run_id=run["run_id"], owner="u-nocfg", session_id="s-u-nocfg")
+    assert result["status"] == "failed"
+    assert result["code"] == "SANDBOX_NOT_CONFIGURED"
+    stored = runs_module.get_run(run["run_id"])
+    assert stored["status"] == "failed"
+    assert "SANDBOX_NOT_CONFIGURED" in stored["detail"]

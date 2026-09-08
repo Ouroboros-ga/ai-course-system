@@ -33,12 +33,19 @@ class _FakeAdapter:
         self.run_id = run_id
         self.image = image
         self.docker_args = list(docker_args or [])
+        self.pull = kwargs.get("pull", "")
         self.container_name = f"fake-{run_id}"
         self.start_calls = 0
         self.stop_calls = 0
         self.executed: list[str] = []
         self.files: dict[str, bytes] = {"/workspace/seed.txt": b"seed"}
         _FakeAdapter.instances.append(self)
+
+    async def image_digest(self) -> str:
+        return "sha256:fake-digest"
+
+    async def resolve_real_path(self, path: str) -> str:
+        return path
 
     async def start(self) -> str:
         self.start_calls += 1
@@ -98,6 +105,74 @@ async def test_ensure_idempotent_same_run(api):
     second = await api.put("/sandboxes/run-1")
     assert second.json()["deduped"] is True
     assert len(_FakeAdapter.instances) == 1, "同 run 不重建实例"
+
+
+async def test_ensure_scope_hash_idempotent_and_conflict(api):
+    """§2：同 run 同 scope 幂等；异 hash 409，不静默复用实例。"""
+    first = await api.put("/sandboxes/run-scope",
+                          json={"scope_hash": "a" * 32})
+    assert first.status_code == 200 and first.json()["deduped"] is False
+    same = await api.put("/sandboxes/run-scope", json={"scope_hash": "a" * 32})
+    assert same.status_code == 200 and same.json()["deduped"] is True
+    conflict = await api.put("/sandboxes/run-scope",
+                             json={"scope_hash": "b" * 32})
+    assert conflict.status_code == 409
+    assert "SCOPE_HASH_MISMATCH" in conflict.json()["detail"]
+    assert len(_FakeAdapter.instances) == 1, "冲突不得重建实例"
+
+
+async def test_ensure_derives_limits_from_resources_and_never_pulls(api):
+    """§2/T4：已确认 resources 派生容器限额；镜像策略默认 never。"""
+    await api.put("/sandboxes/run-res", json={
+        "scope_hash": "c" * 32,
+        "resources": {"cpu": 1.5, "memory_mb": 1024, "disk_mb": 2048,
+                      "wall_time_s": 600}})
+    fake = _FakeAdapter.instances[0]
+    assert "--memory=1024m" in fake.docker_args
+    assert "--cpus=1.5" in fake.docker_args
+    assert "--storage-opt=size=2048m" in fake.docker_args
+    assert fake.pull == "never"
+    view = (await api.get("/sandboxes/run-res")).json()
+    assert view["image_digest"] == "sha256:fake-digest"
+    assert view["wall_time_s"] == 600 and view["deadline_at"] > 0
+
+
+async def test_resources_over_server_limit_rejected(api, monkeypatch):
+    monkeypatch.setattr(service_module, "MAX_MEMORY_MB", 1024)
+    response = await api.put("/sandboxes/run-big",
+                             json={"resources": {"memory_mb": 2048}})
+    assert response.status_code == 422
+    assert "RESOURCE_LIMIT_EXCEEDED" in response.json()["detail"]
+    assert _FakeAdapter.instances == [], "超限不得创建实例"
+
+
+async def test_wall_time_exceeded_rejects_new_operations(api):
+    await api.put("/sandboxes/run-wt",
+                  json={"resources": {"wall_time_s": 600}})
+    service_module.store.runs["run-wt"]["deadline_at"] = service_module._now() - 1
+    response = await api.post("/sandboxes/run-wt/operations",
+                              json={"operation_id": "op-1", "command": "echo hi"})
+    assert response.status_code == 409
+    assert "WALL_TIME_EXCEEDED" in response.json()["detail"]
+
+
+async def test_path_outside_workspace_and_symlink_escape_rejected(api, monkeypatch):
+    """§2：path 限定任务工作区；容器内 symlink 解析逃出工作区即拒绝。"""
+    await api.put("/sandboxes/run-ws")
+    outside = await api.put("/sandboxes/run-ws/files/etc/passwd",
+                            content=b"x")
+    assert outside.status_code == 422
+    assert outside.json()["detail"] == "PATH_OUTSIDE_WORKSPACE"
+    fake = _FakeAdapter.instances[0]
+
+    async def _escaped(_path):
+        return "/etc/passwd"
+
+    monkeypatch.setattr(fake, "resolve_real_path", _escaped)
+    escaped = await api.put("/sandboxes/run-ws/files/workspace/link.txt",
+                            content=b"x")
+    assert escaped.status_code == 422
+    assert escaped.json()["detail"] == "PATH_SYMLINK_ESCAPE"
 
 
 async def test_operation_submit_query_dedupe(api):
@@ -175,14 +250,28 @@ async def test_snapshot_restart_reconciles_unknown_without_replay(
 ):
     import json as _json
     import os as _os
+    import shutil as _shutil
+    import tempfile as _tempfile
 
     import service as service_module
 
-    # 注：本机默认 pytest tmp 根目录无写权限（环境问题），用项目内临时文件。
-    snap = _os.path.join(_os.path.dirname(__file__), ".tmp-snap-test.json")
-    if _os.path.exists(snap):
-        _os.remove(snap)
+    # B10：快照写系统临时目录（不污染仓库；本机 pytest tmp 根目录无权限，
+    # 故不用 tmp_path fixture）。
+    snap_dir = _tempfile.mkdtemp(prefix="repro-snap-")
+    snap = _os.path.join(snap_dir, "snap-test.json")
     monkeypatch.setenv("REPRO_SNAPSHOT_PATH", snap)
+    try:
+        await _snapshot_body(api, snap)
+    finally:
+        _shutil.rmtree(snap_dir, ignore_errors=True)
+
+
+async def _snapshot_body(api, snap):
+    import json as _json
+    import os as _os
+
+    import service as service_module
+
     await api.put("/sandboxes/run-6")
     await api.post("/sandboxes/run-6/operations",
                    json={"operation_id": "op-1", "command": "echo hi"})
@@ -198,4 +287,3 @@ async def test_snapshot_restart_reconciles_unknown_without_replay(
     # 已完成操作保留结果（只把未终态标 unknown），未知操作查不到报 unknown。
     assert fresh.runs["run-6"]["operations"]["op-1"]["status"] in (
         "succeeded", "unknown")
-    _os.remove(snap)

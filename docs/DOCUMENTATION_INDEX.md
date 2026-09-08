@@ -6,7 +6,7 @@
 
 > **Research Ask/Auto设计（2026-09-07，NEXT）：**仅Research提供选择；同样自主研究和多格式输出，Ask不调用实验沙箱，Auto一次确认后自主执行。设计与切换语义见[前端规格§2.1](phase1/Nexus_AI_前端开发规格与UX落地说明.md)；当前尚未实现该开关。
 
-> **2026-09-07 下一批执行入口：**[Nexus自主实验V1任务书](phase1/Nexus_自主实验V1_执行任务书.md)，T0–T7具体落实一次确认后的配置、运行、排错与报告。核心采用路线为Deep Agents原生Sandbox＋SWE-ReX Docker，repo2docker适配环境构建；状态NEXT，版本兼容和真实容器验收属于实施任务。
+> **2026-09-07 执行入口（2026-09-09 更新为部分落地）：**[Nexus自主实验V1任务书](phase1/Nexus_自主实验V1_执行任务书.md)，T0–T7具体落实一次确认后的配置、运行、排错与报告。核心采用路线为Deep Agents原生Sandbox＋SWE-ReX Docker（swe-rex 1.4.0 独立项目 `deploy/repro-runtime`）。**CURRENT（受限）**：CPU 公开仓库的一次确认自主配置与运行 V1（代码与协议已交付）；真实模型在真实沙箱内自主修复、repo2docker 构建路线、正式 Word/LaTeX 编译证明仍为 NEXT。审核与修复见[全量审核](phase1/验收记录/Nexus_自主实验V1_全量审核_2026-09-08.md)、[修复计划](phase1/验收记录/Nexus_自主实验V1_修复计划_2026-09-08.md)。
 
 > **完整转型验收补齐**：N0–N4不等于整个产品完成。复杂任务Harness、完整Paper Research、长任务恢复，以及Markdown/可编译LaTeX/可编辑Word输出均纳入首个完整版本，最后统一验收；Word不再列为可选增强。当前仅更新规划，正式文档生成尚未实现。
 

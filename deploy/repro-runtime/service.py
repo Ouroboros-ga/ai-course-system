@@ -38,6 +38,12 @@ OUTPUT_TAIL_MAX = 256 * 1024
 FILE_MAX_BYTES = 5 * 1024 * 1024
 SNAPSHOT_OPS_KEEP = 50
 
+# 服务端可用容量上限（超出即 422，不静默截断；部署可经 env 收紧/放宽）。
+MAX_MEMORY_MB = int(os.environ.get("REPRO_MAX_MEMORY_MB") or 8192)
+MAX_CPUS = float(os.environ.get("REPRO_MAX_CPUS") or 4)
+MAX_DISK_MB = int(os.environ.get("REPRO_MAX_DISK_MB") or 51200)
+MAX_WALL_TIME_S = int(os.environ.get("REPRO_MAX_WALL_TIME_S") or 7200)
+
 TERMINAL_RUN = ("done", "failed", "cancelled", "unknown")
 TERMINAL_OP = ("succeeded", "failed", "cancelled")
 
@@ -54,15 +60,45 @@ def _task_image() -> str:
     return (os.environ.get("REPRO_TASK_IMAGE") or "python:3.12-slim").strip()
 
 
-def _task_docker_args() -> list[str]:
+def _task_pull() -> str:
+    """镜像拉取策略：默认 never（缺镜像即失败，不静默联网拉取）。"""
+    value = (os.environ.get("REPRO_TASK_PULL") or "never").strip().lower()
+    return value if value in ("never", "missing", "always") else "never"
+
+
+def _env_docker_args() -> list[str]:
     raw = (os.environ.get("REPRO_TASK_DOCKER_ARGS") or "").strip()
     if not raw:
-        return ["--memory=2g", "--cpus=2", "--pids-limit=512"]
+        return []
     try:
         parsed = json.loads(raw)
     except ValueError:
-        return ["--memory=2g", "--cpus=2", "--pids-limit=512"]
+        return []
     return [str(a) for a in parsed if isinstance(a, str)][:32]
+
+
+def _task_docker_args(resources: "ResourcesSpec | None" = None) -> list[str]:
+    """容器参数：有已确认 resources 时按其派生（内存/CPU/磁盘），否则回退部署默认。
+
+    REPRO_TASK_DOCKER_ARGS 作为管理员附加参数始终追加在后。
+    """
+    extra = _env_docker_args()
+    if resources is None:
+        return extra or ["--memory=2g", "--cpus=2", "--pids-limit=512"]
+    args: list[str] = []
+    if resources.memory_mb:
+        args.append(f"--memory={int(resources.memory_mb)}m")
+    if resources.cpu:
+        args.append(f"--cpus={resources.cpu}")
+    if resources.disk_mb:
+        # 需要存储驱动支持（overlay2+xfs 等）；不支持时 ensure 会降级并如实记 note。
+        args.append(f"--storage-opt=size={int(resources.disk_mb)}m")
+    args.append("--pids-limit=512")
+    return args + extra
+
+
+def _workspace_root() -> str:
+    return "/" + (os.environ.get("REPRO_WORKSPACE_ROOT") or "workspace").strip("/")
 
 
 def _snapshot_path() -> str:
@@ -86,12 +122,30 @@ def _check_run_id(run_id: str) -> str:
 
 
 def _check_path(path: str) -> str:
+    """路径校验：绝对路径＋禁 `..`＋限定任务工作区根（任务书 §2）。"""
     if not isinstance(path, str) or not path.startswith("/") or "\x00" in path:
         raise HTTPException(status_code=422, detail="INVALID_PATH")
     segments = [seg for seg in path.split("/") if seg not in ("", ".")]
     if ".." in segments:
         raise HTTPException(status_code=422, detail="PATH_TRAVERSAL_REJECTED")
+    root = _workspace_root()
+    if path != root and not path.startswith(root + "/"):
+        raise HTTPException(status_code=422, detail="PATH_OUTSIDE_WORKSPACE")
     return path
+
+
+async def _assert_no_symlink_escape(adapter: Any, path: str) -> None:
+    """symlink 逃逸校验：容器内 readlink -f 解析后必须仍在工作区内。
+
+    父目录不存在时 readlink -f 返回解析后的字面路径（exit 0），不误伤新建文件。
+    """
+    root = _workspace_root()
+    try:
+        real = await adapter.resolve_real_path(path)
+    except DockerBackendUnavailableError as error:
+        raise HTTPException(status_code=502, detail=f"{error.code}:{error}") from error
+    if real and real != root and not real.startswith(root + "/"):
+        raise HTTPException(status_code=422, detail="PATH_SYMLINK_ESCAPE")
 
 
 def _tail(text: str) -> tuple[str, bool]:
@@ -104,6 +158,36 @@ class OperationCreate(BaseModel):
     operation_id: str = Field(min_length=1, max_length=128)
     command: str = Field(min_length=1)
     timeout_s: float | None = None
+
+
+class ResourcesSpec(BaseModel):
+    """已确认的资源声明（§2 Resources 子集；服务端据此派生容器限额）。"""
+
+    cpu: float | None = Field(default=None, gt=0)
+    memory_mb: int | None = Field(default=None, gt=0)
+    disk_mb: int | None = Field(default=None, gt=0)
+    wall_time_s: int | None = Field(default=None, gt=0)
+
+
+class EnsureRequest(BaseModel):
+    """ensure 请求体：授权 scope_hash＋资源声明（缺省兼容旧客户端）。"""
+
+    scope_hash: str = Field(default="", max_length=128)
+    resources: ResourcesSpec | None = None
+
+
+def _check_resources_limits(resources: "ResourcesSpec | None") -> None:
+    """服务端可用容量核对：超出部署上限即 422，不静默截断。"""
+    if resources is None:
+        return
+    if resources.memory_mb and resources.memory_mb > MAX_MEMORY_MB:
+        raise HTTPException(status_code=422, detail="RESOURCE_LIMIT_EXCEEDED:MEMORY")
+    if resources.cpu and resources.cpu > MAX_CPUS:
+        raise HTTPException(status_code=422, detail="RESOURCE_LIMIT_EXCEEDED:CPU")
+    if resources.disk_mb and resources.disk_mb > MAX_DISK_MB:
+        raise HTTPException(status_code=422, detail="RESOURCE_LIMIT_EXCEEDED:DISK")
+    if resources.wall_time_s and resources.wall_time_s > MAX_WALL_TIME_S:
+        raise HTTPException(status_code=422, detail="RESOURCE_LIMIT_EXCEEDED:WALL_TIME")
 
 
 class _Store:
@@ -140,6 +224,11 @@ class _Store:
                     "sandbox_id": run.get("sandbox_id", ""),
                     "container_name": run.get("container_name", ""),
                     "image": run.get("image", ""),
+                    "image_digest": run.get("image_digest", ""),
+                    "scope_hash": run.get("scope_hash", ""),
+                    "resources": dict(run.get("resources") or {}),
+                    "wall_time_s": int(run.get("wall_time_s") or 0),
+                    "deadline_at": float(run.get("deadline_at") or 0),
                     "docker_args": list(run.get("docker_args") or []),
                     "status": run.get("status", "unknown"),
                     "created_at": run.get("created_at", 0),
@@ -177,6 +266,11 @@ class _Store:
                 "sandbox_id": str(row.get("sandbox_id", "")),
                 "container_name": str(row.get("container_name", "")),
                 "image": str(row.get("image", "")),
+                "image_digest": str(row.get("image_digest", "")),
+                "scope_hash": str(row.get("scope_hash", "")),
+                "resources": dict(row.get("resources") or {}),
+                "wall_time_s": int(row.get("wall_time_s") or 0),
+                "deadline_at": float(row.get("deadline_at") or 0),
                 "docker_args": list(row.get("docker_args") or []),
                 "status": "unknown",
                 "note": "服务重启，执行状态未知（不重放、不自动恢复）",
@@ -196,6 +290,11 @@ def _public_run(run: dict[str, Any]) -> dict[str, Any]:
         "status": run.get("status", "unknown"),
         "note": run.get("note", ""),
         "image": run.get("image", ""),
+        "image_digest": run.get("image_digest", ""),
+        "scope_hash": run.get("scope_hash", ""),
+        "resources": dict(run.get("resources") or {}),
+        "wall_time_s": int(run.get("wall_time_s") or 0),
+        "deadline_at": float(run.get("deadline_at") or 0),
         "container_name": run.get("container_name", ""),
         "created_at": run.get("created_at", 0),
         "updated_at": run.get("updated_at", 0),
@@ -282,33 +381,71 @@ async def health() -> dict[str, Any]:
 
 
 @app.put("/sandboxes/{run_id}")
-async def ensure_sandbox(run_id: str, _: None = Depends(require_token)):
-    """ensure（同 run 幂等；重启后未知 run 须换新 id，409 明示）。"""
+async def ensure_sandbox(run_id: str, body: EnsureRequest | None = None,
+                         _: None = Depends(require_token)):
+    """ensure（同 run 同 scope 幂等；异 hash 409；重启后未知 run 须换新 id）。
+
+    请求体携带授权 scope_hash 与已确认 resources：首次落盘，重复 PUT 比对
+    scope_hash（不同 → 409 SCOPE_HASH_MISMATCH）；资源超部署上限 → 422。
+    """
     run_id = _check_run_id(run_id)
+    scope_hash = (body.scope_hash if body else "") or ""
+    resources = body.resources if body else None
+    _check_resources_limits(resources)
     async with store.lock_for(run_id):
         existing = store.runs.get(run_id)
         if existing is not None:
+            if scope_hash and existing.get("scope_hash") and \
+                    scope_hash != existing["scope_hash"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail="SCOPE_HASH_MISMATCH:同 run 已按另一 scope 授权，拒绝复用",
+                )
             if existing.get("status") == "unknown" and run_id not in store.adapters:
                 raise HTTPException(
                     status_code=409,
                     detail="RUN_UNKNOWN_STATE:服务重启后该 run 状态未知（不重放、不复用），请换新 run_id",
                 )
             return {**_public_run(existing), "deduped": True}
+        docker_args = _task_docker_args(resources)
+        note = ""
         adapter = SwerexDockerAdapter(
             run_id=run_id, image=_task_image(),
-            docker_args=_task_docker_args())
+            docker_args=docker_args, pull=_task_pull())
         try:
             container_name = await adapter.start()
         except DockerBackendUnavailableError as error:
-            raise HTTPException(status_code=502, detail=f"{error.code}:{error}") from error
+            # 磁盘配额参数不被存储驱动支持时降级（如实记 note，不假装生效）。
+            if any(a.startswith("--storage-opt") for a in docker_args):
+                fallback = [a for a in docker_args
+                            if not a.startswith("--storage-opt")]
+                adapter = SwerexDockerAdapter(
+                    run_id=run_id, image=_task_image(),
+                    docker_args=fallback, pull=_task_pull())
+                try:
+                    container_name = await adapter.start()
+                except DockerBackendUnavailableError:
+                    raise HTTPException(
+                        status_code=502, detail=f"{error.code}:{error}") from error
+                note = "磁盘配额（--storage-opt）不被存储驱动支持，已降级：未生效。"
+            else:
+                raise HTTPException(
+                    status_code=502, detail=f"{error.code}:{error}") from error
+        image_digest = await adapter.image_digest()
+        wall_time_s = int(getattr(resources, "wall_time_s", 0) or 0)
         run = {
             "run_id": run_id,
             "sandbox_id": f"sb-{run_id}",
             "container_name": container_name,
             "image": adapter.image,
+            "image_digest": image_digest,
+            "scope_hash": scope_hash,
+            "resources": (resources.model_dump() if resources is not None else {}),
+            "wall_time_s": wall_time_s,
+            "deadline_at": (_now() + wall_time_s) if wall_time_s else 0,
             "docker_args": list(adapter.docker_args),
             "status": "ready",
-            "note": "",
+            "note": note,
             "created_at": _now(),
             "updated_at": _now(),
             "operations": {},
@@ -353,6 +490,13 @@ async def submit_operation(run_id: str, body: OperationCreate,
             raise HTTPException(
                 status_code=409,
                 detail=f"RUN_TERMINAL:{run.get('status')}：终态 run 不再接受新操作",
+            )
+        deadline = float(run.get("deadline_at") or 0)
+        if deadline and _now() > deadline:
+            # 已确认的 wall_time 到期：不再接受新操作，已有结果保留（不静默杀）。
+            raise HTTPException(
+                status_code=409,
+                detail="WALL_TIME_EXCEEDED:已达该 run 的授权时限，不再接受新操作",
             )
         operations = run.setdefault("operations", {})
         if operation_id in operations:
@@ -449,6 +593,7 @@ async def upload_file(run_id: str, path: str, request: Request,
     adapter = store.adapters.get(run_id)
     if adapter is None:
         raise HTTPException(status_code=409, detail="RUN_UNKNOWN_STATE")
+    await _assert_no_symlink_escape(adapter, safe_path)
     try:
         await adapter.upload_bytes(safe_path, bytes(body))
     except DockerBackendUnavailableError as error:
@@ -467,8 +612,9 @@ async def download_file(run_id: str, path: str, _: None = Depends(require_token)
     adapter = store.adapters.get(run_id)
     if adapter is None:
         raise HTTPException(status_code=409, detail="RUN_UNKNOWN_STATE")
+    await _assert_no_symlink_escape(adapter, safe_path)
     try:
-        content = await adapter.read_bytes(safe_path)
+        content = await adapter.read_bytes(safe_path, max_bytes=FILE_MAX_BYTES)
     except DockerBackendUnavailableError as error:
         if "missing" in str(error).lower() or "not_found" in str(error).lower():
             raise HTTPException(status_code=404, detail="file_not_found") from error

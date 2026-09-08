@@ -63,12 +63,19 @@ def build_experiment_report(
          "operation_id": str(a.get("operation_id") or "")}
         for a in attempts if (a.get("exit_code") not in (None, 0))
     ]
+    # 终态口径只认 execute：文件工具（kind=file_tool）只作对账记录，
+    # 不参与判定——否则"命令失败后读一次文件"会被误报为执行成功。
     last_exit: int | None = None
     for attempt in reversed(attempts):
+        if str((attempt.get("config_changes") or {}).get("kind") or "") == "file_tool":
+            continue
         if attempt.get("exit_code") is not None:
             last_exit = int(attempt["exit_code"])
             break
-    execution_succeeded = bool(attempts) and last_exit == 0
+    execute_attempts = sum(
+        1 for a in attempts
+        if str((a.get("config_changes") or {}).get("kind") or "") != "file_tool")
+    execution_succeeded = execute_attempts > 0 and last_exit == 0
     environment_ready = bool(attempts) and any(
         str((a.get("config_changes") or {}).get("route") or "") in
         ("base_container", "repo2docker") for a in attempts)
@@ -192,6 +199,7 @@ def render_recipe_markdown(report: dict[str, Any]) -> str:
 def render_report_markdown(report: dict[str, Any]) -> str:
     """报告 Markdown：做了什么/修了什么/跑出什么/如何再跑。"""
     recipe = report.get("recipe") or {}
+    run_status = str(report.get("status") or "")
     verdict_line = (
         f"执行{'成功' if report.get('execution_succeeded') else '失败'} · "
         f"指标 {report.get('metric_verdict')} · 干净验证 {report.get('clean_verification')}"
@@ -202,6 +210,11 @@ def render_report_markdown(report: dict[str, Any]) -> str:
         "",
         f"**结论：{verdict_line}**（确定性拼装，非 LLM 判定；"
         "exit 0 只表示命令跑通，不等于论文复现成功）",
+        "",
+        f"- 运行状态：{run_status or '未知'}"
+        + ("（与上方“执行成功”口径不同：后者只看末次命令退出码，"
+           "前者含图/服务层失败）" if run_status == "failed"
+           and report.get("execution_succeeded") else ""),
         "",
         f"- 目标：{recipe.get('objective', '')}",
         f"- 仓库：{recipe.get('repo_url', '')}@{recipe.get('repo_revision', '')}",
@@ -259,7 +272,7 @@ def render_report_markdown(report: dict[str, Any]) -> str:
 
 
 async def build_stored_report(
-    *, run_id: str, user_id: str,
+    *, run_id: str, user_id: str, backend: Any = None,
 ) -> tuple[dict[str, Any], str, str]:
     """构建冻结报告结构＋双 Markdown（无副作用：不写产物、不回收）。
 
@@ -296,11 +309,22 @@ async def build_stored_report(
     if str(run.get("clean_status") or "") in ("passed", "failed"):
         persisted_clean = {"status": str(run["clean_status"]),
                            "note": str(run.get("clean_note") or "")}
+    # 镜像来源取自控制面 lifecycle（tag 可被重指，digest 才是真实身份）；
+    # 控制面不可达/未配置时如实留空＋备注，绝不编造。
+    image = ""
+    image_digest = ""
+    if backend is not None:
+        try:
+            view = await backend.sandbox_status()
+            image = str(view.get("image") or "")
+            image_digest = str(view.get("image_digest") or "")
+        except Exception as error:  # noqa: BLE001
+            logger.warning("report image digest unavailable for %s: %s",
+                           run_id, type(error).__name__)
     report = build_experiment_report(
         run=run, scope=scope,
         license_info=persisted_license,
-        image=str((scope.get("resources") or {}).get("image") or ""),
-        image_digest=str(scope.get("image_digest") or ""),
+        image=image, image_digest=image_digest,
         clean=persisted_clean)
     return report, render_report_markdown(report), render_recipe_markdown(report)
 
@@ -317,7 +341,7 @@ async def generate_run_report(
       REPORT_ARTIFACT_WRITE_FAILED 且不回收。
     """
     report, markdown, recipe_md = await build_stored_report(
-        run_id=run_id, user_id=user_id)
+        run_id=run_id, user_id=user_id, backend=backend)
     title_base = f"自主实验报告 · {run_id[:12]}"
     artifacts: list[dict[str, Any]] = []
     for artifact_type, title, content in (
@@ -371,9 +395,17 @@ async def generate_run_formats(*, run_id: str, user_id: str) -> dict[str, Any]:
     """
     from nexus import document_output as formats_module
 
+    # 只读 lifecycle 取镜像来源（不执行任何命令）；控制面不可达如实留空。
+    backend: Any = None
+    try:
+        from nexus.experiment_agent import _backend_from_settings
+
+        backend = _backend_from_settings(run_id)
+    except Exception:  # noqa: BLE001
+        backend = None
     try:
         report, markdown, recipe_md = await build_stored_report(
-            run_id=run_id, user_id=user_id)
+            run_id=run_id, user_id=user_id, backend=backend)
     except ReportError as error:
         raise FormatError(error.code, str(error)) from error
     title_base = f"自主实验报告 · {run_id[:12]}"

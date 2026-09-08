@@ -183,6 +183,31 @@ async def test_control_down_shows_reconciling_not_failed(recovery_flow):
     assert runs_module.get_run(run["run_id"])["status"] == "running"
 
 
+async def test_console_entry_adopts_without_resubmit(recovery_flow):
+    """A5：生产 console 入口对运行中 run 只接管查询（零 submit）。"""
+    from nexus import experiment_store as store_module
+
+    run = await recovery_flow.start_running_install()
+    assert recovery_flow.provider_operation_count(run) == 1
+    backend = _backend(run["run_id"], recovery_flow.control)
+    snapshot = await store_module.console_snapshot_for(
+        run["run_id"], backend=backend)
+    assert recovery_flow.provider_operation_count(run) == 1, "接管不得新增提交"
+    assert snapshot["adopted_operation_id"].endswith("-op-0001")
+    assert snapshot["resubmitted"] is False
+    assert snapshot["console_status"] == "running"
+    # 控制失联 → reconciling（存储仍 running，不冒称终态）。
+    recovery_flow.control.online = False
+    down = await store_module.console_snapshot_for(
+        run["run_id"], backend=_backend(run["run_id"], recovery_flow.control))
+    assert down["console_status"] == "reconciling"
+    assert down["status"] == "running"
+    # 控制面未配置 → 同样 reconciling。
+    unconfigured = await store_module.console_snapshot_for(
+        run["run_id"], backend=None)
+    assert unconfigured["console_status"] == "reconciling"
+
+
 async def test_cancel_confirmed_terminal(recovery_flow):
     from nexus import experiment_agent as agent_module
 

@@ -1077,9 +1077,14 @@ async def nexus_repro_execute(
 ):
     """手工执行代理（NX-G2）：凭已批准票据提交 Worker，与聊天工具共用
     Runtime 侧同一核销核心；幂等语义由上游保证（重试返回原 job）。
-    T2：mode/research_execution_mode 透传执行门（未知值 400）。"""
-    _require_valid_mode(payload.mode)
-    _require_valid_execution_mode(payload.research_execution_mode)
+    T2：mode/research_execution_mode 透传执行门（未知值 400）。
+    修复 A3：显式 Ask 在此直接拒绝（与 Runtime 同码），零转发零提交——
+    后端与工具两侧各自校验；未显式传值仍交 Runtime 按会话偏好裁决。"""
+    mode = _require_valid_mode(payload.mode)
+    execution_mode = _require_valid_execution_mode(payload.research_execution_mode)
+    if mode == "research" and execution_mode is not None and execution_mode != "auto":
+        reject(403, "EXPERIMENT_EXECUTION_DISABLED",
+               "Research Ask 模式不执行实验（仅 Auto 可执行）。")
     return await _proxy_json(
         request,
         current_user,

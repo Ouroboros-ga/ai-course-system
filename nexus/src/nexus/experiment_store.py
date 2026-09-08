@@ -46,11 +46,14 @@ def _project_attempt(attempt: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def console_snapshot(run_id: str, *, control_reachable: bool = True) -> dict[str, Any]:
+def console_snapshot(run_id: str, *, control_reachable: bool = True,
+                     adopted: dict[str, Any] | None = None) -> dict[str, Any]:
     """控制台快照（只读投影，不触发任何执行）。
 
     console_status：终态如实；running＋控制可达→running；running＋控制
     失联→reconciling（存储 status 保持 running，调用方不得据此改库）。
+    adopted：接管查询结果（adopt_running_operation）——只用于展示活跃
+    operation 与远程状态，不改库、不 submit。
     """
     from nexus import experiment_runs as runs_module
 
@@ -71,6 +74,9 @@ def console_snapshot(run_id: str, *, control_reachable: bool = True) -> dict[str
         console_status = CONSOLE_RECONCILING
     else:
         console_status = status
+    adopted_op = str((adopted or {}).get("operation_id") or "")
+    if adopted_op:
+        active = adopted_op
     return {
         "run_id": run["run_id"],
         "status": status,
@@ -78,6 +84,9 @@ def console_snapshot(run_id: str, *, control_reachable: bool = True) -> dict[str
         "attempt_no": run["attempt_no"],
         "attempts": attempts,
         "active_operation": active,
+        "adopted_operation_id": adopted_op,
+        "remote_operation_status": str((adopted or {}).get("status") or ""),
+        "resubmitted": bool((adopted or {}).get("resubmitted")),
         "detail": run.get("detail", ""),
         # SR6：干净B结论直通（""=未验证/verifying=运行中/passed/failed）；
         # 只读投影，报告与 UI 据此展示，不在此处计算。
@@ -133,3 +142,31 @@ async def adopt_running_operation(
     return {"run_id": run_id,
             "status": str(remote.get("status") or "unknown"),
             "operation_id": target, "resubmitted": False}
+
+
+async def console_snapshot_for(
+    run_id: str, *, backend: Any = None,
+) -> dict[str, Any]:
+    """控制台快照（生产入口）：running run 先接管查询（只查不交）再投影。
+
+    - backend 可用且 run 运行中 → adopt_running_operation 续查（零 submit）；
+      查询失败/不可达 → console_status=reconciling，存储保持 running；
+    - backend 未配置（控制面未接）→ 运行中一律 reconciling，不冒称 running；
+    - 终态 run 不触碰控制面。
+    """
+    from nexus import experiment_runs as runs_module
+
+    run = runs_module.get_run(run_id)
+    adopted: dict[str, Any] | None = None
+    reachable = True
+    if run is not None and run.get("status") == "running":
+        if backend is None:
+            reachable = False
+        else:
+            try:
+                adopted = await adopt_running_operation(run_id, backend=backend)
+                reachable = str(adopted.get("status") or "") != "unknown"
+            except Exception:  # noqa: BLE001 - 接管失败按不可达处理，不改库
+                adopted = None
+                reachable = False
+    return console_snapshot(run_id, control_reachable=reachable, adopted=adopted)

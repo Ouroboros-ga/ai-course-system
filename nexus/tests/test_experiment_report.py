@@ -91,6 +91,34 @@ def _report(exit_code=0, metrics=None, clean_b=None):
         metrics=metrics, clean=clean_b)
 
 
+async def test_stored_report_takes_image_digest_from_control_plane():
+    """A7：配方镜像 digest 来自控制面 lifecycle，不是 scope 里的虚构字段。"""
+    from nexus import experiment_report as report_module
+
+    run, _proposal = _make_run()
+    _attempts_ok(run["run_id"])
+    runs_module.set_status(run["run_id"], "succeeded", "")
+
+    class _FakeBackend:
+        async def sandbox_status(self):
+            return {"image": "repro-task:1.4.0",
+                    "image_digest": "sha256:4f2ba29b"}
+
+    report, _markdown, recipe_md = await report_module.build_stored_report(
+        run_id=run["run_id"], user_id="u-t6", backend=_FakeBackend())
+    assert report["recipe"]["image_digest"] == "sha256:4f2ba29b"
+    assert report["recipe"]["base_image"] == "repro-task:1.4.0"
+    assert "sha256:4f2ba29b" in recipe_md
+
+    class _Down:
+        async def sandbox_status(self):
+            raise RuntimeError("control down")
+
+    fallback, _md, _recipe = await report_module.build_stored_report(
+        run_id=run["run_id"], user_id="u-t6", backend=_Down())
+    assert fallback["recipe"]["image_digest"] == "", "控制面不可达如实留空"
+
+
 def test_exit_zero_is_not_paper_success():
     report = _report(exit_code=0, metrics=None, clean_b=None)
     assert report["execution_succeeded"] is True

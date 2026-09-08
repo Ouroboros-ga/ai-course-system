@@ -1414,8 +1414,9 @@ async def repro_execute_approved(
     # T2 Ask/Auto 门：mode 未知→400；执行模式未知→400；缺字段时旧 preset
     # 票据兼容，自主票据由执行核 fail-closed。
     mode = _require_mode(body.mode) if body.mode is not None else None
-    if body.research_execution_mode is not None:
-        _require_execution_mode(body.research_execution_mode, mode or "research")
+    # 归一后传给执行核（"AUTO" 等大小写变体不得在校验通过后被门判为非 auto）。
+    execution_mode = _require_execution_mode(
+        body.research_execution_mode, mode or "research")
     try:
         return await execute_approved_reproduction(
             approval_id=approval_id,
@@ -1423,7 +1424,7 @@ async def repro_execute_approved(
             session_id=session_id,
             preset_id=preset_id,
             mode=mode,
-            research_execution_mode=body.research_execution_mode,
+            research_execution_mode=execution_mode,
         )
     except approvals.ApprovalError as error:
         status_map = {
@@ -1458,19 +1459,14 @@ async def repro_execute_approved(
 # ---------------------------------------------------------------------------
 
 
-async def _aprobe_console_reachable(run_id: str) -> bool:
-    """控制服务可达性探针（轻量 lifecycle 查询；任何失败即不可达）。"""
+def _console_backend(run_id: str) -> Any:
+    """控制面 Backend（未配置返回 None；接管查询在 store 侧 fail-closed）。"""
     try:
         from nexus.experiment_agent import _backend_from_settings
 
-        backend = _backend_from_settings(run_id)
-    except Exception:
-        return False
-    try:
-        await backend.sandbox_status()
-        return True
-    except Exception:
-        return False
+        return _backend_from_settings(run_id)
+    except Exception:  # noqa: BLE001 - 未配置/构造失败按不可达处理
+        return None
 
 
 @app.get(
@@ -1493,8 +1489,8 @@ async def repro_run_console(
     run = runs_module.get_run(sanitize_session_id(run_id))
     if run is None or (user_id or "") != run["owner"]:
         raise HTTPException(status_code=404, detail="RUN_NOT_FOUND")
-    snapshot = store_module.console_snapshot(
-        run["run_id"], control_reachable=await _aprobe_console_reachable(run["run_id"]))
+    snapshot = await store_module.console_snapshot_for(
+        run["run_id"], backend=_console_backend(run["run_id"]))
     return {"snapshot": snapshot}
 
 
@@ -1989,7 +1985,6 @@ async def approvals_list(
                         "objective": proposal.get("objective", ""),
                         "repo_url": (scope or {}).get("repo_url", ""),
                         "mode": (scope or {}).get("mode", ""),
-                        "scope_hash": proposal.get("scope_hash", ""),
                     }
                 else:
                     item["proposal"] = {

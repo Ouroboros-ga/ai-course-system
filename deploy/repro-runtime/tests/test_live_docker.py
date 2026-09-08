@@ -127,13 +127,25 @@ def test_5_resource_limits_effective(live_service):
 
 
 def test_6_network_posture_recorded(live_service):
-    """网络基线如实记录（T1-b 不强制阻断，只记录实际可达性供后续加固）。"""
+    """网络基线如实记录：任务容器不得触达云元数据地址。
+
+    B12：探针改用 python3 socket（任务镜像无 curl，旧探针恒输出空串），
+    并断言探针给出明确结论而非只看退出码。
+    """
+    probe = (
+        "python3 -c \"import socket\n"
+        "try:\n"
+        "    socket.create_connection(('169.254.169.254', 80), timeout=3)\n"
+        "    print('REACHABLE')\n"
+        "except Exception as exc:\n"
+        "    print('UNREACHABLE', type(exc).__name__)\""
+    )
     submit = _api("POST", f"/sandboxes/{RUN_A}/operations",
-                  json={"operation_id": "op-net",
-                        "command": "timeout 3 curl -s -o /dev/null -w '%{http_code}' "
-                                   "http://169.254.169.254/ || echo UNREACHABLE",
+                  json={"operation_id": "op-net", "command": probe,
                         "timeout_s": 30})
     assert submit.status_code == 200
     final = _wait_operation(RUN_A, "op-net")
-    print(f"\n[network-baseline] metadata-probe -> {final['output_tail'][:120]!r}")
+    output = final["output_tail"]
+    print(f"\n[network-baseline] metadata-probe -> {output[:120]!r}")
     assert final["status"] == "succeeded"
+    assert "UNREACHABLE" in output, f"元数据地址必须不可达，实测：{output[:200]!r}"

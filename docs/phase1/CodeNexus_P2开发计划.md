@@ -256,7 +256,9 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 ## 10. 当前完成度与下一主线（本次冻结）
 
-**当前直接执行入口（2026-09-07）：**[自主实验V1执行任务书](Nexus_自主实验V1_执行任务书.md)。T0–T7按代码实际接线点实施：开源沙箱适配→一次确认→无preset输入→原生Agent自主排错→恢复/Console→报告→真实验收。核心优先使用Deep Agents BaseSandbox＋SWE-ReX Docker，环境构建复用repo2docker；Nexus只补领域记录和适配。本任务书取代宽泛SR/N编号作为下一批操作清单，各旧编号保留需求映射。当前全部NEXT，未安装新依赖或实现新运行服务。
+**当前直接执行入口（2026-09-07）：**[自主实验V1执行任务书](Nexus_自主实验V1_执行任务书.md)。T0–T7按代码实际接线点实施：开源沙箱适配→一次确认→无preset输入→原生Agent自主排错→恢复/Console→报告→真实验收。核心优先使用Deep Agents BaseSandbox＋SWE-ReX Docker，环境构建复用repo2docker；Nexus只补领域记录和适配。本任务书取代宽泛SR/N编号作为下一批操作清单，各旧编号保留需求映射。
+
+**2026-09-09 更新（审核后）**：T0–T7＋SR6 代码已落地并提交（dev-liu `c1e217d0` 前），`swe-rex==1.4.0` 只装在独立项目 `deploy/repro-runtime`（`nexus/uv.lock`/`backend/pyproject.toml` 零改动）。全量审核与修复见[审核记录](验收记录/Nexus_自主实验V1_全量审核_2026-09-08.md)、[修复计划](验收记录/Nexus_自主实验V1_修复计划_2026-09-08.md)。**CURRENT（受限）：CPU 公开仓库的一次确认自主配置与运行 V1**——代码、沙箱适配、一次确认门、自主修复循环（脚本化模型＋假容器）与报告链已交付；**真实模型在真实沙箱内自主完成一次环境故障修复与继续运行尚未验收**，不得据此宣称完整自主实验能力。完整 Paper Research、GPU、受控 A/B、正式 Word/LaTeX（LaTeX 编译证明）仍为 NEXT。
 
 总路线：[Nexus 完整转型：研究、实验与成果交付实施计划](Nexus_论文到实验_下一阶段实施计划.md)。**2026-09-07最新排期与重要设计参照：**[持续研究V1：开源集成与开发任务书](Nexus_持续研究V1_开源集成与开发任务书.md)，§1冻结本轮用户结论，§4–11给出任务、边界与验收。实验既可由用户直接发起，也可由研究循环发起；完整综述和证据充分评分不作为实验前置条件；所有SR任务当前为NEXT，新增文档不代表已经实现。NX-P1 拆为可独立交付的准备链 P1a、依赖 Sandbox 的可执行链 P1b；最终 Paper-to-Reproduction 目标不变。
 
@@ -265,10 +267,10 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | 历史 P2 M0–M5 | 6/6 完成，仅代表当时冻结 MVP |
 | 后端 A/B/C/D | 4/4 交付且有线上记录；三项 P1 与前批研究链遗留需收尾 |
 | v6 工作台/启动页 | bcbad16f/a60d4e87 已提交；本轮不宣称完整浏览器链重新验收 |
-| 用户论文→实验准备 | 未实现连续业务链；现在是 preset 查询与独立研究工具 |
-| 独立 Sandbox / 环境构建 / Repair / Clean B | 目标链未实现；现有 Worker 不等于该平台 |
+| 用户论文→实验准备 | `prepare_experiment` 已落地（无 preset 入口，只准备不执行，T3）；真实模型端到端准备/找仓链未验收 |
+| 独立 Sandbox / 环境构建 / Repair / Clean B | BaseSandbox＋SWE-ReX Docker 适配、一次确认门、自主修复循环已落地（T1/T2/T4）；repo2docker 路线 fail-closed **未交付**；真实模型修复与 Clean B 全链未验收 |
 | 完整 Paper Research / Session / Subagent | 部分基础已有或待建设，分别按R1/E4/H2验收；均属于首个完整版本必要主线 |
-| 正式成果输出 NX-O1 | Markdown已有，LaTeX只有.tex文本保存；可编译工程与可编辑DOCX尚未实现，现提升为必做 |
+| 正式成果输出 NX-O1 | Markdown/配方已有；Word(.docx)＋LaTeX(.tex) 产物由 SR6 交付，但 **LaTeX 编译证明缺工具链（TOOLCHAIN_MISSING）**、可编辑性/编译验收未完成 |
 
 不按里程碑个数折算产品总百分比：未完成核心研发与已交付界面/API不等权。
 

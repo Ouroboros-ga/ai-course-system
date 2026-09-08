@@ -15,14 +15,23 @@
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `PUT /sandboxes/{run_id}` | ensure（同 run 幂等，返回 sandbox_id/status） |
-| `POST /sandboxes/{run_id}/operations` | `{operation_id, command, timeout_s}` 登记后执行；同 ID 不运行两次 |
+| `PUT /sandboxes/{run_id}` | ensure：体为 `{scope_hash, resources}`；同 run 同 scope 幂等，异 hash → 409 `SCOPE_HASH_MISMATCH`；resources 超部署上限 → 422 |
+| `POST /sandboxes/{run_id}/operations` | `{operation_id, command, timeout_s}` 登记后执行；同 ID 不运行两次；超 run 时限 → 409 `WALL_TIME_EXCEEDED` |
 | `GET /sandboxes/{run_id}/operations/{operation_id}` | 结果/状态查询（HTTP 超时≠进程停止） |
-| `PUT /sandboxes/{run_id}/files/{path:path}` | 受限大小文件上传（工作区限定） |
-| `GET /sandboxes/{run_id}/files/{path:path}` | 下载（截断/过大如实报错） |
+| `PUT /sandboxes/{run_id}/files/{path:path}` | 受限大小文件上传；路径限定 `REPRO_WORKSPACE_ROOT`（默认 `/workspace`），`..`/symlink 逃逸 → 422 |
+| `GET /sandboxes/{run_id}/files/{path:path}` | 下载（截断/过大如实报错；上限 5MB） |
 | `POST /sandboxes/{run_id}/cancel` | 先停操作，再回收实例；重复同一终态 |
-| `GET /sandboxes/{run_id}` | 生命周期/活跃 operation/资源摘要（对账用） |
+| `GET /sandboxes/{run_id}` | 生命周期/活跃 operation/资源摘要＋`image`/`image_digest`（对账与配方用） |
 | `GET /health` | 存活探针（无业务信息） |
+
+资源与镜像（2026-09-08 审核修复后）：
+- 容器限额由 ensure 携带的**已确认 resources** 派生（`--memory/--cpus/--storage-opt`），
+  无声明时回退 `REPRO_TASK_DOCKER_ARGS` 或默认值；磁盘配额不被存储驱动支持时
+  降级并在 run note 如实记录。
+- 镜像拉取策略 `REPRO_TASK_PULL` 默认 **never**（缺镜像即启动失败，不静默联网拉取）；
+  `GET /sandboxes/{run_id}` 暴露 `docker inspect` 得到的镜像 ID 供配方记录。
+- 工作区根可经 `REPRO_WORKSPACE_ROOT` 配置；服务端可用容量上限经
+  `REPRO_MAX_MEMORY_MB/MAX_CPUS/MAX_DISK_MB/MAX_WALL_TIME_S` 收紧。
 
 鉴权：`Authorization: Bearer $REPRO_RUNTIME_TOKEN`（未配置则拒绝启动，
 fail-closed）。监听：只绑 `127.0.0.1`。
@@ -35,7 +44,9 @@ uv run pytest tests/test_swerex_adapter.py tests/test_service.py -q
 ```
 
 `test_live_docker.py` 需真实 Docker＋运行中服务（`REPRO_RUNTIME_URL`/`TOKEN`），
-默认跳过；只在授权的验证环境执行。
+默认跳过；只在授权的验证环境执行。宿主侧隔离断言（Memory/PidsLimit/
+Privileged/Mounts/NetworkMode/无 docker.sock）用 `scripts/verify_host.sh
+<container_name>` 在部署宿主执行（任务镜像内无 docker CLI，容器内无法自证）。
 
 ## 服务器验证部署（T1-b 一次性）
 

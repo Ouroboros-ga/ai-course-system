@@ -55,17 +55,24 @@ class ExperimentSandboxError(Exception):
         self.code = code
 
 
-def _check_sandbox_path(path: str) -> str:
-    """客户端侧路径底线校验（服务端 T1-b  authoritative 再验）。
+_WORKSPACE_ROOT = "/workspace"
 
-    只接受绝对路径；拒绝空、NUL 与任何 `..` 段（目录逃逸）。工作区映射由
-    控制服务负责，客户端不猜测容器内根目录。
+
+def _check_sandbox_path(path: str, root: str = _WORKSPACE_ROOT) -> str:
+    """客户端侧路径底线校验（服务端 authoritative 再验）。
+
+    只接受绝对路径；拒绝空、NUL 与任何 `..` 段（目录逃逸）；并要求落在任务
+    工作区根内（任务书 §2：path 限定任务工作区，遍历/symlink 逃逸拒绝）。
     """
     if not isinstance(path, str) or not path.startswith("/") or "\x00" in path:
         raise ValueError(f"非法沙箱路径：{path!r}（须为绝对路径）")
     segments = [seg for seg in path.split("/") if seg not in ("", ".")]
     if ".." in segments:
         raise ValueError(f"非法沙箱路径：{path!r}（禁止父目录逃逸）")
+    normalized_root = "/" + (root or _WORKSPACE_ROOT).strip("/")
+    if path != normalized_root and not path.startswith(normalized_root + "/"):
+        raise ValueError(
+            f"非法沙箱路径：{path!r}（须位于任务工作区 {normalized_root} 内）")
     return path
 
 
@@ -100,6 +107,9 @@ class HttpSandboxBackend(BaseSandbox):
         timeout_s: float = _HTTP_TIMEOUT_S,
         poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
         default_poll_deadline_s: float = _DEFAULT_POLL_DEADLINE_S,
+        scope_hash: str = "",
+        resources: dict[str, Any] | None = None,
+        workspace_root: str = _WORKSPACE_ROOT,
         transport: Any = None,
     ) -> None:
         self._run_id = (run_id or "").strip()[:64]
@@ -108,6 +118,11 @@ class HttpSandboxBackend(BaseSandbox):
         self._timeout_s = max(1.0, float(timeout_s or _HTTP_TIMEOUT_S))
         self._poll_interval_s = max(0.05, float(poll_interval_s))
         self._default_deadline_s = max(1.0, float(default_poll_deadline_s))
+        # §2：ensure 携带授权 scope_hash（同 run 异 hash → 控制面 409）与
+        # 已确认的资源声明（服务端据此派生容器限额）。
+        self._scope_hash = (scope_hash or "").strip()[:128]
+        self._resources = dict(resources or {})
+        self._workspace_root = "/" + (workspace_root or _WORKSPACE_ROOT).strip("/")
         self._transport = transport
         self._op_seq = 0
         self._sandbox_id = ""
@@ -252,11 +267,21 @@ class HttpSandboxBackend(BaseSandbox):
 
     # -- 实例生命周期 ----------------------------------------------------
 
+    def _ensure_payload(self) -> dict[str, Any]:
+        """ensure 请求体：授权 scope_hash ＋ 已确认资源（§2）。"""
+        payload: dict[str, Any] = {}
+        if self._scope_hash:
+            payload["scope_hash"] = self._scope_hash
+        if self._resources:
+            payload["resources"] = dict(self._resources)
+        return payload
+
     def _ensure_sandbox(self) -> str:
-        """幂等 ensure（PUT，同 run 重复返回原实例）；结果缓存，失败即抛。"""
+        """幂等 ensure（PUT，同 run 同 scope 返回原实例）；结果缓存，失败即抛。"""
         if self._ensured and self._sandbox_id:
             return self._sandbox_id
-        data = self._put(f"/sandboxes/{quote(self._run_id, safe='')}", {})
+        data = self._put(f"/sandboxes/{quote(self._run_id, safe='')}",
+                         self._ensure_payload())
         sandbox_id = str(data.get("sandbox_id") or "")
         if not sandbox_id:
             raise ExperimentSandboxError(
@@ -269,7 +294,8 @@ class HttpSandboxBackend(BaseSandbox):
     async def _aensure_sandbox(self) -> str:
         if self._ensured and self._sandbox_id:
             return self._sandbox_id
-        data = await self._aput(f"/sandboxes/{quote(self._run_id, safe='')}", {})
+        data = await self._aput(f"/sandboxes/{quote(self._run_id, safe='')}",
+                                self._ensure_payload())
         sandbox_id = str(data.get("sandbox_id") or "")
         if not sandbox_id:
             raise ExperimentSandboxError(
@@ -409,7 +435,7 @@ class HttpSandboxBackend(BaseSandbox):
 
     def _upload_one(self, path: str, content: bytes) -> FileUploadResponse:
         try:
-            safe_path = _check_sandbox_path(path)
+            safe_path = _check_sandbox_path(path, self._workspace_root)
         except ValueError as error:
             return FileUploadResponse(path=str(path), error=str(error))
         if not isinstance(content, (bytes, bytearray)):
@@ -453,7 +479,7 @@ class HttpSandboxBackend(BaseSandbox):
         responses: list[FileUploadResponse] = []
         for path, content in files or []:
             try:
-                safe_path = _check_sandbox_path(path)
+                safe_path = _check_sandbox_path(path, self._workspace_root)
             except ValueError as error:
                 responses.append(FileUploadResponse(path=str(path), error=str(error)))
                 continue
@@ -505,7 +531,7 @@ class HttpSandboxBackend(BaseSandbox):
 
     def _download_one(self, path: str) -> FileDownloadResponse:
         try:
-            safe_path = _check_sandbox_path(path)
+            safe_path = _check_sandbox_path(path, self._workspace_root)
         except ValueError as error:
             return FileDownloadResponse(path=str(path), content=None, error=str(error))
         try:
@@ -560,7 +586,7 @@ class HttpSandboxBackend(BaseSandbox):
         out: list[FileDownloadResponse] = []
         for path in paths or []:
             try:
-                safe_path = _check_sandbox_path(path)
+                safe_path = _check_sandbox_path(path, self._workspace_root)
             except ValueError as error:
                 out.append(FileDownloadResponse(path=str(path), content=None,
                                                 error=str(error)))
