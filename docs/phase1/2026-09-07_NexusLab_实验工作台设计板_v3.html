@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexusLab 实验工作台 · 设计板 v3（主舞台形态）</title>
+<style>
+:root{
+  --bg:#EFECE4;--bg-app:#F7F5EF;--bg-panel:#FFFFFF;--bg-soft:#F0EDE6;
+  --line-200:#E4DFD3;--line-300:#D5CEBF;--line-400:#BDB4A1;
+  --ink-800:#2B2A26;--ink-600:#57544C;--ink-500:#6E6A5F;--ink-300:#A8A294;
+  --brand:#14213D;
+  --accent:#007AF4;--accent-strong:#0563C4;--accent-soft:#E8F2FE;--accent-line:#A1D0FF;
+  --ok:#2F6B4F;--ok-soft:#EDF5EE;--warn:#8A5A16;--warn-soft:#FBF3DE;--err:#8F3230;--err-soft:#F9ECEA;
+  --r-xs:2px;--r-sm:4px;--r-md:6px;--r-lg:10px;
+  --sans:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  --mono:ui-monospace,'Cascadia Mono','JetBrains Mono',Consolas,'Courier New',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);font-family:var(--sans);color:var(--ink-800);font-size:13px;line-height:1.65;padding:34px 20px 80px}
+.wrap{max-width:1160px;margin:0 auto}
+h1{font-size:21px;font-weight:700;letter-spacing:.01em}
+h2{font-size:14.5px;font-weight:700;margin-bottom:2px}
+p{color:var(--ink-600)}
+code{font-family:var(--mono);font-size:.92em;background:var(--bg-soft);padding:0 4px;border-radius:var(--r-xs)}
+.doc-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:22px}
+.doc-head .meta{font-size:11.5px;color:var(--ink-500);margin-top:6px}
+.ver{display:inline-block;background:var(--brand);color:#fff;font-size:11px;font-weight:700;
+  padding:2px 8px;border-radius:var(--r-sm);margin-right:9px;vertical-align:3px;letter-spacing:.06em}
+.board{background:var(--bg-app);border:1px solid var(--line-300);border-radius:var(--r-lg);
+  padding:22px 22px 24px;margin-bottom:26px}
+.board-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:16px;
+  padding-bottom:12px;border-bottom:1px solid var(--line-200)}
+.hint{font-size:11.5px;color:var(--ink-500)}
+.cap{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-500);margin-bottom:6px}
+
+/* ── 对照表 ── */
+.diff{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:26px}
+.diff .col{background:var(--bg-app);border:1px solid var(--line-300);border-radius:var(--r-md);overflow:hidden}
+.diff .hd{font-size:12px;font-weight:700;padding:8px 12px;border-bottom:1px solid var(--line-200)}
+.diff .hd.bad{background:var(--err-soft);color:var(--err)}
+.diff .hd.good{background:var(--ok-soft);color:var(--ok)}
+.diff ul{list-style:none;padding:10px 12px;font-size:11.5px;color:var(--ink-600);line-height:2}
+.diff li::before{content:"—";color:var(--ink-300);margin-right:7px}
+
+/* ── 调研卡 ── */
+.facts{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}
+.fact{background:var(--bg-panel);border:1px solid var(--line-300);border-radius:var(--r-md);padding:10px 12px}
+.fact .no{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--accent-strong);letter-spacing:.08em}
+.fact b{display:block;font-size:12px;margin:2px 0 3px}
+.fact span{font-size:11px;color:var(--ink-500);line-height:1.55;display:block}
+.srcs{margin-top:12px;font-size:11px;color:var(--ink-500);border-top:1px dashed var(--line-300);padding-top:9px}
+
+/* ── 通用控件（v2 语言） ── */
+.st{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 8px;font-size:11.5px;font-weight:600;
+  border-radius:var(--r-sm);font-variant-numeric:tabular-nums;white-space:nowrap}
+.st.run{color:var(--accent-strong);background:var(--accent-soft)}
+.st.ok{color:var(--ok);background:var(--ok-soft)}
+.st.warn{color:var(--warn);background:var(--warn-soft)}
+.st.err{color:var(--err);background:var(--err-soft)}
+.st.mute{color:var(--ink-500);background:var(--bg-soft)}
+.st .dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+.spin{width:11px;height:11px;border-radius:50%;border:1.5px solid var(--accent-line);
+  border-top-color:var(--accent);animation:rot .7s linear infinite;flex-shrink:0}
+@keyframes rot{to{transform:rotate(360deg)}}
+.btn{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 11px;border-radius:var(--r-sm);
+  border:1px solid var(--line-300);background:var(--bg-panel);font-size:12px;font-weight:600;color:var(--ink-600);
+  cursor:default;font-family:var(--sans);white-space:nowrap}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.ghost-dgr{color:var(--err);border-color:var(--line-300)}
+.btn.sm{height:24px;padding:0 8px;font-size:11px}
+.tag{display:inline-block;height:18px;padding:0 6px;border-radius:var(--r-xs);font-size:10px;font-weight:600;
+  line-height:17px;background:var(--bg-soft);color:var(--ink-500);font-variant-numeric:tabular-nums}
+.tag.gap{border:1px dashed var(--warn);color:var(--warn);background:var(--warn-soft);height:17px;line-height:15px}
+.tag.done{background:var(--ok-soft);color:var(--ok)}
+.ic{width:14px;height:14px;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.ic.sm{width:12px;height:12px}
+
+/* ── 应用框架（Board A） ── */
+.frame{background:var(--bg-panel);border:1px solid var(--line-300);border-radius:var(--r-md);overflow:hidden}
+.f-nav{display:flex;align-items:center;gap:18px;height:40px;padding:0 14px;background:var(--brand);
+  color:#E8ECF4;font-size:12px;border-bottom:1px solid var(--line-300)}
+.f-nav .logo{font-weight:700;font-size:12.5px;letter-spacing:.02em}
+.f-nav .on{background:rgba(255,255,255,.14);padding:4px 10px;border-radius:var(--r-sm);color:#fff}
+.f-nav .me{margin-left:auto;width:22px;height:22px;border-radius:50%;background:var(--accent-line)}
+.f-body{display:flex;height:566px}
+.f-rail{width:168px;flex-shrink:0;border-right:1px solid var(--line-200);background:var(--bg-app);
+  padding:10px 9px;display:flex;flex-direction:column;gap:4px}
+.f-rail .cap{padding:0 4px;margin-bottom:2px}
+.sess{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:var(--r-sm);font-size:11.5px;color:var(--ink-600)}
+.sess.on{background:#fff;border:1px solid var(--line-300);color:var(--ink-800);font-weight:600}
+.sess .d{width:5px;height:5px;border-radius:50%;background:var(--line-400);flex-shrink:0}
+.rail-card{margin-top:10px;background:#fff;border:1px solid var(--line-200);border-radius:var(--r-sm);padding:8px 9px;font-size:10.5px;color:var(--ink-500)}
+.rail-card b{display:block;font-size:11px;color:var(--ink-800);margin-bottom:1px}
+.f-chat{width:296px;flex-shrink:0;border-right:1px solid var(--line-200);display:flex;flex-direction:column;
+  background:var(--bg-panel)}
+.chat-in{flex:1;overflow:hidden;padding:12px 13px;display:flex;flex-direction:column;gap:10px}
+.turn{display:flex;gap:8px}
+.av{width:22px;height:22px;border-radius:var(--r-sm);flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  font-size:10px;font-weight:700;background:var(--ink-800);color:#fff}
+.av.nx{background:var(--accent);color:#fff}
+.bub{font-size:11.5px;color:var(--ink-600);line-height:1.6}
+.bub b{color:var(--ink-800)}
+.bub .src{display:block;margin-top:4px;font-size:10.5px;color:var(--ink-300)}
+
+/* 引用条（v3 新组件） */
+.refbar{margin-top:2px;border:1px solid var(--accent-line);background:var(--accent-soft);border-radius:var(--r-sm);
+  padding:0 9px;height:44px;display:flex;align-items:center;gap:9px}
+.refbar .rb-name{font-size:12px;font-weight:700;color:var(--ink-800);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.refbar .rb-sub{font-size:10.5px;color:var(--ink-500);font-variant-numeric:tabular-nums;white-space:nowrap}
+.refbar .rb-open{margin-left:auto;font-size:11px;font-weight:600;color:var(--accent-strong);white-space:nowrap;
+  display:inline-flex;align-items:center;gap:4px}
+.refbar.off{border-color:var(--line-300);background:var(--bg-panel)}
+
+/* 实验工作台（主舞台） */
+.f-lab{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg-app)}
+.lab-head{display:flex;align-items:center;gap:10px;height:46px;padding:0 12px;background:var(--bg-panel);
+  border-bottom:1px solid var(--line-200)}
+.lab-head .ic{color:var(--brand)}
+.lab-title{font-size:13px;font-weight:700;white-space:nowrap}
+.runsw{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:1px solid var(--line-300);
+  border-radius:var(--r-sm);font-size:11px;color:var(--ink-600);background:var(--bg-panel);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.lab-actions{margin-left:auto;display:flex;align-items:center;gap:7px}
+.lab-sub{display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--bg-panel);
+  border-bottom:1px solid var(--line-200);font-size:11px;color:var(--ink-500);font-variant-numeric:tabular-nums;flex-wrap:wrap}
+.kvs{display:inline-flex;align-items:center;gap:4px}
+.kvs b{color:var(--ink-800);font-weight:600}
+
+/* 六段阶段条 */
+.stage6{display:flex;align-items:center;gap:0;padding:10px 12px;background:var(--bg-panel);border-bottom:1px solid var(--line-200)}
+.sg{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-500);white-space:nowrap}
+.sg .p{width:6px;height:6px;border-radius:50%;background:var(--line-400)}
+.sg.done{color:var(--ok)}.sg.done .p{background:var(--ok)}
+.sg.cur{color:var(--accent-strong);font-weight:700}
+.sg.cur .p{background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.sg.skip .p{background:transparent;border:1px dashed var(--line-400)}
+.sg-line{flex:1;min-width:14px;height:1px;background:var(--line-300);margin:0 7px}
+.sg .note{font-size:10px;color:var(--ink-300);font-weight:400}
+
+/* 主体：步骤列 + 内容区 */
+.lab-body{flex:1;display:flex;min-height:0}
+.stepcol{width:212px;flex-shrink:0;border-right:1px solid var(--line-200);background:var(--bg-panel);
+  display:flex;flex-direction:column}
+.stepcol .cap{padding:8px 10px 4px;border-bottom:1px solid var(--line-200)}
+.steps{flex:1;overflow:hidden}
+.step{padding:8px 10px;border-bottom:1px solid var(--line-200)}
+.step .cmd{font-family:var(--mono);font-size:10.5px;color:var(--ink-800);word-break:break-all;line-height:1.5}
+.step .meta{display:flex;align-items:center;gap:7px;margin-top:4px;font-size:10.5px;color:var(--ink-500);
+  font-variant-numeric:tabular-nums}
+.step .ex{font-family:var(--mono)}
+.step.cur{background:var(--accent-soft);border-left:2px solid var(--accent);padding-left:8px}
+.step .tail{margin-top:5px;background:#0E1826;border-radius:var(--r-xs);padding:5px 7px;font-family:var(--mono);
+  font-size:9.5px;color:#9FB2CC;line-height:1.5;white-space:pre;overflow:hidden}
+
+/* 右侧内容 tab 区 */
+.lab-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.tabs{display:flex;align-items:center;gap:2px;height:34px;padding:0 10px;background:var(--bg-panel);
+  border-bottom:1px solid var(--line-200)}
+.tab{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 10px;border-radius:var(--r-sm);
+  font-size:11.5px;font-weight:600;color:var(--ink-500)}
+.tab.on{color:var(--ink-800);background:var(--bg-soft)}
+.tab .ic{width:12px;height:12px}
+.tabs .right{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--ink-500)}
+.follow{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border:1px solid var(--ok);
+  border-radius:var(--r-sm);color:var(--ok);font-size:10.5px;font-weight:600}
+.log{flex:1;min-height:0;background:#0E1826;margin:10px;border-radius:var(--r-sm);padding:10px 12px;
+  font-family:var(--mono);font-size:10.5px;line-height:1.75;color:#C7D5E8;overflow:hidden;
+  font-variant-numeric:tabular-nums;white-space:pre}
+.log .hl{color:#E8F2FE;background:rgba(0,122,244,.18);border-radius:2px;padding:0 2px}
+.log .dim{color:#5C7191}
+.lab-foot{display:flex;align-items:center;gap:14px;height:32px;padding:0 12px;background:var(--bg-panel);
+  border-top:1px solid var(--line-200);font-size:10.5px;color:var(--ink-500);font-variant-numeric:tabular-nums}
+.lab-foot .mono{font-family:var(--mono)}
+
+/* 指标 / 参数 / 产物 mock */
+.pane{flex:1;margin:10px;display:flex;flex-direction:column;gap:9px;overflow:hidden}
+.mcard{background:var(--bg-panel);border:1px solid var(--line-300);border-radius:var(--r-sm);padding:10px 12px}
+.mcard .row{display:flex;align-items:baseline;gap:10px;font-variant-numeric:tabular-nums}
+.mcard .val{font-family:var(--mono);font-size:20px;font-weight:700}
+.mcard .exp{font-size:11px;color:var(--ink-500)}
+.mcard .src{font-size:10px;color:var(--ink-300);margin-top:3px}
+.ph{border:1px dashed var(--line-400);border-radius:var(--r-sm);padding:16px 12px;text-align:center;
+  font-size:11px;color:var(--ink-300)}
+.kv-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.kv{background:var(--bg-panel);border:1px solid var(--line-200);border-radius:var(--r-sm);padding:7px 9px;font-size:11px}
+.kv .k{font-size:10px;color:var(--ink-300);letter-spacing:.04em}
+.kv .v{font-family:var(--mono);font-size:11px;color:var(--ink-800);margin-top:1px;word-break:break-all}
+.flags{background:#0E1826;border-radius:var(--r-sm);padding:8px 10px;font-family:var(--mono);
+  font-size:10.5px;color:#C7D5E8;line-height:1.8;white-space:pre}
+
+/* 窄屏 mock */
+.f-main-narrow{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg-app)}
+.ntabbar{display:flex;align-items:center;gap:2px;height:36px;padding:0 10px;background:var(--bg-panel);border-bottom:1px solid var(--line-200)}
+.ntab{display:inline-flex;align-items:center;gap:6px;height:25px;padding:0 11px;border-radius:var(--r-sm);
+  font-size:12px;font-weight:600;color:var(--ink-500)}
+.ntab.on{color:var(--ink-800);background:var(--bg-soft)}
+.ntab .badge{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+/* 状态矩阵 */
+.grid8{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}
+.card8{background:var(--bg-panel);border:1px solid var(--line-300);border-radius:var(--r-md);overflow:hidden}
+.card8 .lbl{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:var(--ink-500);
+  padding:7px 10px;border-bottom:1px solid var(--line-200);background:var(--bg-app);font-variant-numeric:tabular-nums}
+.card8 .bd{padding:9px 10px;display:flex;flex-direction:column;gap:8px}
+.rb-mock{border:1px solid var(--line-300);border-radius:var(--r-xs);height:34px;display:flex;align-items:center;
+  gap:7px;padding:0 8px;font-size:11px;color:var(--ink-600);background:var(--bg-app);font-variant-numeric:tabular-nums}
+.rb-mock b{color:var(--ink-800)}
+.rb-mock .go{margin-left:auto;color:var(--accent-strong);font-size:10px;font-weight:600;white-space:nowrap}
+.card8 .why{font-size:10.5px;color:var(--ink-500);line-height:1.6;border-top:1px dashed var(--line-200);padding-top:7px}
+.card8 .why b{color:var(--ink-800)}
+
+/* Board C 表 */
+table.dt{width:100%;border-collapse:collapse;background:var(--bg-panel);border:1px solid var(--line-300);
+  border-radius:var(--r-md);overflow:hidden;font-size:11.5px}
+.dt th{background:var(--bg-app);text-align:left;font-size:10.5px;letter-spacing:.06em;color:var(--ink-500);
+  padding:8px 12px;border-bottom:1px solid var(--line-300)}
+.dt td{padding:8px 12px;border-bottom:1px solid var(--line-200);vertical-align:top;color:var(--ink-600)}
+.dt tr:last-child td{border-bottom:none}
+.dt td:first-child{font-weight:600;color:var(--ink-800);white-space:nowrap}
+.dt code{font-size:10.5px}
+.cmt{border-left:2px solid var(--warn);background:var(--warn-soft);border-radius:0 var(--r-xs) var(--r-xs) 0;
+  padding:6px 9px;font-family:var(--mono);font-size:10.5px;color:var(--ink-600);margin-top:4px}
+
+/* 规格卡 */
+.spec{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.spec .box{background:var(--bg-panel);border:1px solid var(--line-300);border-radius:var(--r-md);padding:13px 15px}
+.spec ul{list-style:none;font-size:11.5px;color:var(--ink-600);line-height:2}
+.spec li b{color:var(--ink-800)}
+.spec li::before{content:"—";color:var(--ink-300);margin-right:7px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- SVG symbol sprite（lucide，stroke 1.7） -->
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-term" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></symbol>
+  <symbol id="i-package" viewBox="0 0 24 24"><path d="M16.5 9.4 7.5 4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></symbol>
+  <symbol id="i-msg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-flask" viewBox="0 0 24 24"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><path d="M5.52 16h12.96"/></symbol>
+</svg>
+
+<div class="doc-head">
+  <div>
+    <h1><span class="ver">v3</span>NexusLab · 实验工作台（主舞台形态）</h1>
+    <p>v2 的视觉语言<b>一笔不动</b>；这一版动的是<b>布局与定位</b> —— 实验台从右侧窄卡升级为<b>主舞台</b>，
+       会话里的实验卡降为一行「引用条」。依据 = 真实论文复现工作流调研 + 你的反馈。</p>
+    <div class="meta">2026-09-07 · 家良拍板「工作台不能挤在右栏」 · 规划文档已同步 v1.2 ·
+       NX-E2/E3 已上线（stage/日志/取消有真数据，v2 板上的 TODO 标注作废）</div>
+  </div>
+</div>
+
+<!-- v2 → v3 对照 -->
+<div class="diff">
+  <div class="col">
+    <div class="hd bad">v2 的问题 · 布局层</div>
+    <ul>
+      <li><b>主次颠倒</b> —— 「复现论文的工作台」里，对话占了 60%，实验台挤在右栏 340–400px</li>
+      <li><b>信息被截断</b> —— COMMAND / EXIT / DURATION 三列在窄栏里放不下，只剩半截</li>
+      <li><b>塞不下真实日志</b> —— 2000 字符日志尾 + 步骤展开 + 指标判定，窄栏一条都展不开</li>
+      <li><b>实验卡在会话流里占一大块</b> —— 刷日志时把对话顶得看不见</li>
+    </ul>
+  </div>
+  <div class="col">
+    <div class="hd good">v3 · 方案</div>
+    <ul>
+      <li><b>实验台 = 主舞台</b>（≥55% 宽），日志/命令/指标完整可见；对话收为左列</li>
+      <li>会话流里的实验卡降为 <b>44px 一行「引用条」</b>（状态点 + 名称 + 时长 + 打开工作台）</li>
+      <li>工作台内按真实复现循环分区：<b>阶段条 / 步骤列 / 日志（最大面积）/ 指标 / 参数 / 产物</b></li>
+      <li>窄屏（&lt;1100px）主区二选一 tab：<b>对话 | 实验台</b>，互不挤压</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ══════════ 调研 ══════════ -->
+<div class="board">
+  <div class="board-head">
+    <div>
+      <h2>调研 · 真实论文复现工作流 → 设计映射</h2>
+      <div class="hint">参照对象：W&B run 页 / MLflow run 对比 / Hydra+TensorBoard 复现实践 / ML 复现清单（McGill）</div>
+    </div>
+  </div>
+  <div class="facts">
+    <div class="fact">
+      <div class="no">F1</div><b>复现是多 run 循环</b>
+      <span>「配置 → 跑 → 盯日志/loss → 改 → 再跑 → 对比」。工作台服务整个循环，不是单次进度条。</span>
+    </div>
+    <div class="fact">
+      <div class="no">F2</div><b>参数在 run 之间改</b>
+      <span>真实实践是「复制上一 run 的 config → 改 → 新 run」，<b>从不在 run 中途改</b>。UI 不做运行中改参的假交互。</span>
+    </div>
+    <div class="fact">
+      <div class="no">F3</div><b>按面积盯：日志最大</b>
+      <span>实时日志 &gt; loss 走向 &gt; 终态指标判定。日志区必须是工作台里最大的元素。</span>
+    </div>
+    <div class="fact">
+      <div class="no">F4</div><b>run 带着自己的参数</b>
+      <span>seed / repo / license / 配置要常驻 run 头——两周后还要能对上「这个结果是谁跑出来的」。</span>
+    </div>
+    <div class="fact">
+      <div class="no">F5</div><b>失败也是记录</b>
+      <span>exit=-9（取消）、超时、失败的 run 如实保留，对比和排查都要看。不洗成「已结束」。</span>
+    </div>
+  </div>
+  <div class="srcs">
+    来源：W&B Projects/Workspace 文档（runs 侧栏 + config/metrics/logs/artifacts 面板）· MLflow Run Detail（Parameters/Metrics/Artifacts 分区 + 多 run 并排对比）·
+    McGill《ML Reproducibility 12 practices》（config 管理 / checkpoint / logging / seed）· Hydra 多 run 目录实践（每 run 一份完整 resolved config）
+  </div>
+</div>
+
+<!-- ══════════ Board A ══════════ -->
+<div class="board">
+  <div class="board-head">
+    <h2>Board A · 宽屏主舞台形态（≥1100px）</h2>
+    <div class="hint">会话轨 264px 实际｜对话列 24–32%｜工作台 ≥55%。示意按 168 / 296 / 604 比例绘制</div>
+  </div>
+
+  <div class="frame">
+    <div class="f-nav">
+      <span class="logo">CodeNexus</span><span>课程</span><span class="on">Nexus AI</span><span>课程实验</span><span>资源库</span>
+      <span class="me"></span>
+    </div>
+    <div class="f-body">
+
+      <!-- 左：会话轨 -->
+      <div class="f-rail">
+        <div class="cap">会话</div>
+        <div class="sess on"><span class="d"></span>nanoGPT 复现验证</div>
+        <div class="sess"><span class="d"></span>Transformer 统计整理</div>
+        <div class="sess"><span class="d"></span>课程 RAG 检索测试</div>
+        <div class="rail-card"><b>数据源：真实</b>运行时已连通 · 会话仅存本机</div>
+        <div class="rail-card"><b>本机资料</b>聊天记录 · 复现 1 · 产物 2</div>
+      </div>
+
+      <!-- 中：对话列（收窄） -->
+      <div class="f-chat">
+        <div class="chat-in">
+          <div class="turn"><span class="av">我</span>
+            <div class="bub"><b>帮我复现 nanoGPT 在 Shakespeare 上的训练结果</b></div>
+          </div>
+          <div class="turn"><span class="av nx">N</span>
+            <div class="bub">已定位到 nanoGPT 官方仓库与 README 中的 CPU 配置基线，下面预设 <b>nanogpt-shakespeare</b> 跑一次验证。
+              <span class="src">来源：karpathy/nanoGPT · MIT License · 仅验证 README CPU 基线，不是完整 GPT-2 论文指标复现</span></div>
+          </div>
+          <div class="turn"><span class="av nx">N</span>
+            <div class="bub">审批已通过，作业已提交 Worker 执行。进度在工作台，这里只留一行入口，不刷屏。</div>
+          </div>
+          <!-- 引用条：v3 核心新组件 -->
+          <div class="refbar">
+            <span class="spin"></span>
+            <span class="rb-name">nanoGPT 复现验证</span>
+            <span class="rb-sub">train.py · 2m13s</span>
+            <span class="rb-open">打开工作台 <svg class="ic sm"><use href="#i-chev"/></svg></span>
+          </div>
+          <div class="turn"><span class="av">我</span>
+            <div class="bub">跑完把 val loss 和报告给我。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右：实验工作台（主舞台） -->
+      <div class="f-lab">
+        <div class="lab-head">
+          <svg class="ic"><use href="#i-flask"/></svg>
+          <span class="lab-title">实验工作台</span>
+          <span class="runsw">Run #1 · 本次会话 <svg class="ic sm"><use href="#i-chev"/></svg></span>
+          <span class="tag gap">GAP-2 run 列表</span>
+          <div class="lab-actions">
+            <span class="btn sm ghost-dgr"><svg class="ic sm"><use href="#i-x"/></svg>取消</span>
+            <span class="btn sm"><svg class="ic sm"><use href="#i-copy"/></svg>job_id</span>
+          </div>
+        </div>
+        <div class="lab-sub">
+          <span class="st run"><span class="spin"></span>运行中</span>
+          <span class="kvs">耗时 <b>2m13s</b></span>
+          <span class="kvs">repo <b>karpathy/nanoGPT</b></span>
+          <span class="kvs">license <b>MIT</b></span>
+          <span class="kvs">seed <b>1337</b></span>
+          <span class="kvs">preset <b>nanogpt-shakespeare</b></span>
+        </div>
+
+        <!-- 六段阶段条（真实 stage_events） -->
+        <div class="stage6">
+          <span class="sg done"><span class="p"></span>Preparing</span>
+          <span class="sg-line"></span>
+          <span class="sg skip"><span class="p"></span>Building<span class="note">skipped · preset 无独立构建</span></span>
+          <span class="sg-line"></span>
+          <span class="sg cur"><span class="p"></span>Running</span>
+          <span class="sg-line"></span>
+          <span class="sg"><span class="p"></span>Metric</span>
+          <span class="sg-line"></span>
+          <span class="sg"><span class="p"></span>Verifying</span>
+          <span class="sg-line"></span>
+          <span class="sg"><span class="p"></span>Completed</span>
+        </div>
+
+        <div class="lab-body">
+          <!-- 步骤列 -->
+          <div class="stepcol">
+            <div class="cap">步骤 · 只读（无 stdin / 无命令编辑）</div>
+            <div class="steps">
+              <div class="step">
+                <div class="cmd">git clone --depth 1 karpathy/nanoGPT</div>
+                <div class="meta"><span class="ex">exit 0</span><span>0.1s</span></div>
+              </div>
+              <div class="step">
+                <div class="cmd">pip install -r requirements.txt</div>
+                <div class="meta"><span class="ex">exit 0</span><span>43.1s</span></div>
+              </div>
+              <div class="step">
+                <div class="cmd">python data/shakespeare/prepare.py</div>
+                <div class="meta"><span class="ex">exit 0</span><span>0.4s</span></div>
+              </div>
+              <div class="step cur">
+                <div class="cmd">python train.py config/train_shakespeare.py</div>
+                <div class="meta"><span class="ex">exit —</span><span>1m52s · 进行中</span></div>
+                <div class="tail">step 27100 | loss 1.7680 | 345.6 it/s
+step 27200 | loss 1.9023 | 341.0 it/s</div>
+              </div>
+              <div class="step">
+                <div class="cmd">python sample.py --out-dir=out-shakespeare</div>
+                <div class="meta"><span class="ex">exit —</span><span>— · 排队</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 内容 tab 区 -->
+          <div class="lab-main">
+            <div class="tabs">
+              <span class="tab on"><svg class="ic"><use href="#i-term"/></svg>日志</span>
+              <span class="tab"><svg class="ic"><use href="#i-activity"/></svg>指标</span>
+              <span class="tab"><svg class="ic"><use href="#i-package"/></svg>产物</span>
+              <span class="tab"><svg class="ic"><use href="#i-sliders"/></svg>参数</span>
+              <div class="right">
+                <span class="follow"><span class="dot" style="width:5px;height:5px;border-radius:50%;background:currentColor"></span>跟随中</span>
+                <span>末 2000 字符 · 环形缓冲</span>
+                <span class="tag gap">GAP-1 全量日志</span>
+              </div>
+            </div>
+            <div class="log"><span class="dim">…train.py stdout 原样透传（控制符已清洗）…</span>
+iter 27000: train loss 1.7211, val loss 1.9031
+iter 27100 | loss 1.7680 | lr 1.00e-04 | 345.61 it/s
+iter 27200 | loss 1.9023 | lr 1.00e-04 | 341.02 it/s
+<span class="hl">iter 27290 | loss 1.8447 | lr 1.00e-04 | 338.90 it/s</span>
+<span class="dim">── live_log_tail 到此为止（2000 字符环形缓冲，更早日志被覆盖）──</span></div>
+            <div class="lab-foot">
+              <span>运行中 Exit 显示「—」不是 0</span>
+              <span>Duration 取服务端 started_at / finished_at</span>
+              <span class="mono">Worker v0.2.0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ Board A2 · 其余三个 tab + 窄屏 ══════════ -->
+<div class="board">
+  <div class="board-head">
+    <h2>Board A2 · 工作台其余分区（指标 / 参数）+ 窄屏形态</h2>
+    <div class="hint">指标与参数是「贴近真实复现」的关键两块：看得更细、改得有依据</div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+    <div>
+      <div class="cap">指标 tab · 判定卡 + 曲线占位</div>
+      <div class="pane" style="margin:0;border:1px solid var(--line-200);border-radius:var(--r-sm);padding:10px;background:var(--bg-app)">
+        <div class="mcard">
+          <div class="cap">Metric 判定（来自 report，不自行计算）</div>
+          <div class="row">
+            <span class="val">val_loss 1.8857</span>
+            <span class="exp">期望 1.88 ± 0.06</span>
+            <span class="st ok" style="margin-left:auto"><span class="dot"></span>PASS</span>
+          </div>
+          <div class="src">源：GET /nexus/repro/jobs/{id}/report · 真实链路已实证（NX-E2 验收 Job A）</div>
+        </div>
+        <div class="ph">loss 时序曲线 —— <b style="color:var(--warn)">GAP-3</b>：后端无结构化时序数据，这里<b>不画假曲线</b>；等真实事件流立项后再上图</div>
+      </div>
+    </div>
+    <div>
+      <div class="cap">参数 tab · run 的「身份卡」（F4）+ 调参的正确出口（F2）</div>
+      <div class="pane" style="margin:0;border:1px solid var(--line-200);border-radius:var(--r-sm);padding:10px;background:var(--bg-app)">
+        <div class="kv-grid">
+          <div class="kv"><div class="k">REPO</div><div class="v">karpathy/nanoGPT</div></div>
+          <div class="kv"><div class="k">LICENSE</div><div class="v">MIT</div></div>
+          <div class="kv"><div class="k">SEED</div><div class="v">1337</div></div>
+          <div class="kv"><div class="k">PRESET</div><div class="v">nanogpt-shakespeare</div></div>
+        </div>
+        <div class="flags">--n_layer 6  --n_head 6  --n_embd 384
+--max_iters 5000  --lr 1e-4
+<span class="dim">（解析自 steps_result[].command 文本）</span></div>
+        <div style="font-size:10.5px;color:var(--ink-500)">GAP-4：无结构化 config，旗标视图仅作过渡展示，标注来源是命令文本</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="btn pri sm">基于此 run 调整 → 新提案</span>
+          <span style="font-size:10.5px;color:var(--ink-500)">改参数走<b>既有审批硬门</b>，生成新 run —— 不是就地改运行中的作业（F2）</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cap">窄屏 &lt;1100px · 主区二选一 tab（对话 | 实验台），图标轨入口带运行徽标</div>
+  <div class="frame">
+    <div class="f-nav">
+      <span class="logo">CodeNexus</span><span>课程</span><span class="on">Nexus AI</span><span>课程实验</span><span>资源库</span>
+      <span class="me"></span>
+    </div>
+    <div class="f-body" style="height:280px">
+      <div class="f-rail" style="width:150px">
+        <div class="cap">会话</div>
+        <div class="sess on"><span class="d"></span>nanoGPT 复现验证</div>
+        <div class="sess"><span class="d"></span>Transformer 统计整理</div>
+        <div class="rail-card"><b>数据源：真实</b>运行时已连通</div>
+      </div>
+      <div class="f-main-narrow">
+        <div class="ntabbar">
+          <span class="ntab"><svg class="ic sm"><use href="#i-msg"/></svg>对话</span>
+          <span class="ntab on"><svg class="ic sm"><use href="#i-flask"/></svg>实验台<span class="badge"></span></span>
+        </div>
+        <div style="flex:1;display:flex;min-height:0">
+          <div class="f-lab">
+            <div class="lab-head">
+              <svg class="ic"><use href="#i-flask"/></svg>
+              <span class="lab-title">实验工作台</span>
+              <span class="runsw">Run #1</span>
+              <div class="lab-actions"><span class="st run"><span class="spin"></span>运行中</span></div>
+            </div>
+            <div class="stage6" style="overflow:hidden">
+              <span class="sg done"><span class="p"></span>Preparing</span><span class="sg-line"></span>
+              <span class="sg cur"><span class="p"></span>Running</span><span class="sg-line"></span>
+              <span class="sg"><span class="p"></span>Metric</span><span class="sg-line"></span>
+              <span class="sg"><span class="p"></span>Completed</span>
+            </div>
+            <div class="log" style="margin:10px">iter 27200 | loss 1.9023 | 341.0 it/s
+iter 27290 | loss 1.8447 | 338.9 it/s<span class="dim">
+── 末 2000 字符 ──</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ Board B ══════════ -->
+<div class="board">
+  <div class="board-head">
+    <h2>Board B · 8 状态 × 两层形态</h2>
+    <div class="hint">每态 = 会话里的「引用条」一行 + 工作台头状态。状态源同源（同一 status 映射），两处显示永不打架</div>
+  </div>
+  <div class="grid8">
+    <div class="card8">
+      <div class="lbl">01 · 运行中</div>
+      <div class="bd">
+        <div class="rb-mock"><span class="spin"></span><b>nanoGPT…</b><span>train.py · 2m13s</span><span class="go">打开 ›</span></div>
+        <div style="display:flex;gap:6px;align-items:center"><span class="st run"><span class="spin"></span>运行中</span><span style="font-size:10.5px;color:var(--ink-500)">阶段条走到当前段</span></div>
+        <div class="why">引用条带 <b>spinner + 当前步骤名</b>；点开即切主舞台。</div>
+      </div>
+    </div>
+    <div class="card8">
+      <div class="lbl">02 · 待批准</div>
+      <div class="bd">
+        <div class="rb-mock"><span class="st warn" style="height:18px"><span class="dot"></span>待确认</span><b>nanoGPT…</b><span class="go">查看提案 ›</span></div>
+        <div style="display:flex;gap:6px;align-items:center"><span class="st warn"><span class="dot"></span>等待确认</span><span style="font-size:10.5px;color:var(--ink-500)">倒计时来自 expires_at</span></div>
+        <div class="why"><b>不显示「执行中」</b>；过期转「已过期 · 请让 Nexus 重新提案」。入口指向提案确认面板，不是工作台。</div>
+      </div>
+    </div>
+    <div class="card8">
+      <div class="lbl">03 · 已完成</div>
+      <div class="bd">
+        <div class="rb-mock"><span class="st ok" style="height:18px"><span class="dot"></span>已完成</span><b>nanoGPT…</b><span>val_loss 1.8857 · PASS</span><span class="go">打开 ›</span></div>
+        <div style="display:flex;gap:6px;align-items:center"><span class="st ok"><span class="dot"></span>已完成</span><span style="font-size:10.5px;color:var(--ink-500)">2m45s</span></div>
+        <div class="why">引用条直接带<b>判定结论</b>——用户不点开也能知道结果。</div>
+      </div>
+    </div>
+    <div class="card8">
+      <div class="lbl">04 · 失败</div>
+      <div class="bd">
+        <div class="rb-mock"><span class="st err" style="height:18px"><span class="dot"></span>失败</span><b>nanoGPT…</b><span>step 3 · exit 1</span><span class="go">查日志 ›</span></div>
+        <div style="display:flex;gap:6px;align-items:center"><span class="st err"><span class="dot"></span>失败</span><span style="font-size:10.5px;color:var(--ink-500)">exit 1 · 43.5s</span></div>
+        <div class="why">引用条带<b>失败步骤 + 退出码</b>；打开工作台默认<b>定位到失败步骤并展开其 log_tail</b>。</div>
+      </div>
+    </div>
+    <div class="card8">
+      <div class="lbl">05 · 取消中 → 已取消</div>
+      <div class="bd">
+        <div class="rb-mock"><span class="st warn" style="height:18px"><span class="dot"></span>取消中</span><b>nanoGPT…</b><span class="go">打开 ›</span></div>
+        <div style="display:flex;gap:6px;align-items:center"><span class="st mute"><span class="dot"></span>已取消</span><span style="font-size:10.5px;color:var(--ink-500)">已完成 3 步如实保留</span></div>
+        <div class="why">取消中 spinner 换琥珀点；已取消是终态，<b>已完成步骤结果如实显示</b>，不冒充失败/成功（cancel_late 取证）。</div>
+      </div>
+    </div>
+    <div class="card8">
+      <div class="lbl">06 · 超时</div>
+      <div class="bd">
+        <div class="rb-mock"><span class="st err" style="height:18px"><span class="dot"></span>超时</span><b>nanoGPT…</b><span>预算 30m</span><span class="go">查日志 ›</span></div>
+        <div style="display:flex;gap:6px;align-items:center"><span class="st err"><span class="dot"></span>已超时</span><span style="font-size:10.5px;color:var(--ink-500)">timed_out=true 的步骤标出</span></div>
+        <div class="why">超时步骤在步骤列标 <b>timed_out</b>；建议动作是「调整预算/规模 → 新提案」。</div>
+      </div>
+    </div>
+    <div class="card8">
+      <div class="lbl">07 · 未知（断线 / Worker 重启）</div>
+      <div class="bd">
+        <div class="rb-mock"><span class="st mute" style="height:18px"><span class="dot"></span>状态未知</span><b>nanoGPT…</b><span class="go">打开 ›</span></div>
+        <div style="display:flex;gap:6px;align-items:center"><span class="st mute"><span class="dot"></span>状态未知</span><span style="font-size:10.5px;color:var(--ink-500)">Worker 重启对账属 NX-E4</span></div>
+        <div class="why"><b>禁止 fallback 到成功态</b>、禁止自动重跑；明示「Worker 重启导致状态不可知，待对账」。</div>
+      </div>
+    </div>
+    <div class="card8">
+      <div class="lbl">08 · Worker 不可用</div>
+      <div class="bd">
+        <div class="rb-mock"><span class="st err" style="height:18px"><span class="dot"></span>不可用</span><b>提交受阻</b><span class="go">详情 ›</span></div>
+        <div style="display:flex;gap:6px;align-items:center"><span class="st err"><span class="dot"></span>服务不可用</span><span style="font-size:10.5px;color:var(--ink-500)">503 REPRO_WORKER_*</span></div>
+        <div class="why">fail-closed：如实报「复现服务未配置/不可达」，<b>不回退演示数据</b>。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ Board C ══════════ -->
+<div class="board">
+  <div class="board-head">
+    <div>
+      <h2>Board C · 数据源与缺口（NX-E2/E3 上线后的实测版）</h2>
+      <div class="hint">v2 板上的 TODO(NX-E2/E3) 已作废——stage/日志/取消均有真数据并经浏览器真实链路验收。现行缺口只有 4 个 GAP</div>
+    </div>
+  </div>
+  <table class="dt">
+    <tr><th style="width:150px">要素</th><th>数据源（实测）</th><th style="width:330px">工作台呈现</th></tr>
+    <tr>
+      <td>阶段 Stage</td>
+      <td><code>stage_events[]</code>：Preparing/Building/Running/Metric/Verifying/Completed，seq 单调；building <code>skipped</code>、verifying <code>not_applicable</code> 均带 note</td>
+      <td>六段阶段条；skipped/not_applicable <b>如实附注</b>，不补假进度</td>
+    </tr>
+    <tr>
+      <td>当前步骤</td>
+      <td><code>current_step</code> + <code>steps_result[]</code>（command ≤160 字符、exit_code、timed_out、duration_s、log_tail 2000）</td>
+      <td>步骤列；运行中 exit 显示「—」不是 0；单击步骤展开该步 <code>log_tail</code></td>
+    </tr>
+    <tr>
+      <td>运行日志</td>
+      <td><code>live_log_tail</code>：运行中增量，控制符已清洗，<b>2000 字符环形缓冲</b></td>
+      <td>日志区（最大面积）+「跟随中」开关 + 复制；<span class="tag gap">GAP-1</span> 超 2000 字符不可见、无下载端点</td>
+    </tr>
+    <tr>
+      <td>指标 Metric</td>
+      <td>report 端点：<code>val_loss 1.8857 ∈ 1.88±0.06 → PASS</code>（真实链路已实证）</td>
+      <td>判定卡（值/期望/容差/结论）；<span class="tag gap">GAP-3</span> 无时序数据，<b>不画假曲线</b></td>
+    </tr>
+    <tr>
+      <td>取消 Cancel</td>
+      <td><code>POST /repro/jobs/{id}/cancel</code>：幂等、POSIX killpg、取消晚到保持自然终态（cancel_late 取证）</td>
+      <td>头部「取消」按钮 → 取消中 → 已取消；已完成步骤如实保留</td>
+    </tr>
+    <tr>
+      <td>参数身份（F4）</td>
+      <td><code>seed_used</code> / <code>repo_url</code> / <code>requested_license</code> / <code>preset_id</code></td>
+      <td>run 头常驻；<span class="tag gap">GAP-4</span> 无结构化 config，超参从命令文本解析，标注来源</td>
+    </tr>
+    <tr>
+      <td>产物 Artifacts</td>
+      <td><code>artifacts[]</code> + 下载端点</td>
+      <td>产物 tab：报告 / 样本输出，下载走既有端点</td>
+    </tr>
+    <tr>
+      <td>run 切换 / 对比（F1）</td>
+      <td>无 list API —— 只有单 job <code>GET</code></td>
+      <td><span class="tag gap">GAP-2</span> 切换器首版只列「当前会话已知 runs」；跨 run 列表待立项（是工作台内数据源，<b>不是作业列表页</b>——v1.1 裁定不变）</td>
+    </tr>
+    <tr>
+      <td>Worker 重启</td>
+      <td><code>_jobs</code> 内存态，重启丢失 → interrupted/unknown</td>
+      <td>07 号「状态未知」态如实显示；对账属 <b>NX-E4</b>，未做</td>
+    </tr>
+  </table>
+  <div class="cmt">// GAP-1(全量日志): live_log_tail 为 2000 字符环形缓冲，更早日志不可回看；需要日志下载/分页端点，未立项
+// GAP-2(run 列表): 仅单 job GET；工作台 run 切换器首版只显示当前会话已知 runs，列表 API 待立项
+// GAP-3(指标时序): 无结构化 loss 序列，曲线区显示占位说明，禁止用 stdout 文本伪造曲线
+// GAP-4(结构化 config): 超参仅存在于命令文本，旗标视图标注"解析自命令行"，待后端提供 config 快照</div>
+</div>
+
+<!-- ══════════ 规格卡 ══════════ -->
+<div class="board">
+  <div class="board-head">
+    <h2>规格 · 布局断点 / 滚动 / 契约约束</h2>
+  </div>
+  <div class="spec">
+    <div class="box">
+      <div class="cap">布局与断点</div>
+      <ul>
+        <li><b>≥1100px</b>：会话轨 264px 固定 + 对话列 24–32% + 工作台 ≥55%（min-width 620px）</li>
+        <li><b>&lt;1100px</b>：主区二选一 tab（对话 | 实验台）；图标轨入口带运行徽标（小圆点，非闪烁）</li>
+        <li>引用条 <b>44px 一行</b>：状态点（运行中=spinner）/ 名称 / 当前步骤·时长 / 判定摘要（终态）/ 打开</li>
+        <li>工作台 = <b>头部 46px + 身份行 + 阶段条 + 主体（步骤列 212px | 内容 tab 区）+ 底部状态条 32px</b></li>
+        <li>滚动：工作台内<b>日志区是唯一滚动子区</b>（design.md §5.1 三层滚动模型）</li>
+      </ul>
+    </div>
+    <div class="box">
+      <div class="cap">交互与契约</div>
+      <ul>
+        <li>日志「<b>跟随中</b>」开关：暂停时右上角累计「+N 行」，点击回底恢复跟随（tail -f 心智模型）</li>
+        <li>失败 run 打开工作台 → <b>自动定位失败步骤并展开其 log_tail</b></li>
+        <li>「基于此 run 调整」= 生成新提案走<b>既有审批硬门</b>，绝不就地改运行中的作业（F2）</li>
+        <li>组件落点：<code>ExperimentWorkspace.vue</code>（主舞台）+ <code>ReproReferenceBar.vue</code>（引用条）；既有就地展开 Console 改造为引用条</li>
+        <li>契约：一律 <code>SfxButton</code>，禁原生 <code>&lt;button&gt;</code>（<code>apiContracts.test.cjs:816/:1003</code>）</li>
+        <li>待后端注释前缀统一为 <code>// GAP-1/2/3/4</code>（v2 的 TODO(NX-E2/E3) 作废）</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,5 +1,15 @@
 # CodeNexus智码交响 —— 让课程回应学习：知识图谱驱动的可追溯智能教学系统
 
+> **学科知识库自动化构建方案（2026-09-08，PROPOSED）：**[DK0–DK8 实施计划与编码智能体工期](docs/phase1/2026-09-08_学科知识库自动化构建实施计划.md)细化现有语料到概念归一、证据校验、增量构建、版本发布及页面/TeachingAgent/Nexus 同源检索的流程。当前仅完成方案；预计单智能体 50–80 有效工时，模型批处理与人工评价另计，未开始实施或部署。
+
+> **Research Ask/Auto设计（2026-09-07，NEXT）：**仅Research提供选择；同样自主研究和多格式输出，Ask不调用实验沙箱，Auto一次确认后自主执行。设计与切换语义见[前端规格§2.1](docs/phase1/Nexus_AI_前端开发规格与UX落地说明.md)；当前尚未实现该开关。
+
+> **2026-09-07 下一批执行入口：**[Nexus自主实验V1任务书](docs/phase1/Nexus_自主实验V1_执行任务书.md)，T0–T7具体落实一次确认后的配置、运行、排错与报告。核心采用路线为Deep Agents原生Sandbox＋SWE-ReX Docker，repo2docker适配环境构建；状态NEXT，版本兼容和真实容器验收属于实施任务。
+
+> **完整转型验收补齐**：N0–N4不等于整个产品完成。复杂任务Harness、完整Paper Research、长任务恢复，以及Markdown/可编译LaTeX/可编辑Word输出均纳入首个完整版本，最后统一验收；Word不再列为可选增强。当前仅更新规划，正式文档生成尚未实现。
+
+> **Nexus 下一主线（本地核查 a60d4e87）**：AB/CD 后端已有提交及线上验收记录，v6 工作台/启动页已提交，质量审查收尾和完整用户链验收另计。下一主批次调整为[一次确认后的自主实验闭环](docs/phase1/Nexus_持续研究V1_开源集成与开发任务书.md)：最小输入理解→无preset准备→独立任务沙箱→自主安装/运行/排错→报告；用户确认一次实验范围，内部修复不逐步审批。持续研究循环继续建设但不阻塞配置实验，干净B与正式Word/LaTeX输出按依赖接入。任务书§1为用户结论的重要设计参照，状态均为NEXT。总路线详见 [下一阶段实施计划](docs/phase1/Nexus_论文到实验_下一阶段实施计划.md) 与 [P2 当前进度 §10](docs/phase1/CodeNexus_P2开发计划.md#10-当前完成度与下一主线本次冻结)。以下带日期的状态用于历史追溯，不作为后续批次未开发的依据。
+
 > **2026-09-05 Current Architecture + Roadmap**：[v1.3 架构](docs/phase1/CodeNexus_转型设计与实施方案_v1.3.md)、[NX 开发计划](docs/phase1/CodeNexus_P2开发计划.md)、[现行前端规格](docs/phase1/Nexus_AI_前端开发规格与UX落地说明.md)。CURRENT/NEXT/TARGET/OPTIONAL 分开；M0–M5 仅为受控 MVP。首批 NX-G1–G3 修 Mode、Runtime 审批与有效能力状态，其后附件/视觉、Console/Cancel 已上线（Worker v0.3.0 含边界修复）；Todo（NX-H1）与上传论文证据薄链（NX-R1a）2026-09-07 本地开发验证完成、线上待人工复验；Sandbox/A-B、完整 Paper Research、Session、Subagent 为 NEXT/TARGET。HEAD 与未提交工作区差异见架构 B2，新增方向未上线。下方带历史日期的说明保留追溯，当前部署地址为 https://zsitai.xyz/，Legacy Research 已完成 S3。
 
 > **计算机学科垂类大模型与智能体应用 · 证据驱动的课程建设、互动学习与教学分析平台**

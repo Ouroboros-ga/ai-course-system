@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexusLab · 研究与实验一体化 · 设计板 v6</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F4F3EF; --surface:#FFFFFF; --surface-2:#FBFAF7; --surface-3:#F6F5F1;
+  --line:#E4E2DA; --line-2:#D5D2C7; --line-3:#BFBBAC;
+  --ink:#1A1F28; --ink-2:#4C5462; --ink-3:#7C8492; --ink-4:#9AA1AD;
+  --accent:#2A6FAD; --accent-2:#1F5687; --accent-soft:#E9F1F9; --accent-line:#BFD8EF;
+  --ok:#2F6B4F; --ok-soft:#EDF3EE; --ok-line:#C3D8CB;
+  --warn:#8A5A16; --warn-soft:#FAF3E2; --warn-line:#E4D3AC;
+  --err:#8F3230;
+  --term:#12171F; --term-line:#212A36; --term-ink:#C6D0DC; --term-dim:#6B7889; --term-hi:#8FB8DC;
+  --r:5px; --r-sm:3px;
+  --mono:"JetBrains Mono","Geist Mono","SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
+  --sans:"Geist","Satoshi","Outfit",-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13px;line-height:1.5;
+  -webkit-font-smoothing:antialiased;padding:26px 32px 56px}
+.page{max-width:1440px;margin:0 auto}
+.docbar{display:flex;align-items:baseline;gap:12px;padding-bottom:12px;margin-bottom:20px;border-bottom:1px solid var(--line-2)}
+.docbar h1{font-size:17px;font-weight:650;letter-spacing:-.01em}
+.ver{font-family:var(--mono);font-size:10.5px;color:var(--accent);border:1px solid var(--accent-line);
+  background:var(--accent-soft);border-radius:var(--r-sm);padding:1px 5px;margin-right:9px;vertical-align:2px;font-weight:500}
+.docbar .meta{font-size:11.5px;color:var(--ink-3);margin-left:auto}
+.slabel{display:flex;align-items:baseline;gap:10px;margin:26px 0 9px}
+.slabel:first-of-type{margin-top:0}
+.slabel .n{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);letter-spacing:.06em;flex:0 0 62px}
+.slabel b{font-size:13px;font-weight:600}
+.slabel .hint{font-size:11.5px;color:var(--ink-3)}
+
+.app{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r);
+  display:flex;flex-direction:column;overflow:hidden}
+.topbar{height:44px;flex:0 0 44px;border-bottom:1px solid var(--line);display:flex;align-items:center;
+  gap:20px;padding:0 16px;background:var(--surface-2)}
+.logo{font-size:13px;font-weight:650;letter-spacing:-.01em}
+.topbar nav{display:flex;gap:16px;font-size:12.5px;color:var(--ink-2)}
+.topbar nav span.on{color:var(--ink);font-weight:600;box-shadow:inset 0 -2px 0 var(--accent);padding-bottom:13px}
+.avt{width:24px;height:24px;border-radius:50%;background:var(--surface-3);border:1px solid var(--line-2);
+  margin-left:auto;display:grid;place-items:center;font-size:10px;color:var(--ink-3);font-weight:600}
+.shell{flex:1;display:grid;grid-template-columns:196px 1fr;min-height:0}
+.rail{border-right:1px solid var(--line);background:var(--surface-2);display:flex;flex-direction:column;min-height:0}
+.rail .cap{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4);padding:13px 14px 7px;font-weight:600}
+.sitem{display:flex;align-items:center;gap:8px;padding:6px 14px;font-size:12.5px;color:var(--ink-2)}
+.sitem.on{background:var(--surface);color:var(--ink);font-weight:550;box-shadow:inset 2px 0 0 var(--accent)}
+.sitem .dot{width:5px;height:5px;border-radius:50%;background:var(--line-3);flex:0 0 5px}
+.sitem.on .dot{background:var(--accent)}
+.sitem .mode{font-size:9.5px;color:var(--ink-4);border:1px solid var(--line-2);border-radius:2px;padding:0 3px;
+  font-family:var(--mono);margin-left:auto}
+.rail-foot{margin-top:auto;border-top:1px solid var(--line);padding:12px 14px;font-size:11px;color:var(--ink-3);display:flex;flex-direction:column;gap:5px}
+.rail-foot .row{display:flex;justify-content:space-between}
+.rail-foot .row b{font-weight:550;color:var(--ink-2)}
+
+/* 右上角固定切换器：两个视图同位同款 */
+.vhead{flex:0 0 auto;height:48px;border-bottom:1px solid var(--line);display:flex;align-items:center;
+  gap:12px;padding:0 18px;background:var(--surface)}
+.expname{font-size:13.5px;font-weight:620;letter-spacing:-.01em}
+.expname .seq{font-family:var(--mono);font-size:11px;color:var(--ink-4);font-weight:400;margin-left:6px}
+.modechip{font-size:11px;color:var(--ink-2);border:1px solid var(--line-2);border-radius:var(--r-sm);
+  padding:2px 8px;background:var(--surface)}
+.vhead .sp,.wtbar .sp{flex:1}
+.vsw{display:flex;gap:2px;border:1px solid var(--line-2);border-radius:4px;padding:2px;background:var(--surface-3);flex:0 0 auto}
+.vsw button{height:26px;padding:0 12px;border:none;background:transparent;border-radius:3px;font-size:12px;
+  color:var(--ink-3);font-family:var(--sans);display:flex;align-items:center;gap:6px}
+.vsw button.on{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(26,31,40,.06)}
+.vsw .cnt{font-family:var(--mono);font-size:10px;color:var(--accent);font-variant-numeric:tabular-nums}
+.pin{font-size:10px;color:var(--ink-4)}
+
+/* 研究对话 */
+.chat{flex:1;overflow:hidden;padding:16px 22px;display:flex;flex-direction:column;gap:14px}
+.turn{display:flex;gap:10px}
+.av{width:24px;height:24px;border-radius:50%;flex:0 0 24px;display:grid;place-items:center;font-size:10px;
+  font-weight:600;background:var(--surface-3);border:1px solid var(--line-2);color:var(--ink-2)}
+.av.nx{background:var(--accent);border-color:var(--accent);color:#fff}
+.bub{font-size:13px;line-height:1.68;color:var(--ink);max-width:760px}
+.bub b{font-weight:600}
+.src{display:block;margin-top:6px;font-size:11px;color:var(--ink-3);border-left:2px solid var(--line-2);
+  padding-left:8px;line-height:1.6}
+
+/* composer + 审批浮窗 */
+.composer{flex:0 0 auto;border-top:1px solid var(--line);padding:0 22px 13px;background:var(--surface);position:relative}
+.approval{border:1px solid var(--accent-line);background:var(--accent-soft);border-radius:var(--r);
+  padding:11px 14px;margin:12px 0 10px;box-shadow:0 4px 16px rgba(42,111,173,.08)}
+.approval .hd{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.approval .hd b{font-size:12.5px;font-weight:620}
+.approval .hd .fp{font-family:var(--mono);font-size:10px;color:var(--ink-4)}
+.approval .sum{display:flex;gap:16px;font-size:11.5px;color:var(--ink-2);font-variant-numeric:tabular-nums;flex-wrap:wrap}
+.approval .sum b{color:var(--ink);font-weight:550}
+.approval .acts{display:flex;align-items:center;gap:8px;margin-top:10px}
+.approval .acts .lnk{font-size:11.5px;color:var(--accent);margin-left:4px}
+.approval .acts .why{font-size:10.5px;color:var(--ink-4);margin-left:auto}
+.st{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:550;color:var(--ink-2);
+  border:1px solid var(--line-2);border-radius:20px;padding:2px 9px 2px 7px;background:var(--surface)}
+.st .dot{width:5px;height:5px;border-radius:50%;background:var(--ink-4)}
+.st.prep .dot{background:var(--warn)}
+.st.prep{color:var(--warn);border-color:var(--warn-line);background:var(--warn-soft)}
+.st.run .dot{background:var(--accent)}
+.st.run{color:var(--accent);border-color:var(--accent-line);background:var(--accent-soft)}
+.st.ok .dot{background:var(--ok)} .st.ok{color:var(--ok);border-color:var(--ok-line);background:var(--ok-soft)}
+.input{height:62px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface-2);
+  padding:9px 12px;font-size:12.5px;color:var(--ink);line-height:1.6}
+.crow{display:flex;align-items:center;gap:8px;margin-top:8px}
+.crow .sp{flex:1}
+.crow .hint2{font-size:11px;color:var(--ink-4)}
+.refbar{display:flex;align-items:center;gap:10px;height:44px;padding:0 12px;border:1px solid var(--line-2);
+  border-radius:var(--r-sm);background:var(--surface-2);font-size:12.5px;max-width:620px;margin-left:34px}
+.refbar .rb-name{font-weight:550}
+.refbar .rb-sub{font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.refbar .sp{flex:1}
+.spin{width:11px;height:11px;border-radius:50%;border:1.5px solid var(--accent-line);border-top-color:var(--accent);
+  animation:sp .7s linear infinite;display:inline-block;flex:0 0 11px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* 工作台运行态 */
+.wtbar{flex:0 0 auto;height:48px;border-bottom:1px solid var(--line);display:flex;align-items:center;
+  gap:12px;padding:0 18px;background:var(--surface)}
+.el{font-family:var(--mono);font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.sel{height:26px;border:1px solid var(--line-2);border-radius:4px;background:var(--surface);font-size:12px;
+  color:var(--ink-2);padding:0 8px;display:inline-flex;align-items:center;gap:6px;font-family:var(--sans)}
+.stage{display:flex;align-items:center;gap:0}
+.sg{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-4);white-space:nowrap}
+.sg .p{width:5px;height:5px;border-radius:50%;background:var(--line-3);flex:0 0 5px}
+.sg.done{color:var(--ink-2)} .sg.done .p{background:var(--ok)}
+.sg.cur{color:var(--accent);font-weight:600} .sg.cur .p{background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.sg.skip .p,.sg.na .p{background:transparent;border:1px dashed var(--line-3);width:7px;height:7px;flex:0 0 7px}
+.sg-line{flex:1;height:1px;background:var(--line);margin:0 9px;min-width:12px}
+.sg-line.done{background:var(--ok-line)}
+.rgrid{flex:1;display:grid;grid-template-columns:340px 1fr;min-height:0;position:relative}
+.side{border-right:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column;min-height:0}
+.cap{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4);font-weight:600}
+.side .cap{padding:13px 16px 7px}
+.kv{display:flex;justify-content:space-between;align-items:baseline;padding:5px 16px;font-size:12px;border-bottom:1px solid var(--line)}
+.kv span{color:var(--ink-3)}
+.kv b{font-family:var(--mono);font-weight:500;font-size:11.5px;color:var(--ink);font-variant-numeric:tabular-nums}
+.steps{flex:1;overflow:hidden;padding:0 16px 14px}
+.step{position:relative;padding:0 0 12px 18px}
+.step:before{content:"";position:absolute;left:2px;top:9px;bottom:-3px;width:1px;background:var(--line)}
+.step:last-child:before{display:none}
+.step:after{content:"";position:absolute;left:-1px;top:5px;width:7px;height:7px;border-radius:50%;
+  background:var(--surface);border:1.5px solid var(--line-3)}
+.step.done:after{background:var(--ok);border-color:var(--ok)}
+.step.cur:after{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.step .cmd{font-family:var(--mono);font-size:11.5px;color:var(--ink);line-height:1.45;word-break:break-all}
+.step .meta{display:flex;gap:10px;margin-top:3px;font-size:10.5px;color:var(--ink-4);font-family:var(--mono);
+  font-variant-numeric:tabular-nums}
+.step .meta .ex.ok{color:var(--ok)} .step .meta .ex.run{color:var(--accent)}
+.step.cur .cmd{font-weight:550}
+.step .tail{margin-top:6px;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-sm);
+  padding:6px 8px;font-family:var(--mono);font-size:10.5px;line-height:1.6;color:var(--ink-2)}
+.out{display:flex;flex-direction:column;min-height:0;min-width:0}
+.tabs{display:flex;align-items:center;gap:2px;padding:9px 14px 0;border-bottom:1px solid var(--line)}
+.tab{font-size:12px;color:var(--ink-3);padding:5px 10px 8px;border-bottom:2px solid transparent}
+.tab.on{color:var(--ink);font-weight:600;border-bottom-color:var(--accent)}
+.tab .n{font-family:var(--mono);font-size:10px;color:var(--ink-4);margin-left:5px;font-variant-numeric:tabular-nums}
+.term{flex:1;min-height:0;background:var(--term);overflow:hidden;padding:11px 14px;font-family:var(--mono);
+  font-size:11.5px;line-height:1.72;color:var(--term-ink);font-variant-numeric:tabular-nums;white-space:pre}
+.term .d{color:var(--term-dim)} .term .h{color:var(--term-hi)} .term .w{color:#D8B57A}
+.term .cut{color:var(--term-dim);border-top:1px solid var(--term-line);margin-top:8px;padding-top:7px;white-space:normal}
+.foot{flex:0 0 auto;border-top:1px solid var(--line);padding:8px 14px;display:flex;align-items:center;gap:14px;
+  font-size:11px;color:var(--ink-3);background:var(--surface-2);font-variant-numeric:tabular-nums}
+.foot .mono{font-family:var(--mono);font-size:10.5px} .foot .sp{flex:1}
+
+/* 可拖动浮窗：不贴边，位置即状态 */
+.fwin{position:absolute;top:52px;right:118px;width:400px;background:var(--surface);
+  border:1px solid var(--line-2);border-radius:6px;box-shadow:0 18px 48px rgba(26,31,40,.16);z-index:5}
+.fw-bar{display:flex;align-items:center;gap:8px;height:36px;padding:0 10px 0 12px;border-bottom:1px solid var(--line);
+  cursor:grab;background:var(--surface-2);border-radius:6px 6px 0 0}
+.fw-bar .grip{display:flex;gap:2px}
+.fw-bar .grip i{width:3px;height:3px;border-radius:50%;background:var(--line-3)}
+.fw-bar b{font-size:12px;font-weight:600}
+.fw-bar .sp{flex:1}
+.fw-bar .draghint{font-size:10px;color:var(--ink-4)}
+.fw-body{padding:12px 14px;display:flex;flex-direction:column;gap:12px;max-height:300px;overflow:hidden}
+.fw-ctx{font-size:11px;color:var(--ink-3);background:var(--surface-2);border:1px solid var(--line);
+  border-radius:var(--r-sm);padding:5px 8px;display:flex;align-items:center;gap:8px}
+.fw-ctx b{font-weight:550;color:var(--ink-2)}
+.fw-ctx .pill{font-family:var(--mono);font-size:10px;color:var(--accent);background:var(--accent-soft);
+  border:1px solid var(--accent-line);border-radius:2px;padding:0 4px}
+.fw-foot{border-top:1px solid var(--line);padding:10px 14px;background:var(--surface-2);border-radius:0 0 6px 6px}
+.fw-foot .bound{font-size:10.5px;color:var(--ink-4);line-height:1.6;margin-top:7px}
+.btn{height:28px;padding:0 11px;border-radius:4px;border:1px solid var(--line-2);background:var(--surface);
+  color:var(--ink-2);font-size:12px;font-family:var(--sans);display:inline-flex;align-items:center;gap:6px}
+.btn.sm{height:24px;padding:0 9px;font-size:11.5px}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.gh{border-color:transparent;background:transparent}
+.ic{width:14px;height:14px;flex:0 0 14px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.gap{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--warn);
+  border:1px dashed var(--warn-line);border-radius:var(--r-sm);padding:1px 6px;background:var(--warn-soft)}
+.gap b{font-family:var(--mono);font-weight:600;font-size:10px}
+.banner{display:flex;align-items:center;gap:9px;padding:7px 18px;font-size:11.5px;color:var(--ink-2);
+  background:var(--surface-2);border-bottom:1px solid var(--line)}
+.banner .dot{width:5px;height:5px;border-radius:50%;background:var(--ok);flex:0 0 5px}
+.banner .sp{flex:1}
+.banner .why{font-size:11px;color:var(--ink-4)}
+
+/* 结果态 */
+.grid2{display:grid;grid-template-columns:1fr 372px;min-height:0;flex:1}
+.pane{padding:16px 18px;overflow:hidden;min-width:0}
+.pane + .pane{border-left:1px solid var(--line);background:var(--surface-2)}
+.verdict{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--ok-line);
+  background:var(--ok-soft);border-radius:var(--r-sm);margin-bottom:14px}
+.verdict .big{font-family:var(--mono);font-size:19px;font-weight:600;color:var(--ok);font-variant-numeric:tabular-nums}
+.verdict .txt{font-size:12px;color:var(--ink-2);line-height:1.5}
+.verdict .txt b{color:var(--ink);font-weight:600}
+.verdict .st{margin-left:auto}
+table.mt{width:100%;border-collapse:collapse;font-size:12px}
+table.mt th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4);
+  font-weight:600;padding:0 10px 7px 0;border-bottom:1px solid var(--line-2)}
+table.mt td{padding:7px 10px 7px 0;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+table.mt td:first-child{color:var(--ink-2)}
+table.mt td.v{font-family:var(--mono);font-size:11.5px;color:var(--ink);text-align:right}
+table.mt td.r{text-align:right;color:var(--ink-3);font-size:11px}
+.chart{margin-top:14px;border:1px dashed var(--line-2);border-radius:var(--r-sm);height:110px;display:flex;
+  flex-direction:column;align-items:center;justify-content:center;gap:5px;background:var(--surface)}
+.file{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px}
+.file:last-child{border-bottom:none}
+.file .nm{font-family:var(--mono);font-size:11.5px;color:var(--ink)}
+.file .sz{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);font-variant-numeric:tabular-nums}
+.file .sp{flex:1}
+.nextbox{margin-top:14px;border-top:1px solid var(--line);padding-top:13px}
+.step-line{font-size:11.5px;color:var(--ink-3);line-height:1.9}
+.step-line b{color:var(--ink-2);font-weight:550}
+
+/* 说明 */
+.notes{border-top:1px solid var(--line-2);padding-top:18px;margin-top:30px}
+.notes h3{font-size:13px;font-weight:620;margin-bottom:10px}
+table.ct{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px}
+table.ct th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4);
+  font-weight:600;padding:0 12px 7px 0;border-bottom:1px solid var(--line-2)}
+table.ct td{padding:8px 12px 8px 0;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.55}
+table.ct td.k{width:128px;color:var(--ink-2);font-weight:550}
+table.ct td.b{color:var(--ink-3)} table.ct td.g{color:var(--ink)}
+table.ct code{font-family:var(--mono);font-size:11px;background:var(--surface-3);padding:1px 4px;border-radius:var(--r-sm)}
+.fn{font-size:11px;color:var(--ink-4);line-height:1.75}
+.fn b{color:var(--ink-3);font-weight:600}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="docbar">
+    <h1><span class="ver">v6</span>NexusLab · 研究与实验一体化（定版优化）</h1>
+    <div class="meta">2026-09-07 · 切换器固定右上 · 审批浮窗挂输入框 · 询问 Nexus 可拖浮窗 · 1440 实宽</div>
+  </div>
+
+  <!-- ═══════ B1 · 研究对话 + 输入框上方审批浮窗 ═══════ -->
+  <div class="slabel"><span class="n">BOARD 1</span><b>审批移到输入框上方：像主流 AI 产品一样，待决事项浮在 composer 上</b><span class="hint">批准或继续打字提要求，都发生在同一个地方；审批仍走服务端硬门</span></div>
+  <div class="app" style="height:596px">
+    <div class="topbar">
+      <span class="logo">CodeNexus</span>
+      <nav><span>课程</span><span class="on">Nexus AI</span><span>课程实验</span><span>资源库</span></nav>
+      <div class="avt">L</div>
+    </div>
+    <div class="shell">
+      <aside class="rail">
+        <div class="cap">会话</div>
+        <div class="sitem on"><span class="dot"></span>nanoGPT 复现验证<span class="mode">R</span></div>
+        <div class="sitem"><span class="dot"></span>Transformer 参数量估算<span class="mode">R</span></div>
+        <div class="sitem"><span class="dot"></span>帮我改这段 SQL<span class="mode">G</span></div>
+        <div class="rail-foot">
+          <div class="row"><span>当前模式</span><b>Research</b></div>
+          <div class="row"><span>实验 · 运行中</span><b>1</b></div>
+        </div>
+      </aside>
+      <main style="display:flex;flex-direction:column;min-height:0;min-width:0">
+        <!-- 右上角固定切换器 -->
+        <div class="vhead">
+          <span class="expname">nanoGPT 复现验证<span class="seq">Research 会话</span></span>
+          <span class="sp"></span>
+          <div class="vsw"><button class="on">研究对话</button><button>实验工作台<span class="cnt">1 个运行中</span></button></div>
+        </div>
+        <div class="banner">
+          <span class="dot"></span>
+          <span><b>nanogpt 复现 · #1</b> 已完成 · val_loss 1.8857</span>
+          <span class="sp"></span><span class="why">不自动跳转</span>
+          <button class="btn sm">查看结果</button>
+        </div>
+        <div class="chat">
+          <div class="turn"><span class="av">我</span>
+            <div class="bub"><b>帮我复现 nanoGPT 在 Shakespeare 上的训练结果，验证论文里说的收敛值。</b></div>
+          </div>
+          <div class="turn"><span class="av nx">N</span>
+            <div class="bub">方案已经整理好，摘要放在下面输入框上方的卡片里。你可以直接批准，也可以继续提要求，我改完再给你确认。
+              <span class="src">来源：karpathy/nanoGPT · MIT License · README CPU 配置（converges around 1.88）· 容差 ±0.06 覆盖 CPU 数值噪声</span></div>
+          </div>
+          <div class="refbar">
+            <span class="spin"></span>
+            <span class="rb-name">nanogpt 复现 · #2</span>
+            <span class="rb-sub">train.py · 2m 13s</span>
+            <span class="sp"></span>
+            <button class="btn sm">打开工作台</button>
+          </div>
+        </div>
+        <div class="composer">
+          <!-- 审批浮窗：挂在输入框上方 -->
+          <div class="approval">
+            <div class="hd">
+              <span class="st prep"><span class="dot"></span>待确认</span>
+              <b>实验方案 · nanogpt 复现</b>
+              <span class="fp">plan a94f21c7 · 15 分钟内有效</span>
+            </div>
+            <div class="sum">
+              <span>目标 <b>验证 val_loss ≈ 1.88 ± 0.06</b></span>
+              <span>环境 <b>预置 CPU</b></span>
+              <span>预算 <b>≤ 5 分钟 · 5 步</b></span>
+            </div>
+            <div class="acts">
+              <button class="btn sm pri">批准执行</button>
+              <button class="btn sm">查看完整方案</button>
+              <span class="lnk">↓ 在下面输入框提出修改，改完重新确认</span>
+              <span class="why">批准 = 服务端核销一次性票据后才提交 Worker</span>
+            </div>
+          </div>
+          <div class="input">把 max_iters 降到 2000，其余照你的方案…</div>
+          <div class="crow">
+            <button class="btn sm">上传资料</button>
+            <span class="sp"></span>
+            <span class="hint2">Research 模式 · 方案改动会使 plan 指纹失配，需重新确认</span>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ═══════ B2 · 工作台：左上实验名，右上同一枚切换器 ═══════ -->
+  <div class="slabel"><span class="n">BOARD 2</span><b>工作台内不再有「返回」——右上角就是同一枚切换器，两个视图永远同位</b><span class="hint">左上角 = 当前实验名；一处切换、处处可见，不会迷路</span></div>
+  <div class="app" style="height:592px">
+    <div class="shell">
+      <aside class="rail">
+        <div class="cap">会话</div>
+        <div class="sitem on"><span class="dot"></span>nanoGPT 复现验证<span class="mode">R</span></div>
+        <div class="sitem"><span class="dot"></span>Transformer 参数量估算<span class="mode">R</span></div>
+        <div class="rail-foot">
+          <div class="row"><span>当前模式</span><b>Research</b></div>
+          <div class="row"><span>本会话实验</span><b>2</b></div>
+        </div>
+      </aside>
+      <main style="display:flex;flex-direction:column;min-height:0;min-width:0">
+        <div class="wtbar">
+          <span class="expname">nanogpt 复现 · #2<span class="seq">job_7f3a91c4</span></span>
+          <span class="st run"><span class="spin"></span>运行中</span>
+          <span class="el">2m 13s</span>
+          <span class="sp"></span>
+          <div class="vsw"><button>研究对话</button><button class="on">实验工作台<span class="cnt">1 个运行中</span></button></div>
+          <span class="pin">固定在此</span>
+        </div>
+        <div style="padding:9px 18px 11px;border-bottom:1px solid var(--line);background:var(--surface)">
+          <div class="stage">
+            <span class="sg done"><span class="p"></span>Preparing</span><span class="sg-line done"></span>
+            <span class="sg skip"><span class="p"></span>Building</span><span class="sg-line done"></span>
+            <span class="sg cur"><span class="p"></span>Running</span><span class="sg-line"></span>
+            <span class="sg"><span class="p"></span>Metric</span><span class="sg-line"></span>
+            <span class="sg na"><span class="p"></span>Verifying</span><span class="sg-line"></span>
+            <span class="sg"><span class="p"></span>Completed</span>
+          </div>
+        </div>
+        <div class="rgrid">
+          <aside class="side">
+            <div class="cap">运行配置 · 只读</div>
+            <div class="kv"><span>preset</span><b>nanogpt</b></div>
+            <div class="kv"><span>repo</span><b>karpathy/nanoGPT</b></div>
+            <div class="kv"><span>commit</span><b>a3f41c9</b></div>
+            <div class="kv"><span>license</span><b>MIT</b></div>
+            <div class="kv"><span>device</span><b>cpu · 8 线程</b></div>
+            <div class="kv"><span>seed</span><b>1337</b></div>
+            <div class="kv"><span>max_iters</span><b>2000</b></div>
+            <div class="kv"><span>batch / block</span><b>12 / 64</b></div>
+            <div class="cap">步骤 · 5</div>
+            <div class="steps">
+              <div class="step done"><div class="cmd">git clone --depth 1 karpathy/nanoGPT</div><div class="meta"><span class="ex ok">exit 0</span><span>0.14s</span></div></div>
+              <div class="step done"><div class="cmd">pip install numpy transformers datasets tiktoken tqdm</div><div class="meta"><span class="ex ok">exit 0</span><span>43.08s</span></div></div>
+              <div class="step done"><div class="cmd">python data/shakespeare_char/prepare.py</div><div class="meta"><span class="ex ok">exit 0</span><span>0.42s</span></div></div>
+              <div class="step cur"><div class="cmd">python train.py config/train_shakespeare_char.py --max_iters=2000</div><div class="meta"><span class="ex run">exit —</span><span>1m 52s · 进行中</span></div>
+                <div class="tail">step 27100 | loss 1.7680 | 345.6 it/s
+step 27150 | loss 1.7702 | 342.1 it/s
+<span style="color:var(--ink-4)">↑ 每步 log_tail 上限 2000 字符</span></div></div>
+              <div class="step"><div class="cmd">python sample.py --out_dir=out-shakespeare-char</div><div class="meta"><span>exit —</span><span>排队</span></div></div>
+            </div>
+          </aside>
+          <section class="out">
+            <div class="tabs">
+              <span class="tab on">日志</span><span class="tab">指标<span class="n">待产出</span></span>
+              <span class="tab">产物<span class="n">0</span></span><span class="tab">参数</span><span class="sp"></span>
+              <span class="gap"><b>缺口</b> 仅环形缓冲 2000 字符</span>
+              <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--accent);padding-bottom:6px"><span class="dot" style="width:5px;height:5px;border-radius:50%;background:var(--accent)"></span>跟随最新</span>
+            </div>
+            <div class="term"><span class="d">$ python train.py config/train_shakespeare_char.py --device=cpu --compile=False</span>
+<span class="d">Overriding config: block_size=64 batch_size=12 n_layer=4 n_head=4 n_embd=128</span>
+tokens per iteration: 768 · number of parameters: 1.06M
+iter 26600 | loss 1.8574 | lr 1.06e-04 | 341.27 it/s | 4.18 ms/it
+iter 26650 | loss 1.8541 | lr 1.05e-04 | 339.80 it/s | 4.21 ms/it
+<span class="h">iter 26700 | loss 1.8519 | lr 1.04e-04 | 342.65 it/s | 4.16 ms/it</span>
+<span class="w">WARNING: torch.compile unavailable — falling back to eager</span>
+iter 26750 | loss 1.8497 | lr 1.03e-04 | 340.12 it/s | 4.19 ms/it
+iter 26800 | loss 1.8512 | lr 1.02e-04 | 338.44 it/s | 4.22 ms/it
+<div class="cut">── live_log_tail 窗口到此为止（2000 字符环形缓冲，更早 stdout 已覆盖）──
+全量日志回看 / 下载尚未提供</div></div>
+            <div class="foot"><span class="mono">exit —</span><span>运行中退出码未定，不显示 0</span><span class="sp"></span>
+              <span class="mono">Worker v0.2.0</span><span class="mono">cpu · rss 1.84 GB</span></div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ═══════ B3 · 询问 Nexus：可拖浮窗，继承研究对话上下文 ═══════ -->
+  <div class="slabel"><span class="n">BOARD 3</span><b>询问 Nexus = 研究对话在工作台里的一个可拖窗口，不是另一个产品</b><span class="hint">同一个会话上下文；它同样能操作实验工作台；拖走不挡日志</span></div>
+  <div class="app" style="height:472px">
+    <div class="shell">
+      <aside class="rail">
+        <div class="cap">会话</div>
+        <div class="sitem on"><span class="dot"></span>nanoGPT 复现验证<span class="mode">R</span></div>
+        <div class="rail-foot"><div class="row"><span>当前模式</span><b>Research</b></div></div>
+      </aside>
+      <main style="display:flex;flex-direction:column;min-height:0;min-width:0">
+        <div class="wtbar">
+          <span class="expname">nanogpt 复现 · #2<span class="seq">job_7f3a91c4</span></span>
+          <span class="st run"><span class="spin"></span>运行中</span>
+          <span class="sp"></span>
+          <button class="btn sm gh" style="background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)">询问 Nexus</button>
+          <div class="vsw"><button>研究对话</button><button class="on">实验工作台</button></div>
+        </div>
+        <div class="rgrid">
+          <aside class="side">
+            <div class="cap">运行配置 · 只读</div>
+            <div class="kv"><span>preset</span><b>nanogpt</b></div>
+            <div class="kv"><span>max_iters</span><b>2000</b></div>
+            <div class="kv"><span>device</span><b>cpu</b></div>
+            <div class="cap">步骤 · 5</div>
+            <div class="steps">
+              <div class="step done"><div class="cmd">git clone --depth 1 karpathy/nanoGPT</div><div class="meta"><span class="ex ok">exit 0</span><span>0.14s</span></div></div>
+              <div class="step cur"><div class="cmd">python train.py …</div><div class="meta"><span class="ex run">exit —</span><span>1m 52s</span></div></div>
+            </div>
+          </aside>
+          <section class="out">
+            <div class="tabs"><span class="tab on">日志</span><span class="tab">指标</span><span class="tab">产物</span><span class="tab">参数</span></div>
+            <div class="term" style="font-size:11px"><span class="d">iter 26850 | loss 1.8493 | lr 1.01e-04 | 341.90 it/s</span>
+iter 26900 | loss 1.8476 | lr 1.00e-04 | 343.05 it/s
+<span class="w">WARNING: torch.compile unavailable — falling back to eager</span>
+iter 26950 | loss 1.8461 | lr 9.90e-05 | 340.71 it/s
+iter 27000 | loss 1.8449 | lr 9.80e-05 | 339.26 it/s</div>
+
+            <!-- 可拖浮窗：位置偏离角落，示意拖动后状态 -->
+            <div class="fwin">
+              <div class="fw-bar">
+                <span class="grip"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                <b>询问 Nexus</b>
+                <span class="sp"></span>
+                <span class="draghint">按住标题栏拖动</span>
+                <button class="btn sm gh">—</button>
+                <button class="btn sm gh">×</button>
+              </div>
+              <div class="fw-body">
+                <div class="fw-ctx">继承：<b>nanoGPT 复现验证</b> 的研究对话<span class="pill">附引用 job_7f3a91c4 · step 4 · 日志末 40 行</span></div>
+                <div class="turn"><span class="av">我</span><div class="bub" style="font-size:12.5px">这个 WARNING 是什么意思？会不会影响 loss 判定？</div></div>
+                <div class="turn"><span class="av nx">N</span><div class="bub" style="font-size:12.5px;line-height:1.65">torch.compile 在 CPU 上不可用，已回退 eager。<b>不影响数值判定</b>——它只改执行图优化，不改算子结果，val_loss 仍在 1.88±0.06 内。<br>需要的话我可以把这条解释写进本次运行备注。</div></div>
+              </div>
+              <div class="fw-foot">
+                <div class="input" style="height:50px;background:var(--surface)">继续问，或让它调整方案 / 取消本次运行…</div>
+                <div class="bound">同一个研究会话上下文；窗口内的 Nexus 与研究对话是同一个助手，同样能操作本工作台（改方案走审批、取消走 cancel API）。引用边界：只传明确的 run ID + 步骤 + 有界日志（末 40 行），不复制全量日志、不混其他会话。</div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ═══════ B4 · 结果态 ═══════ -->
+  <div class="slabel"><span class="n">BOARD 4</span><b>结果态 · 同一枚右上切换器；主动作不变</b><span class="hint">Verifying = 不适用</span></div>
+  <div class="app" style="height:492px">
+    <div class="shell">
+      <aside class="rail">
+        <div class="cap">会话</div>
+        <div class="sitem on"><span class="dot"></span>nanoGPT 复现验证<span class="mode">R</span></div>
+        <div class="rail-foot">
+          <div class="row"><span>当前模式</span><b>Research</b></div>
+          <div class="row"><span>本会话实验</span><b>2</b></div>
+        </div>
+      </aside>
+      <main style="display:flex;flex-direction:column;min-height:0;min-width:0">
+        <div class="wtbar">
+          <span class="expname">nanogpt 复现 · #2<span class="seq">job_7f3a91c4</span></span>
+          <span class="st ok"><span class="dot"></span>已完成</span>
+          <span class="el">14m 32s</span>
+          <span class="sp"></span>
+          <button class="btn sm pri">分析本次结果</button>
+          <button class="btn sm">调整方案再运行</button>
+          <div class="vsw"><button>研究对话</button><button class="on">实验工作台</button></div>
+        </div>
+        <div style="padding:9px 18px 11px;border-bottom:1px solid var(--line);background:var(--surface)">
+          <div class="stage">
+            <span class="sg done"><span class="p"></span>Preparing</span><span class="sg-line done"></span>
+            <span class="sg skip"><span class="p"></span>Building</span><span class="sg-line done"></span>
+            <span class="sg done"><span class="p"></span>Running</span><span class="sg-line done"></span>
+            <span class="sg done"><span class="p"></span>Metric</span><span class="sg-line done"></span>
+            <span class="sg na"><span class="p"></span>Verifying<span style="color:var(--ink-4);font-weight:400"> 不适用</span></span><span class="sg-line done"></span>
+            <span class="sg done"><span class="p"></span>Completed</span>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="pane">
+            <div class="cap" style="margin-bottom:10px">指标 · 来自 report，前端不自行计算</div>
+            <div class="verdict">
+              <span class="big">1.8857</span>
+              <span class="txt"><b>val_loss</b> 落在期望区间 <b>1.88 ± 0.06</b><br>判定源：GET /nexus/repro/jobs/{id}/report</span>
+              <span class="st ok"><span class="dot"></span>PASS</span>
+            </div>
+            <table class="mt">
+              <tr><th>指标</th><th style="text-align:right">值</th><th style="text-align:right">对照</th></tr>
+              <tr><td>val_loss</td><td class="v">1.8857</td><td class="r">1.88 ± 0.06</td></tr>
+              <tr><td>train_loss</td><td class="v">1.7912</td><td class="r">preset 未声明</td></tr>
+              <tr><td>throughput</td><td class="v">341.2 it/s</td><td class="r">README 未给基线</td></tr>
+            </table>
+            <div class="chart"><span class="t">loss 曲线</span><span class="s" style="font-size:10.5px;color:var(--ink-4)">后端只给终值，不给时序 —— 不画假曲线</span></div>
+          </div>
+          <aside class="pane">
+            <div class="cap" style="margin-bottom:8px">产物 · 4</div>
+            <div class="file"><svg class="ic"><use href="#i-file"/></svg><span class="nm">out-shakespeare/ckpt.pt</span><span class="sp"></span><span class="sz">47.3 MB</span></div>
+            <div class="file"><svg class="ic"><use href="#i-file"/></svg><span class="nm">sample.txt</span><span class="sp"></span><span class="sz">12.4 KB</span></div>
+            <div class="file"><svg class="ic"><use href="#i-file"/></svg><span class="nm">train_log.jsonl</span><span class="sp"></span><span class="sz">218 KB</span></div>
+            <div class="file"><svg class="ic"><use href="#i-file"/></svg><span class="nm">report.md</span><span class="sp"></span><span class="sz">6.1 KB</span></div>
+            <div style="display:flex;gap:6px;margin-top:12px"><button class="btn sm">下载全部</button><button class="btn sm">存入资料库</button></div>
+            <div class="nextbox">
+              <div class="cap" style="margin-bottom:9px">修改方案的唯一路径</div>
+              <div class="step-line"><b>复制本次冻结配置</b> → 新提案 → 展示与上次的差异 → 重新审批（输入框上方浮窗）→ 新运行。运行中的配置保持只读。</div>
+            </div>
+          </aside>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ═══════ 说明 ═══════ -->
+  <div class="notes">
+    <h3>v5 → v6：四处落位改动（形态不变，只动位置）</h3>
+    <table class="ct">
+      <tr><th>改动</th><th>v5</th><th>v6</th></tr>
+      <tr><td class="k">视图切换器</td><td class="b">只在研究对话顶部；工作台靠左上「← 研究对话」返回</td><td class="g"><b>同一枚切换器固定右上角</b>，两个视图同位同款；左上角让位给实验名。切换永远发生在同一个位置，不会迷路</td></tr>
+      <tr><td class="k">左上角</td><td class="b">返回按钮 / 会话标题</td><td class="g">当前<b>实验名</b>（如 nanogpt 复现 · #2）+ job_id。一个会话多次实验时，切换器旁的「本次运行 ▾」负责在 runs 间切换</td></tr>
+      <tr><td class="k">审批入口</td><td class="b">工作台准备态底部两个按钮</td><td class="g"><b>浮窗挂在研究对话输入框上方</b>：待确认方案摘要 + 批准执行 / 查看完整方案；不同意就直接在下面输入框提要求，改完重新确认。服务端硬门不变（plan 指纹 + 一次性票据）</td></tr>
+      <tr><td class="k">询问 Nexus</td><td class="b">右缘贴边抽屉</td><td class="g"><b>可自由拖动浮窗</b>：按标题栏拖走，不挡日志；<b>继承研究对话上下文</b>——它就是研究对话在工作台里的一个窗口，同一个助手，同样能操作工作台（改方案走审批、取消走 cancel）</td></tr>
+    </table>
+
+    <h3>实验名称：后端实况（动手前查的）</h3>
+    <table class="ct">
+      <tr><th>层</th><th>结论</th></tr>
+      <tr><td class="k">run 表</td><td class="b"><code>nexus_runs</code>（<code>nexus_run_service.py:38</code> DDL）<b>没有 title / name 字段</b>：只有 run_id / preset_id / plan_hash / job_id / status / detail / created_at…</td></tr>
+      <tr><td class="k">会话标题</td><td class="g">有 —— <code>GET /sessions</code> 返回 session_id + <b>标题</b> + 最近活跃（runtime <code>main.py:669</code>）。会话名 ≠ 实验名，一个会话可有多次实验</td></tr>
+      <tr><td class="k">v1 首版做法</td><td class="g">前端本地命名：<b>preset 显示名 + run 序号</b>（如 <code>nanogpt 复现 · #2</code>），序号由 <code>listNexusRuns</code> 的 <code>created_at</code> 排序生成。同 preset 同会话重跑自动递增，无后端改动</td></tr>
+      <tr><td class="k">待立项（不画饼）</td><td class="g">用户自定义实验名需 <code>nexus_runs</code> 加 <code>title</code> 字段 + 更新端点；preset 的 <code>paper_title</code> 可作默认名的更优来源（需经会话侧投影下发，前端拿不到 REPRO_PRESETS）</td></tr>
+    </table>
+
+    <div class="fn">
+      <b>实现落点备忘</b>　切换器组件两视图复用（同位：右 18px / 顶对齐 48px 栏）；审批浮窗与 v6 B1 同构，
+      出现在「存在 pending approval」时；拖动浮窗建议原生 pointer 事件 + <code>position:absolute</code>，
+      位置持久化 <code>sessionStorage</code>（与 Console 展开态同机制），不做磁吸贴边。<br>
+      <b>沿用不变</b>　fail-closed 三处标注（Verifying 不适用 / 预算 5 分钟来自 preset / 无全量日志回看）；
+      General 模式无实验入口；配色与控件令牌同 v4/v5。
+    </div>
+  </div>
+</div>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></symbol>
+</svg>
+</body>
+</html>
