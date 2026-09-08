@@ -361,3 +361,15 @@ Runtime 日志零错误。常驻链路（审批→调度→Adapter→控制→�
 
 回归：nexus 全套件 **207 passed**（新增 5 项：终态守卫、文件工具映射、
 生产记录全覆盖、启动前取消零提交、顺序归因精确）；`uv.lock` 零改动。
+
+## 线上验证（2026-09-08，部署 2e388895）
+
+- 发布＋Runtime rsync（diff 干净）＋三服务重启＋健康全绿＋零 error 日志。
+- 取消修正实证（`nx_verify_t5_d4909af3`）：用户取消后 console 保持
+  **cancelled**（此前会被改写成 failed），11 个 attempt 全保留。
+- 归因修正实证（`nx_verify_fire_79b7a801`）：新 run **succeeded**，
+  6 个 attempt 与 op-0001~op-0006 精确 1:1、全 exit 0。
+- 成功态容器暂留（T6 回收）：两次点火各留 1 个空闲任务容器（无 CPU
+  占用，镜像共享磁盘），报告产物化后回收的逻辑归 T6。
+- T5 在此关闭。剩余未验证：真实模型＋真实用户的 Ask/Auto 交互验收
+  （T7）、正式 Word/LaTeX 与干净 B（SR6）。
