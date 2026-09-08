@@ -142,12 +142,44 @@ export function decideNexusApproval(approvalId, decision = 'approved') {
 /**
  * 手工执行（NX-G2）：凭已批准票据提交 Worker，与聊天工具共用服务端同一
  * 核销核心；同一票据重试返回原 job，不重复启动实验。
+ * T5：透传本次执行门（mode/research_execution_mode），缺省由服务端按
+ * 兼容语义裁决（旧 preset 兼容，自主 fail-closed）。
  */
-export function executeApprovedRepro(approvalId, sessionId = 'default') {
-  return request.post('/nexus/repro/execute', { approval_id: approvalId, session_id: sessionId }, {
+export function executeApprovedRepro(approvalId, sessionId = 'default', gate = {}) {
+  const body = { approval_id: approvalId, session_id: sessionId }
+  if (gate.mode) body.mode = gate.mode
+  if (gate.researchExecutionMode) body.research_execution_mode = gate.researchExecutionMode
+  return request.post('/nexus/repro/execute', body, {
     allowFlatResponse: true,
     skipErrorToast: true,
   })
+}
+
+/**
+ * 用户直接取消运行（T5）：本人＋同会话；preset 走 Worker，自主走 Runtime。
+ * 回收确认后终态 cancelled；执行器不可达 → 503，不伪装取消。
+ */
+export function cancelNexusRun(runId, sessionId) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/cancel`, {
+    session_id: sessionId,
+  }, { allowFlatResponse: true })
+}
+
+/**
+ * 会话执行模式偏好（T5 Ask/Auto）：服务端真相源。
+ * 无记录默认 ask；保存失败调用方只本地缓存并如实提示。
+ */
+export function getNexusSessionExecutionMode(sessionId) {
+  return request.get(`/nexus/sessions/${encodeURIComponent(sessionId)}/execution-mode`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+export function saveNexusSessionExecutionMode(sessionId, mode) {
+  return request.put(`/nexus/sessions/${encodeURIComponent(sessionId)}/execution-mode`, {
+    research_execution_mode: mode,
+  }, { allowFlatResponse: true })
 }
 
 /**
@@ -361,6 +393,7 @@ function parseSseFrames(buffer, onEvent) {
  * @param {string} options.message      用户输入
  * @param {string} [options.sessionId]  会话 ID（P0 阶段服务重启即清）
  * @param {string} [options.mode]       模式标识，接线预留（当前运行时忽略未知字段）
+ * @param {string} [options.researchExecutionMode] T5 Ask/Auto（ask|auto，仅 Research 发送）
  * @param {number} [options.courseId]   绑定的课程 ID，接线预留（同上）
  * @param {string} [options.model]      模型 id（服务端 allowlist 内；缺省用默认模型）
  * @param {string[]} [options.attachmentIds] 本次对话引用的附件 id（≤5，服务端验主+绑定）
@@ -371,6 +404,7 @@ export async function streamNexusMessage({
   message,
   sessionId = 'default',
   mode = null,
+  researchExecutionMode = null,
   courseId = null,
   model = null,
   attachmentIds = [],
@@ -380,6 +414,8 @@ export async function streamNexusMessage({
   const body = { message, session_id: sessionId }
   // 接线预留：运行时一旦在 /chat/stream 接收这两个字段，前端无需任何改动。
   if (mode) body.mode = mode
+  // T5 Ask/Auto：Research 显式发送本次 effective 值；General 不传。
+  if (researchExecutionMode) body.research_execution_mode = researchExecutionMode
   if (courseId != null) body.context = { course_id: courseId }
   // 模型网关 P0：服务端 allowlist 校验，清单外直接 400（见 NexusPage 模型下拉）。
   if (model) body.model = model

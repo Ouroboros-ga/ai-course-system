@@ -42,3 +42,27 @@ uv run pytest tests/test_swerex_adapter.py tests/test_service.py -q
 见回执 T1-b 节：构建镜像→ `127.0.0.1:8401` 起容器（socket 仅管理面挂载）→
 跑 `test_live_docker.py` 黑盒核验 5 项语义→停容器（验证环境不常驻，生产
 部署另行决策）。
+
+## 生产常驻部署（用户授权，2026-09-08 生效）
+
+- systemd 单元：`deploy/systemd/repro-runtime.service`（Nexus Runtime 同款
+  写法），`127.0.0.1:8401`，`Restart=always`，`After/Wants=docker.service`。
+  安装：解码写入 `/etc/systemd/system/repro-runtime.service` →
+  `daemon-reload` → `enable` → `start`。
+- 代码：从 release 的 `deploy/repro-runtime/` 同步到
+  `/opt/smartcarb/repro-runtime/`（排除 `.venv/data/.token/__pycache__`），
+  与 release diff 干净。
+- 配置 `/opt/smartcarb/shared/env/repro-runtime.env`（root:600）：
+  `REPRO_RUNTIME_TOKEN`（沿用 T1-b 验证 token 文件值，不打印）、
+  `REPRO_TASK_IMAGE=repro-task:1.4.0`（digest `4f2ba29bade5`，pull 策略
+  `missing`＋本地已缓存＝等价 never，不追 latest）、
+  `REPRO_SNAPSHOT_PATH=/opt/smartcarb/repro-runtime/data/sandboxes.json`。
+  资源限额沿代码默认（`--memory=2g --cpus=2 --pids-limit=512`，T1-b 实证
+  生效；非特权、零挂载、bridge 默认）。
+- 权限收敛：`data/` 700、`sandboxes.json` 600（曾为 755/644）。
+- Nexus 接线：`nexus.env` 追加 `NEXUS_REPRO_CONTROL_URL=http://127.0.0.1:8401`
+  与 `NEXUS_REPRO_CONTROL_TOKEN`（同值，备份 `nexus.env.bak-control-*`），
+  重启 nexus-runtime。
+- 常驻复验（黑盒 23/23）：ensure/幂等/执行/查询/上传下载/鉴权拒绝/跨任务
+  隔离/资源断言/取消零残留/生命周期。另有真实 autonomous 点火验证
+  （7 个 operation 全 exit 0，含目标命令正确输出），见回执打通节。

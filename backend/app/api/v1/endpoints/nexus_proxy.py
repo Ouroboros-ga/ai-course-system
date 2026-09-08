@@ -373,6 +373,9 @@ async def _build_run_context(
 ) -> dict[str, Any]:
     """生成注入聊天上下文的运行快照白名单投影（有界、脱敏、无凭据/路径）。"""
     run, step_id = _resolve_run_ref(session, current_user, session_id, run_ref)
+    if _run_provider(run) == "autonomous":
+        return await _build_autonomous_run_context(
+            session, current_user, run, step_id)
     live = await _live_job_status(run["job_id"]) if run["job_id"] else None
     merged = _merge_run_live(run, live)
     live_view = merged.get("live") or {}
@@ -412,6 +415,55 @@ async def _build_run_context(
     else:
         context["steps"] = steps
     return context
+
+
+async def _build_autonomous_run_context(
+    session, current_user: dict, run: dict[str, Any], step_id: int | None,
+) -> dict[str, Any]:
+    """自主 run 的聊天上下文投影：attempt 即步骤（编号/命令摘要/退出码/日志尾）。
+
+    状态取 Runtime console（running/reconciling/终态）；Runtime 失联回落
+    登记快照并标 stale，不伪造执行事实。step_id 索引 attempts（越界 422）。
+    """
+    console = await _runtime_console_snapshot(
+        run["run_id"], _artifact_user_id(current_user))
+    attempts = (console or {}).get("attempts", []) if console else []
+    console_status = (console or {}).get("console_status", "unknown") if console else "unknown"
+    steps: list[dict[str, Any]] = []
+    for idx, attempt in enumerate(attempts[:_STEP_MAX]):
+        steps.append({
+            "index": idx,
+            "attempt_no": attempt.get("attempt_no", idx + 1),
+            "command": str(attempt.get("command_summary") or "")[:160],
+            "exit_code": attempt.get("exit_code"),
+            "timed_out": None,
+            "duration_s": attempt.get("duration_s"),
+            "log": _bounded_log_tail(attempt.get("log_tail")),
+        })
+    if step_id is not None:
+        if step_id >= len(steps):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail="STEP_NOT_FOUND")
+        picked = [steps[step_id]]
+    else:
+        picked = steps
+    return {
+        "run_id": run["run_id"],
+        "run_number": run["run_number"],
+        "display_title": run["display_title"],
+        "preset_id": run["preset_id"],
+        "provider": "autonomous",
+        "paper_title": run["paper_title"],
+        "status": console_status,
+        "status_source": "live" if console else "snapshot",
+        "stale": console is None,
+        "observed_at": None,
+        "note": ("" if console
+                 else "执行器不可达，显示登记快照"),
+        "code": None,
+        "detail": (console or {}).get("detail", ""),
+        "steps": picked,
+    }
 
 
 async def _inject_run_context(payload: NexusChatRequest, session, current_user: dict) -> None:
@@ -1386,6 +1438,140 @@ async def _live_job_status(job_id: str) -> dict[str, Any] | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# T5：执行 provider 分派（preset Worker vs 自主实验）。
+# - preset：既有 Worker 实时态合并（job_id 维度）；
+# - autonomous：Backend nexus_runs 只存归属投影，实时态（attempt/状态/日志）
+#   经 Runtime console 端点读取；取消经 Runtime cancel 端点。前端绝不直连
+#   控制服务。provider 标识与 preset job 命名空间不碰撞（run_id=approval_id
+#   全局唯一，两类共用同一 run 表行格式）。
+# ---------------------------------------------------------------------------
+
+_AUTONOMOUS_TOOL = "autonomous_experiment"
+
+
+def _run_provider(run: dict[str, Any]) -> str:
+    """run 的执行 provider：autonomous（自主实验）或 preset（旧 Worker）。"""
+    if (run.get("tool") or "") == _AUTONOMOUS_TOOL:
+        return "autonomous"
+    if not (run.get("job_id") or "") and (run.get("proposal_id") or ""):
+        return "autonomous"
+    return "preset"
+
+
+async def _runtime_console_snapshot(run_id: str, user_id: Any) -> dict[str, Any] | None:
+    """读 Runtime 自主 run 控制台快照；任何失败返回 None（调用方回落快照）。"""
+    base = _runtime_base_url()
+    if not base:
+        return None
+    headers = {"Accept": "application/json"}
+    if settings.NEXUS_RUNTIME_API_KEY:
+        headers["Authorization"] = f"Bearer {settings.NEXUS_RUNTIME_API_KEY}"
+    headers["X-Nexus-User-Id"] = str(user_id)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
+            response = await client.get(
+                f"{base}/api/v1/nexus/repro/runs/{run_id}/console",
+                headers=headers,
+            )
+    except httpx.HTTPError as error:
+        logger.warning("nexus runtime console unreachable for run %s: %s", run_id, error)
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    snapshot = (payload or {}).get("snapshot")
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+async def _runtime_cancel_run(run_id: str, user_id: Any) -> dict[str, Any]:
+    """经 Runtime 取消自主 run（置旗＋操作取消＋回收确认）。
+
+    成功返回 {status, already_terminal}；Runtime 明确拒绝/不可达按码上抛，
+    绝不把失败包装成"已取消"。
+    """
+    base = _runtime_base_url()
+    if not base:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="NEXUS_RUNTIME_NOT_CONFIGURED"
+        )
+    headers = {"Accept": "application/json"}
+    if settings.NEXUS_RUNTIME_API_KEY:
+        headers["Authorization"] = f"Bearer {settings.NEXUS_RUNTIME_API_KEY}"
+    headers["X-Nexus-User-Id"] = str(user_id)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
+            response = await client.post(
+                f"{base}/api/v1/nexus/repro/runs/{run_id}/cancel",
+                headers=headers,
+            )
+    except httpx.HTTPError as error:
+        logger.warning("nexus runtime cancel unreachable for run %s: %s", run_id, error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="RUNTIME_CANCEL_UNAVAILABLE"
+        ) from error
+    if response.status_code == 404:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
+    if response.status_code == 503:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="RUNTIME_CANCEL_UNAVAILABLE"
+        )
+    if response.status_code != 200:
+        logger.warning("nexus runtime cancel http %s for run %s", response.status_code, run_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="RUNTIME_CANCEL_UPSTREAM_ERROR"
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Runtime 返回非 JSON"
+        ) from exc
+    if not isinstance(payload, dict) or payload.get("run_id") != run_id:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="RUNTIME_CANCEL_IDENTITY_MISMATCH"
+        )
+    return {"status": payload.get("status", "unknown"),
+            "already_terminal": bool(payload.get("already_terminal"))}
+
+
+def _merge_run_console(
+    run: dict[str, Any], console: dict[str, Any],
+    observed_at: float | None = None,
+) -> dict[str, Any]:
+    """自主 run 快照 + Runtime console 合并。
+
+    console_status=reconciling 是显式展示（执行器失联但运行未终止），
+    stale=False（这是新鲜的对账结论，不是过期快照）；attempt 投影
+    （编号/命令摘要/时长/日志尾/退出码/结果）直接透出供工作台渲染。
+    """
+    import time as _time
+
+    merged = dict(run)
+    now = observed_at if observed_at is not None else _time.time()
+    merged["provider"] = "autonomous"
+    merged["observed_at"] = now
+    merged["config_status"] = _config_status(run)
+    merged["attempt_no"] = console.get("attempt_no", merged.get("attempt_no", 0))
+    merged["attempts"] = console.get("attempts", [])
+    console_status = console.get("console_status", "unknown")
+    merged["live"] = {
+        "status": console_status,
+        "attempt_no": console.get("attempt_no", 0),
+        "attempts": console.get("attempts", []),
+        "active_operation": console.get("active_operation", ""),
+        "detail": console.get("detail", ""),
+        "note": ("执行器不可达，显示登记快照；运行未终止，恢复后继续"
+                 if console_status == "reconciling" else ""),
+    }
+    merged["status_source"] = "live"
+    merged["stale"] = False
+    return merged
+
+
 def _merge_run_live(
     run: dict[str, Any], live: dict[str, Any] | None,
     observed_at: float | None = None,
@@ -1449,11 +1635,14 @@ def _config_status(run: dict[str, Any]) -> str:
 
 async def _merge_runs_live(
     runs: list[dict[str, Any]],
+    session: Session | None = None,
 ) -> list[dict[str, Any]]:
     """批量合并实时态：有界并发（4）＋整体截止（10s）。
 
-    终态快照行（succeeded/failed/rejected）不再问 Worker，直接消费快照；
-    超时/失败的行回落 stale 快照——部分失联不能阻塞整个会话列表。
+    终态快照行（succeeded/failed/rejected/cancelled）不再问执行器，直接消费
+    快照；超时/失败的行回落 stale 快照——部分失联不能阻塞整个会话列表。
+    T5：自主 run 走 Runtime console 分支（attempt 投影＋reconciling 语义）；
+    session 传入时做终态快照回写（best-effort）。
     """
     import asyncio
     import time as _time
@@ -1468,12 +1657,35 @@ async def _merge_runs_live(
             return _merge_run_live(run, None, observed_at=now) | {
                 "status_source": "snapshot",
                 "stale": False,
+                "provider": _run_provider(run),
                 "live": {"status": run.get("status", "unknown"),
                          "note": "终态快照，不再轮询执行器"},
             }
+        if _run_provider(run) == "autonomous":
+            console = await _runtime_console_snapshot(run["run_id"], run["user_id"])
+            if console is None:
+                return _merge_run_live(run, None, observed_at=now) | {
+                    "provider": "autonomous"}
+            merged = _merge_run_console(run, console, observed_at=now)
+            # 终态快照回写（best-effort）：Runtime 已终态且与快照不一致时更新。
+            console_status = console.get("status")
+            if (session is not None
+                    and console_status in nexus_run_service.TERMINAL_RUN_STATUSES
+                    and console_status != run.get("status")):
+                try:
+                    nexus_run_service.update_run_status(
+                        session, user_id=run["user_id"],
+                        run_id=run["run_id"], status=console_status,
+                        detail=str(console.get("detail") or "")[:300],
+                    )
+                except Exception as error:  # noqa: BLE001
+                    logger.warning("autonomous run snapshot writeback failed: %s", error)
+            return merged
         async with semaphore:
             live = await _live_job_status(run["job_id"]) if run["job_id"] else None
-        return _merge_run_live(run, live, observed_at=now)
+        merged = _merge_run_live(run, live, observed_at=now)
+        merged["provider"] = "preset"
+        return merged
 
     try:
         async with asyncio.timeout(_RUNS_LIVE_DEADLINE_S):
@@ -1502,7 +1714,7 @@ async def nexus_runs_list(
         session, user_id=_artifact_user_id(current_user),
         session_id=session_id.strip()[:128], limit=limit, cursor=cursor.strip()[:128],
     )
-    items = await _merge_runs_live(page["items"])
+    items = await _merge_runs_live(page["items"], session)
     # 终态快照回写（best-effort）：live 为终态且与快照不一致时更新，
     # 下次列表直接消费快照；失败只记日志。
     for run, merged in zip(page["items"], items):
@@ -1539,7 +1751,7 @@ async def nexus_run_detail(
     )
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
-    merged = (await _merge_runs_live([run]))[0]
+    merged = (await _merge_runs_live([run], session))[0]
     # NX-LB5：已授权 Artifact 引用（可下载）；Worker 工作目录文件清单不是
     # 下载链接，不经此字段暴露。
     merged["artifacts"] = nexus_artifact_service.list_run_artifacts(
@@ -1671,8 +1883,68 @@ async def nexus_run_rename(
                details={"current_version": error.current_version})
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
-    merged = (await _merge_runs_live([row]))[0]
+    merged = (await _merge_runs_live([row], session))[0]
     return JSONResponse(status_code=status.HTTP_200_OK, content=merged)
+
+
+@router.post("/runs/{run_id}/cancel")
+async def nexus_run_cancel(
+    run_id: str,
+    payload: NexusRunCancelGrant,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """T5：用户直接取消运行（本人＋同会话；登录态即授权，不经过 grant）。
+
+    - preset（有 job_id）：沿用 Worker 取消核心（与作业取消同语义）；
+    - autonomous：经 Runtime 取消（置旗＋操作取消＋回收确认），终态
+      cancelled 才返回成功；控制不可达 → 503，不伪装取消。
+    模型排错时终止自己的卡住命令走 operation 级取消，不调本端点（不触发
+    “取消整个实验”的第二次确认语义由调用方保证：本端点只响应用户手势）。
+    """
+    from app.services import nexus_run_service
+
+    _reject_unknown_fields(NexusRunCancelGrant, payload.model_dump())
+    run = nexus_run_service.get_owned_run(
+        session, user_id=_artifact_user_id(current_user), run_id=run_id.strip()[:64]
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
+    if (run["session_id"] or "") != payload.session_id.strip()[:128]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="RUN_SESSION_MISMATCH")
+    if run["status"] in nexus_run_service.TERMINAL_RUN_STATUSES:
+        return JSONResponse(status_code=status.HTTP_200_OK, content={
+            "run_id": run["run_id"], "status": run["status"],
+            "already_terminal": True,
+        })
+    if _run_provider(run) == "autonomous" or not run["job_id"]:
+        result = await _runtime_cancel_run(
+            run["run_id"], _artifact_user_id(current_user))
+        if result["status"] == "cancelled":
+            try:
+                nexus_run_service.update_run_status(
+                    session, user_id=_artifact_user_id(current_user),
+                    run_id=run["run_id"], status="cancelled",
+                    detail="用户取消，进程已回收确认")
+            except Exception as error:  # noqa: BLE001
+                logger.warning("autonomous run cancel snapshot writeback failed: %s", error)
+        return JSONResponse(status_code=status.HTTP_200_OK, content={
+            "run_id": run["run_id"], "status": result["status"],
+            "already_terminal": result["already_terminal"],
+        })
+    result = await _worker_cancel(run["job_id"])
+    if result["status"] == "cancelled":
+        try:
+            nexus_run_service.update_run_status(
+                session, user_id=_artifact_user_id(current_user),
+                run_id=run["run_id"], status="cancelled", detail="用户取消")
+        except Exception as error:  # noqa: BLE001
+            logger.warning("run cancel snapshot writeback failed: %s", error)
+    return JSONResponse(status_code=status.HTTP_200_OK, content={
+        "run_id": run["run_id"], "job_id": run["job_id"],
+        "status": result["status"], "already_terminal": result["already_terminal"],
+    })
 
 
 @router.post("/chat/stream")

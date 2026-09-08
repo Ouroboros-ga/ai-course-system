@@ -99,13 +99,16 @@ export function reproStepLabel(run, step) {
 
 /**
  * 终态/未知态不得取 running 分支的增量日志（当时尚无"稳态输出"）。
+ * T5：自主 run 的日志尾在 attempts 上（无 Worker steps），同源回退。
  */
 export function reproLogText(run) {
   if (['running', 'cancelling', 'queued'].includes(run?.status) && run.liveLog) {
     return run.liveLog
   }
   const withLog = (run?.stages || []).filter((s) => s.log_tail)
-  return withLog.length ? withLog[withLog.length - 1].log_tail : ''
+  if (withLog.length) return withLog[withLog.length - 1].log_tail
+  const attempts = (run?.attempts || []).filter((a) => a.log_tail)
+  return attempts.length ? attempts[attempts.length - 1].log_tail : ''
 }
 
 export function reproLogSource(run) {

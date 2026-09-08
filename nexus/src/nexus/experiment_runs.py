@@ -266,10 +266,13 @@ def record_attempt(
     run_id: str, *, actual_command: str,
     config_changes: dict[str, Any] | None = None,
     exit_code: int | None = None, log_ref: str = "",
+    operation_id: str = "",
 ) -> dict[str, Any]:
     """追加一次实际尝试（安装/修依赖/重跑命令皆属 attempt，不消耗新批准）。
 
-    operation_id 确定性派生（run-op-NNNN），同 run 重放同号，不重随机。
+    operation_id 默认确定性派生（run-op-NNNN），同 run 重放同号，不重随机；
+    控制服务返回的真实 operation_id（如 run-id-op-NNNN）可显式传入，用于
+    重启后按 id 续查对账（T5 恢复语义）。
     终态 run（cancelled/completed/failed）拒绝追加（RUN_TERMINAL）。
     返回追加的 attempt 记录。
     """
@@ -283,7 +286,7 @@ def record_attempt(
         raise RunError("ATTEMPT_COMMAND_EMPTY", "实际命令不能为空")
     attempt_no = int(run["attempt_no"]) + 1
     attempt = {
-        "operation_id": f"{run_id}-op-{attempt_no:04d}",
+        "operation_id": (operation_id or "").strip()[:128] or f"{run_id}-op-{attempt_no:04d}",
         "attempt_no": attempt_no,
         "actual_command": command[:2000],
         "config_changes": dict(config_changes or {}),

@@ -175,6 +175,8 @@ class NexusRunRecordRequest(BaseModel):
 
     NX-LB1 扩展：title/parent/proposal/config_snapshot/展示投影均为可选；
     老 Runtime 只发旧字段时照常登记（序号照分、展示名回退 preset_id）。
+    T5：autonomous runs 无 Worker job（job_id 为空）：恢复/取消/备注走
+    Runtime console/cancel 端点，不碰旧 Worker。
     """
 
     run_id: str = Field(min_length=4, max_length=64)
@@ -183,7 +185,7 @@ class NexusRunRecordRequest(BaseModel):
     preset_id: str = Field(default="", max_length=64)
     plan_hash: str = Field(default="", max_length=64)
     approval_id: str = Field(default="", max_length=64)
-    job_id: str = Field(min_length=4, max_length=64)
+    job_id: str = Field(default="", max_length=64)
     status: str = Field(default="submitted", max_length=32)
     repo_url: str = Field(default="", max_length=300)
     title: str = Field(default="", max_length=120)
@@ -473,10 +475,35 @@ async def nexus_internal_run_cancel(
             "already_terminal": True,
             "note": "运行已结束（无需也无法取消）；此为登记快照状态。",
         })
-    if not run["job_id"]:
-        return unified_response(code=200, message="run 无关联作业", data={
-            "run_id": run["run_id"], "status": "unknown", "already_terminal": False,
-            "note": "该运行没有已登记的执行作业，无进程可取消。",
+    from app.api.v1.endpoints.nexus_proxy import _run_provider, _runtime_cancel_run
+
+    if _run_provider(run) == "autonomous" or not run["job_id"]:
+        # 自主 run：无 Worker 作业，经 Runtime 取消（置旗＋操作取消＋回收确认）。
+        grant = nexus_action_grant_service.consume_grant(
+            session, user_id=user_id, run_id=run["run_id"], action="cancel_run")
+        if grant is None:
+            return unified_response(code=200, message="需要用户确认", data={
+                "run_id": run["run_id"], "status": "confirmation_required",
+                "code": "CANCEL_CONFIRMATION_REQUIRED",
+                "detail": (
+                    "取消是破坏性停止动作，需要用户本次明确确认。请向用户说明将取消"
+                    "哪个运行，并请其在界面上确认取消（确认后服务端签发一次性授权）。"
+                ),
+            })
+        try:
+            result = await _runtime_cancel_run(run["run_id"], user_id)
+        except HTTPException as error:
+            raise error
+        if result["status"] == "cancelled":
+            try:
+                nexus_run_service.update_run_status(
+                    session, user_id=user_id, run_id=run["run_id"],
+                    status="cancelled", detail="用户确认后取消")
+            except Exception as error:  # noqa: BLE001
+                logger.warning("run cancel snapshot writeback failed: %s", error)
+        return unified_response(code=200, message="取消已受理", data={
+            "run_id": run["run_id"], "status": result["status"],
+            "already_terminal": result["already_terminal"],
         })
     grant = nexus_action_grant_service.consume_grant(
         session, user_id=user_id, run_id=run["run_id"], action="cancel_run")

@@ -59,7 +59,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusProposalApproval } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -189,16 +189,19 @@ const sessionRuns = computed(() => {
   const s = currentSession.value
   if (!s?.turns?.length) return []
   return s.turns
-    .filter((t) => t?.reproRun?.job_id)
+    // T5：自主 run 无 job_id，按 run_id/runId 收敛（与 preset job 标识不碰撞）。
+    .filter((t) => t?.reproRun && (t.reproRun.job_id || t.reproRun.run_id || t.reproRun.runId))
     .map((t, i, arr) => {
       const preset = t.reproRun.preset_id
       const seq = arr.slice(0, i).filter((x) => x?.reproRun?.preset_id === preset).length + 1
-      const backend = backendRunNames.value[t.reproRun.job_id] || {}
+      const backend = backendRunNames.value[t.reproRun.job_id]
+        || backendRunNames.value[t.reproRun.run_id || t.reproRun.runId] || {}
       // runId = nexus_runs.run_id（NX-LB1 稳定标识）：重命名 / 备注 / 详情用它；
       // job_id 只服务 Worker cancel / report。无 runId → 重命名不可用。
+      // T5：自主 run 无 job_id，id 回退 runId（同一会话内唯一，不碰撞）。
       const runId = t.reproRun.runId || t.reproRun.run_id || ''
       return {
-        id: t.reproRun.job_id,
+        id: t.reproRun.job_id || runId,
         runId,
         name: experimentName({ ...t.reproRun, ...backend }, seq),
         run: t.reproRun,
@@ -238,6 +241,9 @@ function switchActiveRun(id) {
 /** 会话内「打开工作台」：定位到该 run 并切到工作台视图 */
 function openRunInWorkspace(turn) {
   if (turn?.reproRun?.job_id) activeRunId.value = turn.reproRun.job_id
+  else if (turn?.reproRun?.run_id || turn?.reproRun?.runId) {
+    activeRunId.value = turn.reproRun.run_id || turn.reproRun.runId
+  }
   setWorkspaceView('lab')
 }
 
@@ -472,7 +478,10 @@ async function approveRestored(item) {
   }
   try {
     await decideNexusApproval(item.id, 'approved')
-    await executeApprovedRepro(item.id, activeSessionId.value || 'default')
+    await executeApprovedRepro(item.id, activeSessionId.value || 'default', {
+      mode: activeMode.value,
+      researchExecutionMode: isResearchMode.value ? execMode.value : null,
+    })
     showToast('已批准并提交执行', 'success')
   } catch (err) {
     const code = err?.response?.data?.code || err?.code || ''
@@ -481,6 +490,27 @@ async function approveRestored(item) {
     } else {
       showToast('批准失败，请重试', 'error')
     }
+  }
+  await loadPendingApprovals()
+}
+
+// T5：浮窗合并操作——切换 Auto＋本次批准＋执行一次完成（无 turn 项专用）。
+async function approveRestoredWithAuto(item) {
+  if (item.turn) {
+    await approveWithAuto(item.turn)
+    await loadPendingApprovals()
+    return
+  }
+  try {
+    await setExecMode('auto')
+    await decideNexusApproval(item.id, 'approved')
+    await executeApprovedRepro(item.id, activeSessionId.value || 'default', {
+      mode: activeMode.value,
+      researchExecutionMode: 'auto',
+    })
+    showToast('已切换 Auto 并批准提交执行', 'success')
+  } catch (err) {
+    showToast(err?.message || '切换并批准失败，未执行任何操作', 'error')
   }
   await loadPendingApprovals()
 }
@@ -528,7 +558,8 @@ const askContextPill = computed(() => {
   const run = activeRun.value?.run
   if (!run) return ''
   const step = run.currentStep ?? '—'
-  return `附引用 ${run.job_id} · 第 ${step} 步 · 日志末 ${reproLogLines(run).length} 行`
+  const ref = run.job_id || run.run_id || run.runId || '—'
+  return `附引用 ${ref} · 第 ${step} 步 · 日志末 ${reproLogLines(run).length} 行`
 })
 
 /** 「查看完整方案」：滚到消息流里那张审批卡（提案全文在那儿，浮窗只是摘要） */
@@ -708,6 +739,56 @@ function switchSession(id) {
   if (target) {
     void restoreSessionRuns(target)
     void restoreSessionPlan(target)
+    // T5：执行模式随会话恢复（服务端偏好真相源；失败本地默认 ask）。
+    void restoreExecMode(target)
+  }
+}
+
+// ── T5 Ask/Auto：Research 输入框选择器 ＋ 服务端会话偏好 ──
+// - 只在 Research 展示；General 隐藏且不发送（服务端执行核无授权）。
+// - 同一会话的研究对话与询问浮窗共享同一 execMode（单一状态源）。
+// - 刷新/切会话由服务端偏好恢复；保存失败只本地缓存并如实提示。
+// - 切 Ask 只约束后续新请求：已启动 run 继续按原授权执行，不暗中取消。
+const execMode = ref('ask')
+const execModeSaved = ref(true)
+
+function sessionExecKey(id) {
+  return `nexus_exec_mode_${id || 'default'}`
+}
+
+async function restoreExecMode(session) {
+  if (!session || nexusDataSourceMode.value !== 'real') return
+  try {
+    const res = await getNexusSessionExecutionMode(session.id)
+    const mode = res?.research_execution_mode
+    if (mode === 'ask' || mode === 'auto') {
+      execMode.value = mode
+      execModeSaved.value = true
+      try { localStorage.setItem(sessionExecKey(session.id), mode) } catch { /* 忽略 */ }
+      return
+    }
+  } catch { /* 失败回落本地 */ }
+  try {
+    const cached = localStorage.getItem(sessionExecKey(session.id))
+    execMode.value = cached === 'auto' ? 'auto' : 'ask'
+  } catch { execMode.value = 'ask' }
+  execModeSaved.value = false
+}
+
+async function setExecMode(mode) {
+  if (mode !== 'ask' && mode !== 'auto') return
+  execMode.value = mode
+  execModeSaved.value = true
+  const sid = currentSession.value?.id
+  if (!sid || nexusDataSourceMode.value !== 'real') return
+  try {
+    await saveNexusSessionExecutionMode(sid, mode)
+    try { localStorage.setItem(sessionExecKey(sid), mode) } catch { /* 忽略 */ }
+  } catch {
+    // 偏好保存失败：只本地缓存并如实提示，不假称跨设备已保存。
+    execModeSaved.value = false
+    try { localStorage.setItem(sessionExecKey(sid), mode) } catch { /* 忽略 */ }
+    showToast('执行模式偏好保存失败，仅本次会话有效', 'warning')
   }
 }
 
@@ -832,8 +913,10 @@ async function refreshBackendRunNames() {
     return
   }
   for (const run of runs) {
-    if (!run?.job_id) continue
-    backendRunNames.value[run.job_id] = {
+    // T5：自主 run 无 job_id，按 run_id 入 map（与 job 键不碰撞）。
+    const mapKey = run?.job_id || run?.run_id
+    if (!mapKey) continue
+    backendRunNames.value[mapKey] = {
       display_title: run.display_title || '',
       title: run.title || '',
       run_number: run.run_number ?? null,
@@ -842,8 +925,9 @@ async function refreshBackendRunNames() {
       paper_title: run.paper_title || '',
       runId: run.run_id || '',
     }
-    const existing = (session.turns || []).find((t) => t.reproRun?.job_id === run.job_id)
-    if (existing) stampBackendRunName(existing.reproRun, backendRunNames.value[run.job_id])
+    const existing = (session.turns || []).find((t) => t.reproRun?.job_id === run.job_id
+      || (run.run_id && (t.reproRun?.run_id === run.run_id || t.reproRun?.runId === run.run_id)))
+    if (existing) stampBackendRunName(existing.reproRun, backendRunNames.value[mapKey])
   }
 }
 
@@ -859,9 +943,11 @@ async function restoreSessionRuns(session) {
   _runsRestoredIds.add(session.id)
   if (!Array.isArray(session.turns)) session.turns = []
   for (const run of runs) {
-    if (!run?.job_id) continue
-    // v6 实验名后端接线（NX-LB1）：命名投影按 job_id 入 map，
+    const isAuto = (run?.tool === 'autonomous_experiment') || (!run?.job_id && !!run?.run_id)
+    if (!run?.job_id && !isAuto) continue
+    // v6 实验名后端接线（NX-LB1）：命名投影按 job_id/run_id 入 map，
     // sessionRuns 合并后显示（用户命名优先、否则 preset + 稳定序号）。
+    const mapKey = run.job_id || run.run_id
     const backend = {
       display_title: run.display_title || '',
       title: run.title || '',
@@ -871,26 +957,35 @@ async function restoreSessionRuns(session) {
       paper_title: run.paper_title || '',
       runId: run.run_id || '',
     }
-    backendRunNames.value[run.job_id] = backend
+    backendRunNames.value[mapKey] = backend
     const liveStatus = run.live?.status || run.status || 'unknown'
     const terminal = REPRO_TERMINAL_STATUSES.includes(liveStatus)
-    const existing = session.turns.find((t) => t.reproRun?.job_id === run.job_id)
+    const existing = session.turns.find((t) => (run.job_id && t.reproRun?.job_id === run.job_id)
+      || (run.run_id && (t.reproRun?.run_id === run.run_id || t.reproRun?.runId === run.run_id)))
     if (existing) {
       // 本地 turn 状态落后于远端（如轮询断档期间作业已终态）→ 也恢复一次轮询：
       // 单次拉取即更新卡片并自行停止，不重复提交。
       if (!REPRO_TERMINAL_STATUSES.includes(existing.reproRun.status)
         && !['unknown', 'stale'].includes(liveStatus)) {
-        startReproPolling(existing, run.job_id)
+        if (run.job_id) startReproPolling(existing, run.job_id)
+        else if (run.run_id) startRunDetailPolling(existing, run.run_id)
       }
       // 跨设备重命名一致：后端命名（含 title/display_title/序号/版本）向本地收敛。
       stampBackendRunName(existing.reproRun, backend)
+      // T5：自主恢复带回 attempts/live（详情合并口径一致）。
+      if (isAuto && run.live?.attempts) {
+        existing.reproRun.attempts = run.live.attempts
+        existing.reproRun.provider = 'autonomous'
+        existing.reproRun.reconciling = run.live.status === 'reconciling'
+      }
       continue
     }
     // 孤儿 run（换设备/刷新丢本地 turn）：建恢复 turn 展示，不重新提交；
     // reportRequested=true 抑制自动补报告（避免重复产物），用户可手动补领。
+    // T5：自主孤儿 run 同样恢复（attempt 投影＋详情轮询，不重放执行）。
     const known = REPRO_RESTORE_KNOWN.includes(liveStatus)
     const turn = {
-      question: `（已恢复）${run.preset_id || '实验'}复现`,
+      question: `（已恢复）${run.preset_id || run.preset_display_name || '实验'}复现`,
       answer: '',
       toolEvents: [],
       papers: [],
@@ -902,9 +997,14 @@ async function restoreSessionRuns(session) {
       restoredRun: true,
       createdAt: null,
       reproRun: {
-        job_id: run.job_id,
+        job_id: run.job_id || '',
+        run_id: run.run_id || '',
+        runId: run.run_id || '',
+        provider: isAuto ? 'autonomous' : 'preset',
         status: known ? liveStatus : 'unknown',
         stages: [],
+        attempts: isAuto && Array.isArray(run.live?.attempts) ? run.live.attempts : [],
+        reconciling: isAuto && run.live?.status === 'reconciling',
         stageEvents: Array.isArray(run.live?.stage_events) ? run.live.stage_events : [],
         currentStep: run.live?.current_step ?? null,
         liveLog: '',
@@ -934,10 +1034,13 @@ async function restoreSessionRuns(session) {
     // F4：恢复时为所有已知作业补齐详情——queued/running/**cancelling** 持续
     // 轮询；终态（succeeded/failed/rejected/cancelled）一次性拉取历史步骤
     // 与日志，不因"清单只给状态"而停在空 Console。
+    // T5：自主 run 走详情轮询（attempt 恢复），同样不重放执行。
     if (REPRO_RESTORE_NONTERMINAL.includes(liveStatus)) {
-      startReproPolling(turn, run.job_id)
+      if (run.job_id) startReproPolling(turn, run.job_id)
+      else if (run.run_id) startRunDetailPolling(turn, run.run_id)
     } else if (known) {
-      void backfillRestoredRunDetail(turn, run.job_id)
+      if (run.job_id) void backfillRestoredRunDetail(turn, run.job_id)
+      else if (run.run_id) startRunDetailPolling(turn, run.run_id)
     }
   }
   persistSessions()
@@ -1188,7 +1291,9 @@ const reproPollTimers = new Map()
 // 会话内 Console 与实验工作台（v6 主舞台）共用同一真相源，不允许两处各写一份。
 // F4：恢复分类。注意声明顺序——模块级展开引用，放前面会触发 TDZ 使整个 chunk 崩掉（线上实测）。
 const REPRO_RESTORE_NONTERMINAL = ['queued', 'running', 'cancelling']
-const REPRO_RESTORE_KNOWN = [...REPRO_RESTORE_NONTERMINAL, ...REPRO_TERMINAL_STATUSES]
+const REPRO_RESTORE_KNOWN = [...REPRO_RESTORE_NONTERMINAL, ...REPRO_TERMINAL_STATUSES,
+  // T5：reconciling 是自主 run 的已知展示态（执行器失联但运行未终止），继续轮询。
+  'reconciling']
 
 // NX-G2：审批状态文案（pending/approved/consumed/rejected/expired）。
 const APPROVAL_STATUS_LABELS = {
@@ -1268,21 +1373,87 @@ function startReproPolling(turn, jobId) {
 }
 
 // ── NX-E3 取消（投影辅助见 ./reproShared.js）──
+// T5：聊天 Stop（abort SSE）绝不冒充取消；取消走独立 API。
+// 自主 run 无 job_id → 按 run_id 经 Runtime 取消（回收确认后 cancelled）。
 
 async function cancelReproRun(turn) {
   const run = turn?.reproRun
-  if (!run?.job_id || run.cancelling || !reproCancellable(run)) return
+  if (!run || run.cancelling || !reproCancellable(run)) return
+  const runId = run.runId || run.run_id || ''
+  if (!run.job_id && !runId) return
   run.cancelling = true
   try {
+    if (!run.job_id && runId) {
+      const res = await cancelNexusRun(runId, activeSessionId.value || 'default')
+      run.status = res?.status || 'cancelling'
+      run.reconciling = false
+      persistSessions()
+      if (!res?.already_terminal) showToast('已发出取消，等待回收确认…', 'warning')
+      return
+    }
     const res = await cancelNexusReproJob(run.job_id)
     run.status = res?.status || 'cancelling'
     persistSessions()
     if (!res?.already_terminal) showToast('已发出取消，等待回收确认…', 'warning')
   } catch (err) {
-    showToast(err?.message || '取消失败，作业可能已结束', 'error')
+    showToast(err?.message || '取消失败，运行可能已结束', 'error')
   } finally {
     run.cancelling = false
   }
+}
+
+// T5：自主 run 详情轮询（服务端快照恢复）：attempt 投影＋reconciling 语义。
+// 与作业轮询共用 timers 表（键为 run_id），上限一致；终态停轮询。
+function applyRunDetail(turn, detail) {
+  if (!turn?.reproRun || !detail) return
+  const run = turn.reproRun
+  run.status = detail.status || run.status
+  run.provider = 'autonomous'
+  run.attempts = Array.isArray(detail.live?.attempts) ? detail.live.attempts : (run.attempts || [])
+  run.attempt_no = detail.live?.attempt_no ?? detail.attempt_no ?? run.attempt_no ?? 0
+  run.reconciling = (detail.live?.status === 'reconciling')
+  run.detail = detail.live?.detail || detail.live?.note || run.detail || null
+  // 自主运行中增量日志：取最后一条有日志尾的 attempt（只读呈现）。
+  if (run.status === 'running' && Array.isArray(run.attempts)) {
+    const tailed = run.attempts.filter((a) => a.log_tail)
+    if (tailed.length) run.liveLog = tailed[tailed.length - 1].log_tail
+  }
+  stampBackendRunName(run, {
+    display_title: detail.display_title || '',
+    title: detail.title || '',
+    run_number: detail.run_number ?? null,
+    version: detail.version ?? 1,
+    preset_display_name: detail.preset_display_name || '',
+    paper_title: detail.paper_title || '',
+    runId: detail.run_id || '',
+  })
+}
+
+function startRunDetailPolling(turn, runId) {
+  if (!runId || reproPollTimers.has(runId)) return
+  let polls = 0
+  const tick = async () => {
+    polls += 1
+    if (polls > REPRO_POLL_MAX) {
+      stopReproPolling(runId)
+      if (turn?.reproRun) turn.reproRun.pollExhausted = true
+      return
+    }
+    let detail
+    try {
+      detail = await getNexusRunDetail(runId)
+    } catch {
+      return // 单次失败不终止轮询；上限兜底
+    }
+    if (!detail || !turn?.reproRun) return
+    applyRunDetail(turn, detail)
+    persistSessions()
+    if (REPRO_TERMINAL_STATUSES.includes(detail.status)) {
+      stopReproPolling(runId)
+    }
+  }
+  reproPollTimers.set(runId, setInterval(tick, REPRO_POLL_INTERVAL_MS))
+  void tick()
 }
 
 function toggleReproExpanded(turn) {
@@ -1330,7 +1501,44 @@ async function executeApprovalFor(turn) {
   ap.executing = true
   ap.error = null
   try {
-    const res = await executeApprovedRepro(ap.approval_id, activeSessionId.value || 'default')
+    // T5：透传本次执行门（Research+Auto 才放行；Ask 由服务端 403）。
+    const res = await executeApprovedRepro(ap.approval_id, activeSessionId.value || 'default', {
+      mode: activeMode.value,
+      researchExecutionMode: isResearchMode.value ? execMode.value : null,
+    })
+    // T5 自主执行：返回 run_id（无 job），建 run 引用条并按详情轮询恢复。
+    const runId = res?.run_id
+    if (runId && !res?.job && !turn.reproRun) {
+      turn.reproRun = {
+        job_id: '',
+        run_id: runId,
+        runId,
+        status: res?.status || 'running',
+        provider: 'autonomous',
+        stages: [],
+        attempts: [],
+        stageEvents: [],
+        currentStep: null,
+        liveLog: '',
+        startedAt: null,
+        finishedAt: null,
+        expanded: true,
+        cancelling: false,
+        reconciling: false,
+        verdict: null,
+        comparison: [],
+        reportRequested: true,
+        pollExhausted: false,
+        code: null,
+        detail: null,
+        seedUsed: false,
+        reportError: null
+      }
+      persistSessions()
+      startRunDetailPolling(turn, runId)
+      void refreshBackendRunNames()
+      return
+    }
     const job = res?.job
     if (job?.job_id && !turn.reproRun) {
       turn.reproRun = {
@@ -1368,6 +1576,38 @@ async function executeApprovalFor(turn) {
     ap.executing = false
   }
 }
+
+// T5：Ask 下确认卡的合并操作——一次点击完成"切换 Auto＋本次批准＋执行"，
+// 不弹第二个模式确认。任一步失败如实报错，不伪装已切换/已批准。
+async function approveWithAuto(turn) {
+  const ap = turn?.approval
+  if (!ap?.approval_id || ap.deciding || ap.executing) return
+  ap.deciding = true
+  ap.error = null
+  try {
+    await setExecMode('auto')
+    const res = await decideNexusApproval(ap.approval_id, 'approved')
+    const next = res?.approval || {}
+    if (next?.status) ap.status = next.status
+    if (ap.status !== 'approved') {
+      ap.error = '批准未成功，未切换执行'
+      return
+    }
+    persistSessions()
+    await executeApprovalFor(turn)
+  } catch (err) {
+    ap.error = err?.errorCode
+      ? `${err.errorCode}：${err?.message || '切换并批准失败，未执行任何操作'}`
+      : (err?.message || '切换并批准失败，未执行任何操作')
+  } finally {
+    ap.deciding = false
+  }
+}
+
+// T5：本会话活跃 run（切换 Ask 后继续按原授权执行，不暗中取消）。
+const activeRuns = computed(() => sessionRuns.value.filter((r) =>
+  ['queued', 'running', 'cancelling'].includes(r.run.status)))
+const hasActiveRuns = computed(() => activeRuns.value.length > 0)
 
 // NX-E1：恢复 turn 手动补领报告（自动补会重复产物；手动一次由用户控制）。
 async function claimRestoredReport(turn) {
@@ -2066,6 +2306,8 @@ async function runTurn(message) {
       message,
       sessionId: currentSession.value.id,
       mode: activeMode.value,
+      // T5 Ask/Auto：Research 显式发送本次 effective 值；General 不传。
+      researchExecutionMode: isResearchMode.value ? execMode.value : null,
       courseId: currentSession.value.courseId ?? null,
       model: effectiveModel.value || null,
       // NX-A1：仅发送就绪附件 id；绑定与验主在服务端完成。
@@ -2601,7 +2843,7 @@ const emptySuggestions = computed(() =>
           </span>
           <span class="nx-tt-sub">
             {{ isLabView
-              ? (activeRun?.run?.job_id || '未建立')
+              ? (activeRun?.run?.job_id || activeRun?.runId || '未建立')
               : (isResearchMode ? 'Research 会话' : 'General 会话') }}
           </span>
         </div>
@@ -2651,6 +2893,7 @@ const emptySuggestions = computed(() =>
         :notes="runNotes"
         :preset="activePreset"
         :noting="noting"
+        :execution-mode="execMode"
         @switch="switchActiveRun"
         @cancel="cancelRunFromWorkspace"
         @ask="openAskWindow"
@@ -3001,7 +3244,19 @@ const emptySuggestions = computed(() =>
                   · 批准后才提交执行，未批准不会运行任何代码
                 </p>
                 <div v-if="turn.approval.status === 'pending'" class="nx-answer-actions">
+                  <!-- T5 Ask：运行按钮改为一次完成的合并操作（切换 Auto＋本次批准＋执行）。 -->
                   <SfxButton
+                    v-if="isResearchMode && execMode === 'ask'"
+                    variant="primary"
+                    size="sm"
+                    :loading="turn.approval.deciding || turn.approval.executing"
+                    title="一次点击完成切换到 Auto、本次批准与执行，不再二次确认"
+                    @click="approveWithAuto(turn)"
+                  >
+                    切换 Auto 并批准执行
+                  </SfxButton>
+                  <SfxButton
+                    v-else
                     variant="primary"
                     size="sm"
                     :loading="turn.approval.deciding || turn.approval.executing"
@@ -3016,6 +3271,20 @@ const emptySuggestions = computed(() =>
                     @click="decideApprovalFor(turn, 'rejected')"
                   >
                     拒绝
+                  </SfxButton>
+                </div>
+                <!-- T5：切 Ask 不暗中取消已启动 run；卡片下标注并保留用户取消。 -->
+                <div v-if="turn.approval.status === 'pending' && hasActiveRuns" class="nx-rl-note">
+                  已启动实验继续运行，可在工作台取消。
+                  <SfxButton
+                    v-for="r in activeRuns"
+                    :key="r.id"
+                    variant="danger"
+                    size="sm"
+                    :loading="r.run.cancelling"
+                    @click="cancelReproRun(r.turn)"
+                  >
+                    取消 {{ r.name }}
                   </SfxButton>
                 </div>
                 <p v-if="turn.approval.error" class="nx-turn-failure">{{ turn.approval.error }}</p>
@@ -3042,8 +3311,10 @@ const emptySuggestions = computed(() =>
               <div v-if="turn.reproRun" class="nx-repro-live" :class="{ 'is-collapsed': !turn.reproRun.expanded }">
                 <div class="nx-rl-head nx-cs-head" @click="toggleReproExpanded(turn)">
                   <FlaskConical :size="15" class="nx-rl-icon" />
-                  <span class="nx-rl-title">复现作业 · {{ turn.reproRun.job_id }}</span>
+                  <!-- T5：自主 run 无 job_id，标题用运行名；状态含 reconciling。 -->
+                  <span class="nx-rl-title">{{ turn.reproRun.job_id ? `复现作业 · ${turn.reproRun.job_id}` : `自主实验 · ${turn.reproRun.run_id || turn.reproRun.runId || ''}` }}</span>
                   <span class="nx-rl-status" :class="turn.reproRun.status">{{ reproStatusLabel(turn.reproRun) }}</span>
+                  <span v-if="turn.reproRun.reconciling" class="nx-rl-note" title="执行器不可达，显示登记快照；运行未终止，恢复后继续">对账中</span>
                   <span class="nx-cs-spacer" />
                   <span v-if="reproElapsed(turn.reproRun)" class="nx-cs-elapsed">{{ reproElapsed(turn.reproRun) }}</span>
                   <SfxButton
@@ -3069,8 +3340,35 @@ const emptySuggestions = computed(() =>
                 </div>
 
                 <template v-if="turn.reproRun.expanded">
-                  <!-- 阶段条：Preparing→Building→Running→Metric→Verifying→Completed -->
-                  <div class="nx-cs-stagebar" role="list" aria-label="执行阶段">
+                  <!-- T5 自主 run：attempt 即步骤（编号/命令摘要/退出码/日志尾），
+                       不套用 Worker 六段轨道（无 Building/Verifying 即 skipped，不假装）。 -->
+                  <div v-if="turn.reproRun.provider === 'autonomous' && (turn.reproRun.attempts || []).length" class="nx-cs-sec">
+                    <div class="nx-cs-sech">
+                      <span>尝试记录</span>
+                      <span class="nx-cs-secn">实际命令与退出码只读呈现，不重放执行</span>
+                    </div>
+                    <table class="nx-cs-table">
+                      <thead>
+                        <tr><th>#</th><th>命令摘要</th><th>退出码</th><th>耗时</th><th>结果</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="a in turn.reproRun.attempts"
+                          :key="a.attempt_no"
+                          :class="{ 'is-bad': a.result === 'failed' }"
+                        >
+                          <td class="nx-cs-mono">{{ a.attempt_no }}</td>
+                          <td class="nx-cs-cmd">{{ a.command_summary }}</td>
+                          <td class="nx-cs-mono">{{ a.exit_code ?? '—' }}</td>
+                          <td class="nx-cs-mono">{{ a.duration_s != null ? `${Math.round(a.duration_s)}s` : '—' }}</td>
+                          <td><span class="nx-cs-chip" :class="`is-${a.result === 'succeeded' ? 'ok' : a.result === 'failed' ? 'err' : a.result === 'running' ? 'run' : 'pend'}`">{{ a.result === 'succeeded' ? '完成' : a.result === 'failed' ? '失败' : a.result === 'running' ? '运行中' : '—' }}</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <!-- 阶段条：Preparing→Building→Running→Metric→Verifying→Completed。
+                       自主 run 无 Worker 轨道时隐藏（attempt 表才是真相源）。 -->
+                  <div v-if="turn.reproRun.provider !== 'autonomous'" class="nx-cs-stagebar" role="list" aria-label="执行阶段">
                     <template v-for="(st, i) in reproStageRail(turn.reproRun)" :key="st.stage">
                       <div v-if="i" class="nx-cs-stgline" :class="{ 'is-done': st.state === 'done' }" />
                       <div class="nx-cs-stg" :class="`is-${st.state}`" role="listitem" :title="st.note || st.label">
@@ -3306,7 +3604,19 @@ const emptySuggestions = computed(() =>
               · 批准后才提交执行，未批准不会运行任何代码
             </p>
             <div class="nx-ad-actions">
+              <!-- T5 Ask：一次完成的合并操作（切换 Auto＋本次批准＋执行）。 -->
               <SfxButton
+                v-if="isResearchMode && execMode === 'ask'"
+                variant="primary"
+                size="sm"
+                :loading="item.turn?.approval?.deciding || item.turn?.approval?.executing"
+                title="一次点击完成切换到 Auto、本次批准与执行，不再二次确认"
+                @click="approveRestoredWithAuto(item)"
+              >
+                切换 Auto 并批准执行
+              </SfxButton>
+              <SfxButton
+                v-else
                 variant="primary"
                 size="sm"
                 :loading="item.turn?.approval?.deciding || item.turn?.approval?.executing"
@@ -3352,6 +3662,46 @@ const emptySuggestions = computed(() =>
                 <template #icon><Paperclip :size="13" /></template>
                 附件
               </SfxButton>
+              <!-- T5 Ask/Auto：只在 Research 展示；General 隐藏且不发送。
+                   两者同样自主研究与文档输出，唯一差别是实验沙箱执行权限。
+                   同一会话的研究对话与询问浮窗共享 execMode；切 Ask 不取消已启动 run。 -->
+              <div
+                v-if="isResearchMode"
+                class="nx-seg nx-exec-seg"
+                role="tablist"
+                aria-label="执行模式"
+                title="Ask 自主研究与文档输出，不运行实验；Auto 确认一次后可自主配置、运行和修复实验"
+              >
+                <span
+                  class="nx-seg-btn"
+                  :class="{ 'is-on': execMode === 'ask' }"
+                  role="tab"
+                  tabindex="0"
+                  :aria-selected="execMode === 'ask'"
+                  title="自主研究与文档输出，不运行实验"
+                  @click="setExecMode('ask')"
+                  @keydown.enter.prevent="setExecMode('ask')"
+                  @keydown.space.prevent="setExecMode('ask')"
+                >
+                  <i class="nx-seg-no">研</i>研究与写作
+                </span>
+                <span
+                  class="nx-seg-btn"
+                  :class="{ 'is-on': execMode === 'auto' }"
+                  role="tab"
+                  tabindex="0"
+                  :aria-selected="execMode === 'auto'"
+                  title="可在确认后自主配置、运行和修复实验"
+                  @click="setExecMode('auto')"
+                  @keydown.enter.prevent="setExecMode('auto')"
+                  @keydown.space.prevent="setExecMode('auto')"
+                >
+                  <i class="nx-seg-no">验</i>研究与实验
+                </span>
+              </div>
+              <span v-if="isResearchMode && !execModeSaved" class="nx-rl-note" title="偏好保存失败，仅本次会话有效">
+                偏好未同步
+              </span>
               <input
                 ref="attachmentInput"
                 type="file"
@@ -4864,6 +5214,8 @@ const emptySuggestions = computed(() =>
 }
 
 .nx-seg-btn.is-on .nx-seg-no { color: var(--nexus-accent); }
+
+/* T5 Ask/Auto：输入框工具栏内的同一分段控件语汇（26px 高对齐 SfxButton sm）。 */
 
 /* 工具白名单：mono 一行，不用绿色药丸（绿色会被读成"成功态"） */
 .nx-wl-tools {

@@ -897,8 +897,7 @@ async def execute_approved_reproduction(
         }
 
 
-async def execute_autonomous_experiment(
-    *, approval_id: str, user_id: str, session_id: str,
+async def execute_autonomous_experiment(    *, approval_id: str, user_id: str, session_id: str,
     mode: str | None = None, research_execution_mode: str | None = None,
 ) -> dict[str, Any]:
     """T2 自主执行核：一次确认启动，排错不消耗新批准（N1/N3 授权）。
@@ -971,6 +970,11 @@ async def execute_autonomous_experiment(
     proposals_module.mark_proposal_executed(
         str(frozen.get("proposal_id", "")),
         int(frozen.get("version", 0) or 0))
+    # T5：向 Backend 登记 autonomous linkage（恢复查询/备注/取消的依据；
+    # best-effort，失败不阻断已核销的执行）。
+    await _record_autonomous_linkage(
+        run_id=run["run_id"], user_id=user_id, session_id=session_id,
+        approval_id=approval_id, frozen=frozen)
     # T4：新 run 交长运行生命周期（后台图执行；HTTP 即返 running，断开不杀）。
     # 已登记重试（deduped）不重调度。调度失败只记日志（run 仍为 running，
     # 图可在 T5 恢复入口认领；调度器本身永不抛异常到调用方）。
@@ -986,6 +990,61 @@ async def execute_autonomous_experiment(
         "approval_id": approval_id,
         "is_supplementary": True,
     }
+
+
+async def _record_autonomous_linkage(
+    *, run_id: str, user_id: str, session_id: str,
+    approval_id: str, frozen: dict[str, Any],
+) -> bool:
+    """T5：向 Backend 登记 autonomous linkage（恢复查询依据）。
+
+    无 Worker job（job_id 为空）：恢复/取消/备注走 Runtime console/cancel
+    端点，不碰旧 Worker。best-effort：失败只记日志，不阻断已核销的执行。
+    """
+    from nexus.artifact_client import _settings_ready
+    from nexus.request_scope import current_user_id
+
+    ready = _settings_ready()
+    uid = user_id or current_user_id() or ""
+    if ready is None or not uid:
+        return False
+    url, token = ready
+    scope = frozen.get("scope") if isinstance(frozen.get("scope"), dict) else {}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{url}/api/v1/nexus-internal/repro-runs",
+                json={
+                    "run_id": run_id,
+                    "session_id": session_id,
+                    "tool": "autonomous_experiment",
+                    "preset_id": "",
+                    "plan_hash": str(frozen.get("scope_hash", "")),
+                    "approval_id": approval_id,
+                    "job_id": "",
+                    "status": "running",
+                    "repo_url": str((scope or {}).get("repo_url", "")),
+                    "title": "",
+                    "parent_run_id": "",
+                    "proposal_id": str(frozen.get("proposal_id", "")),
+                    "proposal_version": int(frozen.get("version", 0) or 0),
+                    "config_snapshot": {
+                        "kind": "autonomous_experiment",
+                        "scope": scope,
+                        "scope_hash": str(frozen.get("scope_hash", "")),
+                    },
+                    "preset_display_name": "自主实验",
+                    "paper_title": "",
+                },
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Nexus-User-Id": uid,
+                },
+            )
+        return response.status_code == 200
+    except Exception as error:  # noqa: BLE001
+        logger.warning("autonomous run linkage record failed: %s", type(error).__name__)
+        return False
 
 
 def _schedule_bound_run(*, run_id: str, owner: str, session_id: str) -> None:

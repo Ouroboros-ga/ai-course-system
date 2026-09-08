@@ -1076,12 +1076,13 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   assert.match(runtime, /"models": llm_models_manifest\(settings\)/)
   // NX-R1a：Research-only 集合扩展至 5 工具（新增上传论文证据薄链两工具）。
   // NX-LB4/LB5：再扩展至 11 工具（新增 6 个运行操作与提案工具；General 仍不可见）。
-  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",[\s\S]*?"collect_paper_evidence",[\s\S]*?"write_research_report",[\s\S]*?"get_reproduction_run",[\s\S]*?"cancel_reproduction_run",[\s\S]*?"add_reproduction_note",[\s\S]*?"create_reproduction_proposal",[\s\S]*?"update_reproduction_proposal",[\s\S]*?"request_reproduction_approval",\s*\}\s*\)/)
+  // T3：再 +1（prepare_experiment 无 preset 入口，只准备不执行；Ask 保留）。
+  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",[\s\S]*?"collect_paper_evidence",[\s\S]*?"write_research_report",[\s\S]*?"get_reproduction_run",[\s\S]*?"cancel_reproduction_run",[\s\S]*?"add_reproduction_note",[\s\S]*?"create_reproduction_proposal",[\s\S]*?"update_reproduction_proposal",[\s\S]*?"request_reproduction_approval",[\s\S]*?"prepare_experiment",\s*\}\s*\)/)
   const cfgSrc = read('frontend/src/api/nexusAdapter.js')
   assert.match(cfgSrc, /model = null,/)
   assert.match(cfgSrc, /model,/)
   assert.match(cfgSrc, /\[NEXUS_MODES\.GENERAL\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'read_attachment'\]/)
-  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment',\s*'collect_paper_evidence',\s*'write_research_report'\]/)
+  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment',\s*'collect_paper_evidence',\s*'write_research_report',\s*'get_reproduction_run',\s*'cancel_reproduction_run',\s*'add_reproduction_note',\s*'create_reproduction_proposal',\s*'update_reproduction_proposal',\s*'request_reproduction_approval',\s*'prepare_experiment'\]/)
 
   assert.match(main, /nexus_proxy\.router, prefix="\/api\/v1\/nexus"/)
 })
@@ -1155,7 +1156,8 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // NX-LB1/LB2：+presets/proposals×4/approvals-list/runs-rename → 29 个。
   // NX-LB4/LB5：+runs-cancel-grant/runs-notes×2 → 32 个。
   // T2 Ask/Auto：+sessions execution-mode 查询/保存×2 → 34 个。
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 34)
+  // T5：+runs/{id}/cancel 用户直接取消 → 35 个。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 35)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })
@@ -1202,4 +1204,53 @@ test('NexusPage.vue: 流式输出节流（防"突进式"输出）', () => {
   // 滚动必须 rAF 节流且尊重用户位置：handleEvent 里禁止逐 token 强行置底。
   assert.match(page, /requestAnimationFrame/)
   assert.match(page, /nearBottom/)
+})
+
+test('T5 Ask/Auto：输入框选择器＋服务端偏好＋合并批准动作（前端规格 §2.1/§12.1）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  // 客户端：偏好查询/保存＋执行门透传＋run 级取消，全部 allowFlatResponse。
+  assert.match(client, /export function getNexusSessionExecutionMode\(sessionId\)/)
+  assert.match(client, /export function saveNexusSessionExecutionMode\(sessionId, mode\)/)
+  assert.match(client, /export function cancelNexusRun\(runId, sessionId\)/)
+  assert.match(client, /researchExecutionMode/)
+  // 选择器只在 Research 展示（General 隐藏且不发送），与视图切换器同分段语汇。
+  assert.match(page, /v-if="isResearchMode"[\s\S]*?nx-exec-seg/)
+  assert.match(page, /研究与写作/)
+  assert.match(page, /研究与实验/)
+  assert.match(page, /setExecMode\('ask'\)/)
+  assert.match(page, /setExecMode\('auto'\)/)
+  // 偏好恢复与保存失败语义：服务端真相源，失败只本地缓存并如实提示。
+  assert.match(page, /restoreExecMode/)
+  assert.match(page, /偏好保存失败，仅本次会话有效/)
+  // Ask 下合并动作一次完成（切换＋批准＋执行），无二次确认。
+  assert.match(page, /切换 Auto 并批准执行/)
+  assert.match(page, /approveWithAuto/)
+  assert.match(page, /approveRestoredWithAuto/)
+  // 切 Ask 不暗中取消：活跃 run 注明继续运行＋保留用户取消（danger）。
+  assert.match(page, /已启动实验继续运行/)
+  // 聊天 Stop 与取消分离：stop 只 abort SSE，取消走独立 API。
+  assert.match(page, /abortController\.abort\(\)/)
+  assert.match(page, /cancelNexusRun\(runId, activeSessionId/)
+})
+
+test('T5 自主 run 工作台复用：attempt 投影＋reconciling＋Ask 复跑门', () => {
+  const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')
+  const shared = read('frontend/src/app/pages/nexus/reproShared.js')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  // 工作台按 provider 分流：自主 run 渲染 attempts，不套 Worker 六段轨道。
+  assert.match(ws, /isAutonomous/)
+  assert.match(ws, /command_summary/)
+  assert.match(ws, /v-if="!isAutonomous"[\s\S]*?nxw-stagebar/)
+  assert.match(ws, /对账中/)
+  // Ask 下复跑禁用且给原因（title），服务端 403 双保险。
+  assert.match(ws, /:disabled="isAsk"/)
+  assert.match(ws, /Ask 模式不运行实验，切换到 Auto 后可用/)
+  assert.match(ws, /executionMode: \{ type: String, default: 'ask' \}/)
+  // 共享投影单源：日志尾回退 attempts，不各写一份。
+  assert.match(shared, /run\?\.attempts/)
+  // 父组件透传执行模式＋run 级取消＋详情轮询恢复。
+  assert.match(page, /:execution-mode="execMode"/)
+  assert.match(page, /cancelNexusRun\(run/)
+  assert.match(page, /startRunDetailPolling/)
 })

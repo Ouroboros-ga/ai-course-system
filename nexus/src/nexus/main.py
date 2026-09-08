@@ -1440,6 +1440,86 @@ async def repro_execute_approved(
 
 
 # ---------------------------------------------------------------------------
+# T5：自主 run 控制台读模型＋取消（Backend provider 分支的 Runtime 侧）。
+# 前端不直连控制服务；Backend 经本端点拿快照/执行取消（服务令牌＋用户身份）。
+# ---------------------------------------------------------------------------
+
+
+async def _aprobe_console_reachable(run_id: str) -> bool:
+    """控制服务可达性探针（轻量 lifecycle 查询；任何失败即不可达）。"""
+    try:
+        from nexus.experiment_agent import _backend_from_settings
+
+        backend = _backend_from_settings(run_id)
+    except Exception:
+        return False
+    try:
+        await backend.sandbox_status()
+        return True
+    except Exception:
+        return False
+
+
+@app.get(
+    "/api/v1/nexus/repro/runs/{run_id}/console",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_run_console(
+    run_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """T5：自主 run 控制台快照（只读投影，不触发任何执行）。
+
+    本人 run 才可见（跨用户/不存在一律 404，不区分）；控制失联时
+    console_status=reconciling（存储快照仍为 running，不冒称终态）。
+    """
+    from nexus import experiment_runs as runs_module
+    from nexus import experiment_store as store_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    run = runs_module.get_run(sanitize_session_id(run_id))
+    if run is None or (user_id or "") != run["owner"]:
+        raise HTTPException(status_code=404, detail="RUN_NOT_FOUND")
+    snapshot = store_module.console_snapshot(
+        run["run_id"], control_reachable=await _aprobe_console_reachable(run["run_id"]))
+    return {"snapshot": snapshot}
+
+
+@app.post(
+    "/api/v1/nexus/repro/runs/{run_id}/cancel",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_run_cancel(
+    run_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """T5：取消自主 run（用户 Cancel 语义：置旗＋操作取消＋回收确认）。
+
+    回收确认后终态 cancelled；控制不可达/未配置 → 503（不伪装取消）。
+    """
+    from nexus import experiment_agent as agent_module
+    from nexus import experiment_runs as runs_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    run = runs_module.get_run(sanitize_session_id(run_id))
+    if run is None or (user_id or "") != run["owner"]:
+        raise HTTPException(status_code=404, detail="RUN_NOT_FOUND")
+    result = await agent_module.cancel_bound_run(run["run_id"], user_id)
+    if result.get("status") == "error":
+        status_map = {
+            "RUN_NOT_FOUND": 404,
+            "RUN_FORBIDDEN": 403,
+            "CONTROL_UNAVAILABLE": 503,
+            "CANCEL_UNCONFIRMED": 502,
+        }
+        raise HTTPException(
+            status_code=status_map.get(str(result.get("code") or ""), 409),
+            detail=str(result.get("code") or "CANCEL_FAILED"),
+        )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # NX-LB1/LB2：preset 投影＋结构化提案＋审批待办（Runtime 自有域编排）
 
 

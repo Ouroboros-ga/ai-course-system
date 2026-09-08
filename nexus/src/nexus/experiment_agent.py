@@ -333,8 +333,11 @@ async def _execute_under_lock(
                     last_exit = parse_exit_code(content)
                     command = pending_commands.pop(
                         str(getattr(msg, "tool_call_id", "") or ""), "")
+                    # 对账 id 取 Adapter 最近提交（顺序执行保证即本次 op）。
+                    operation_id = str(getattr(active_backend, "last_operation_id", "") or "")
                     runs_module.record_attempt(
                         run_id, actual_command=command or "[execute]",
+                        operation_id=operation_id,
                         exit_code=last_exit, log_ref=content[-2000:])
     except Exception as error:  # noqa: BLE001 - 图异常 fail-closed 落盘
         logger.warning("experiment graph failed for %s: %s", run_id, type(error).__name__)
@@ -359,3 +362,53 @@ async def _list_workspace(backend: Any) -> list[str]:
     names = [line.strip().split()[-1] for line in (result.output or "").splitlines()
              if line.strip()]
     return [n for n in names if n not in (".", "..")]
+
+
+async def cancel_bound_run(
+    run_id: str, user_id: str, *, backend: Any = None,
+) -> dict[str, Any]:
+    """取消 run 绑定的实验（用户 Cancel 语义）。
+
+    置取消旗 → 控制服务取消当前操作 → 回收确认后终态 cancelled。
+    控制服务不可达/未配置 → 返回 error（CONTROL_UNAVAILABLE），绝不伪装
+    cancelled；届时取消旗仍保留，恢复可达后重试。
+    模型排错时终止自己的卡住命令走 operation 级取消，不经过本入口（不触发
+    “取消整个实验”的第二次确认语义）。
+    """
+    from nexus import experiment_runs as runs_module
+
+    run = runs_module.get_run(run_id)
+    if run is None:
+        return {"status": "error", "code": "RUN_NOT_FOUND", "run_id": run_id}
+    if (user_id or "") != run["owner"]:
+        return {"status": "error", "code": "RUN_FORBIDDEN", "run_id": run_id}
+    if run["status"] != "running":
+        return {"status": run["status"], "run_id": run_id,
+                "already_terminal": True}
+    try:
+        runs_module.request_cancel(run_id, user_id)
+    except runs_module.RunError as error:
+        return {"status": "error", "code": error.code, "run_id": run_id}
+    active_backend = backend
+    if active_backend is None:
+        try:
+            active_backend = _backend_from_settings(run_id)
+        except Exception as error:  # noqa: BLE001
+            return {"status": "error",
+                    "code": getattr(error, "code", "CONTROL_UNAVAILABLE"),
+                    "run_id": run_id,
+                    "detail": "控制服务未配置；取消旗已置位，可达后重试。"}
+    try:
+        result = await active_backend.cancel()
+    except Exception as error:  # noqa: BLE001 - 不可达不伪装终态
+        logger.warning("bound run cancel unreachable for %s: %s",
+                       run_id, type(error).__name__)
+        return {"status": "error", "code": "CONTROL_UNAVAILABLE",
+                "run_id": run_id,
+                "detail": "控制服务不可达；取消旗已置位，恢复后重试。"}
+    if str((result or {}).get("status") or "") == "cancelled":
+        runs_module.set_status(run_id, "cancelled", "用户取消，进程已回收确认。")
+        return {"status": "cancelled", "run_id": run_id,
+                "already_terminal": False}
+    return {"status": "error", "code": "CANCEL_UNCONFIRMED", "run_id": run_id,
+            "detail": f"取消未确认（{result})；取消旗已置位。"}

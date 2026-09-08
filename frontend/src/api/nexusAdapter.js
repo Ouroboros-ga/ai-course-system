@@ -40,7 +40,9 @@ export const NEXUS_MODE_CONFIG = {
     // NX-A1：+ read_attachment（附件共用入口）。
     // NX-R1a：+ collect_paper_evidence / write_research_report（上传论文
     // 全文证据薄链，Research-only）。
-    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'search_arxiv_papers', 'plan_reproduction', 'run_reproduction', 'read_attachment', 'collect_paper_evidence', 'write_research_report'],
+    // NX-LB4/LB5：+ 运行操作与提案工具（Research-only）。
+    // T3：+ prepare_experiment（无 preset 入口，只准备不执行；Ask 保留）。
+    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'search_arxiv_papers', 'plan_reproduction', 'run_reproduction', 'read_attachment', 'collect_paper_evidence', 'write_research_report', 'get_reproduction_run', 'cancel_reproduction_run', 'add_reproduction_note', 'create_reproduction_proposal', 'update_reproduction_proposal', 'request_reproduction_approval', 'prepare_experiment'],
   },
 }
 
@@ -408,13 +410,15 @@ export async function streamDemoMessage({ message, onEvent, signal }) {
 /**
  * 统一发送入口。
  *
- * real 模式透传 { message, session_id, mode, context: { course_id }, model,
- * attachment_ids } 到运行时；demo 模式本地回放（附件/模型选择不生效）。
+ * real 模式透传 { message, session_id, mode, research_execution_mode,
+ * context: { course_id }, model, attachment_ids } 到运行时；
+ * demo 模式本地回放（附件/模型/执行模式选择不生效）。
  */
 export async function dispatchNexusMessage({
   message,
   sessionId,
   mode,
+  researchExecutionMode = null,
   courseId = null,
   model = null,
   attachmentIds = [],
@@ -429,6 +433,7 @@ export async function dispatchNexusMessage({
       courseId,
       model,
       attachmentIds,
+      researchExecutionMode,
       onEvent,
       signal,
     })

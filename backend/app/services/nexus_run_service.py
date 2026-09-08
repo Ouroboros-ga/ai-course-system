@@ -91,7 +91,7 @@ _LB1_COLUMNS: tuple[tuple[str, str], ...] = (
     ("paper_title", "TEXT NOT NULL DEFAULT ''"),
 )
 
-TERMINAL_RUN_STATUSES = ("succeeded", "failed", "rejected")
+TERMINAL_RUN_STATUSES = ("succeeded", "failed", "rejected", "cancelled")
 
 _table_ready = False
 

@@ -48,7 +48,9 @@ const props = defineProps({
   /** NX-LB1：preset 投影（参数白名单/预算/指标基线的唯一来源），无则 null */
   preset: { type: Object, default: null },
   /** 备注提交中（父调 API） */
-  noting: { type: Boolean, default: false }
+  noting: { type: Boolean, default: false },
+  /** T5 Ask/Auto：Ask 下禁用新启动/复跑（服务端同样拒绝，双保险） */
+  executionMode: { type: String, default: 'ask' },
 })
 
 const emit = defineEmits(['switch', 'cancel', 'ask', 'analyze', 'rerun', 'rename', 'add-note'])
@@ -182,30 +184,56 @@ const logText = computed(() => {
     return run.value.liveLog
   }
   const withLog = (run.value.stages || []).filter((s) => s.log_tail)
-  return withLog.length ? withLog[withLog.length - 1].log_tail : ''
+  if (withLog.length) return withLog[withLog.length - 1].log_tail
+  // T5：自主 run 日志尾在 attempts 上。
+  const tailed = (run.value.attempts || []).filter((a) => a.log_tail)
+  return tailed.length ? tailed[tailed.length - 1].log_tail : ''
 })
+
+/** T5：自主 run（无 Worker job）：attempt 即步骤，阶段条不适用。 */
+const isAutonomous = computed(() => {
+  const r = run.value
+  if (!r) return false
+  return r.provider === 'autonomous' || (!r.job_id && !!(r.run_id || r.runId))
+})
+
+const isAsk = computed(() => props.executionMode !== 'auto')
 
 /** 配置区只展示 run 记录里真实存在的字段，缺字段显示「未建立」而不是猜值 */
 const configRows = computed(() => {
   const r = run.value
   if (!r) return []
+  const auto = isAutonomous.value
   return [
-    { k: 'preset', v: r.preset_id || '未建立' },
-    { k: 'job_id', v: r.job_id || '未建立' },
+    { k: 'preset', v: auto ? '自主实验' : (r.preset_id || '未建立') },
+    { k: 'job_id', v: r.job_id || (auto ? '—（直连沙箱）' : '未建立') },
     { k: 'seed', v: r.seedUsed ? '已固定' : '未固定' },
-    { k: '步骤', v: `${(r.stages || []).length || '—'}` },
-    { k: '当前步', v: ['running', 'cancelling'].includes(r.status) ? String(r.currentStep ?? '—') : '—' }
+    { k: '步骤', v: auto ? `${(r.attempts || []).length || '—'}` : `${(r.stages || []).length || '—'}` },
+    { k: '当前步', v: ['running', 'cancelling'].includes(r.status) ? String(r.currentStep ?? (auto ? (r.attempt_no ?? '—') : '—')) : '—' }
   ]
 })
 
-const steps = computed(() => (run.value?.stages || []).map((s) => ({
-  index: s.index,
-  command: s.command || '',
-  exit_code: s.exit_code,
-  duration_s: s.duration_s,
-  timed_out: s.timed_out,
-  log_tail: s.log_tail || ''
-})))
+const steps = computed(() => {
+  // T5：自主 run 用 attempts 渲染同一形状（编号/命令摘要/退出码/日志尾）。
+  if (isAutonomous.value) {
+    return (run.value?.attempts || []).map((a) => ({
+      index: a.attempt_no,
+      command: a.command_summary || '',
+      exit_code: a.exit_code,
+      duration_s: a.duration_s,
+      timed_out: null,
+      log_tail: a.log_tail || ''
+    }))
+  }
+  return (run.value?.stages || []).map((s) => ({
+    index: s.index,
+    command: s.command || '',
+    exit_code: s.exit_code,
+    duration_s: s.duration_s,
+    timed_out: s.timed_out,
+    log_tail: s.log_tail || ''
+  }))
+})
 
 function stepState(step) {
   return reproStepState(run.value, step)
@@ -294,15 +322,27 @@ const reportErr = computed(() => run.value?.reportError || '')
           <template #icon><FlaskConical :size="13" /></template>
           分析本次结果
         </SfxButton>
-        <SfxButton variant="secondary" size="sm" @click="emit('rerun', active.id)">
+        <!-- T5 Ask：禁止新启动/复跑（服务端同样 403，双保险；General 无此面板）。 -->
+        <SfxButton
+          variant="secondary"
+          size="sm"
+          :disabled="isAsk"
+          :title="isAsk ? 'Ask 模式不运行实验，切换到 Auto 后可用' : '复制冻结配置建新提案，重新审批后运行'"
+          @click="emit('rerun', active.id)"
+        >
           <template #icon><RotateCw :size="13" /></template>
           调整方案再运行
         </SfxButton>
       </template>
+      <!-- T5：执行器失联但运行未终止（reconciling），如实标注，不冒称失败。 -->
+      <span v-if="run?.reconciling" class="nxw-note" title="执行器不可达，显示登记快照；运行未终止，恢复后继续">
+        对账中
+      </span>
     </header>
 
-    <!-- 阶段条：六段固定轨道，状态来自 Worker 真实 stage_events -->
-    <div class="nxw-stagebar" role="list" aria-label="执行阶段">
+    <!-- 阶段条：六段固定轨道，状态来自 Worker 真实 stage_events。
+         T5：自主 run 无 Worker 轨道时隐藏（attempt 列表才是真相源）。 -->
+    <div v-if="!isAutonomous" class="nxw-stagebar" role="list" aria-label="执行阶段">
       <template v-for="(st, i) in rail" :key="st.stage">
         <div v-if="i" class="nxw-stgline" :class="{ 'is-done': st.state === 'done' }" />
         <div class="nxw-stg" :class="`is-${st.state}`" role="listitem" :title="st.note || st.label">
@@ -361,7 +401,7 @@ const reportErr = computed(() => run.value?.reportError || '')
             <div v-if="isCurrent(s) && s.log_tail" class="nxw-tail">{{ s.log_tail }}</div>
           </li>
         </ol>
-        <p v-if="!steps.length" class="nxw-empty">尚无步骤记录（作业未开始或 Worker 未返回）。</p>
+        <p v-if="!steps.length" class="nxw-empty">{{ isAutonomous ? '尚无尝试记录（执行器尚未回传）。' : '尚无步骤记录（作业未开始或 Worker 未返回）。' }}</p>
       </aside>
 
       <section class="nxw-out">

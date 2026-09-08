@@ -289,7 +289,6 @@ T2 自主提案落盘）、`nexus/tests/test_experiment_intake.py`（13 项）�
 - 跨进程单执行者（进程内锁＋状态机已备；多副本部署时需认领 CAS，T5）。
 
 ## 线上验证（2026-09-08，部署 432c195d，一次性验证账号 `nx_verify_t2_790e4ff5`）
-
 - 发布＋前端构建通过＋Runtime rsync（diff 干净）＋双服务重启；健康全 ok，
   工具面实证 `prepare_experiment` 进 Research Ask/Auto、General 无；
   重启后 error/warning 日志零条目（新列 ALTER＋ensure 干净）。
@@ -299,3 +298,42 @@ T2 自主提案落盘）、`nexus/tests/test_experiment_intake.py`（13 项）�
 - T3/T4 线上行为：prepare 走聊天工具面（已在 health 工具面实证）；
   真实 GitHub 走读与真容器循环待 T7（需 License 已核验仓库＋控制服务常驻，
   另行授权）。
+
+## T5（2026-09-08）：持久运行、Console 与取消复用（未提交）
+
+新增 `nexus/src/nexus/experiment_store.py`（控制台读模型＋恢复接管）、
+`nexus/tests/test_experiment_recovery.py`（5 项）、
+`backend/tests/test_nexus_runs_provider.py`（10 项）；修改 Runtime
+`main.py`（console/cancel 端点）、`experiment_runs.py`（attempt operation_id
+入参）、`experiment_agent.py`（执行器记真实 op id＋cancel_bound_run）、
+`tools/reproduction.py`（核销后登记 autonomous linkage）；Backend
+`nexus_proxy.py`（provider 分支/合并/取消/上下文投影）、`nexus_internal.py`
+（授权取消分派＋job_id 放宽）、`nexus_run_service.py`（cancelled 终态）；
+前端 `nexus.js`/`nexusAdapter.js`/`NexusPage.vue`/
+`NexusExperimentWorkspace.vue`/`reproShared.js`（选择器＋合并批准＋工作台
+复用）；契约测试＋2（T5 选择器/工作台），D10 门数 34→35。
+
+- 恢复：重启后只接管查询（adopt_running_operation，零 submit）；attempt
+  只在完成后追加（真实 op id），恢复按 id 续查；控制失联 console 显示
+  reconciling，存储仍为 running；取消旗＋回收确认后 cancelled（不可达
+  503，不伪装）。
+- Backend：autonomous linkage（job 为空）进同一 run 表；列表/详情按
+  provider 分派合并 Runtime console（attempt 投影）；用户取消直达 Runtime；
+  Agent 取消仍走一次性授权；备注/重命名/隔离回归。
+- 前端：Research 输入框 Ask/Auto 分段（General 隐藏；服务端偏好真相源，
+  保存失败本地缓存如实提示）；Ask 下“切换 Auto 并批准执行”一次完成；
+  活跃 run 注明继续运行＋保留取消；工作台渲染 attempts（阶段条仅 Worker）；
+  Stop 与取消分离保持；Ask 复跑禁用＋原因。
+- 回归：nexus **202 passed**；Backend nexus 域 92＋11 skipped（3 项 internal
+  无 token 断言为基线同组合既有用例间污染，已在 T2 轮 stash 对照）；
+  前端契约 90/91（唯一失败为 CourseLayout 他线旧断言）；`vite build` 通过；
+  eslint 12 条均为存量（对照未动区域一致，无新增）；`uv.lock` 零改动。
+
+未验证项：
+- 线上真实 PG 的 ALTER（runs 新列经 lifespan ensure；待部署后看日志＋冒烟）。
+- 真实控制服务下的恢复/取消全链（需常驻部署，另行授权）。
+- 真实模型＋真实用户的 Ask/Auto 交互验收（属 T7）。
+
+注意：本轮 `NexusPage.vue` 与另一在制品会话改动落入同一文件不同区域
+（对方在 capabilities/suggestions 区，本批在 Ask/Auto 与 run 接线区），
+提交时需按 hunk 拆分，勿整文件照单收。
