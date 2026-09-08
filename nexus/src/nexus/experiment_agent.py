@@ -40,6 +40,13 @@ REPO2DOCKER_MARKERS = frozenset({
 
 _EXIT_CODE_RE = re.compile(r"exit code (\d+)")
 
+# 原生文件工具（经 BaseSandbox funnel 到 execute，进控制服务即 operation）。
+# T5-1 修正：attempt 按工具调用记录（与 control operation 1:1），不只记
+# execute——否则 Console 的尝试列表是真子集（线上实证：7 个 op 只记 3）。
+_FILE_TOOL_NAMES = frozenset({
+    "write_file", "read_file", "edit_file", "ls", "glob", "grep", "delete",
+})
+
 
 def _register_experiment_profile() -> None:
     """注册实验图独立 provider profile（幂等 merge 语义）。
@@ -182,6 +189,48 @@ def parse_exit_code(tool_content: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def file_tool_summary(name: str, args: dict[str, Any]) -> str:
+    """原生文件工具调用摘要（attempt 命令列，只读呈现）。"""
+    args = args if isinstance(args, dict) else {}
+    for key in ("file_path", "path", "pattern", "command"):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return f"{name} {value.strip()[:120]}"
+    return name
+
+
+def file_tool_exit(msg: Any) -> int | None:
+    """原生文件工具结果→退出码：ToolMessage status 成功 0、失败 1、未知 None。"""
+    status = str(getattr(msg, "status", "") or "").lower()
+    if status == "success":
+        return 0
+    if status == "error":
+        return 1
+    return None
+
+
+def set_terminal_status(run_id: str, status: str, detail: str = "") -> dict[str, Any] | None:
+    """终态落盘（ cancelled/succeeded/failed 互斥，不覆盖已有终态）。
+
+    T5-1 修正：用户取消后图内后续异常/收尾不得把 cancelled 改写成 failed——
+    已终态的行直接返回现态。调用方（执行者/取消者）据此返回一致结论。
+    注意取消旗与 status 分离存储：取消者置旗时行仍为 running，图的后到
+    failed 同样不得覆盖（线上实证的竞态）。
+    """
+    from nexus import experiment_runs as runs_module
+
+    run = runs_module.get_run(run_id)
+    if run is None:
+        return None
+    if run["status"] in ("cancelled", "succeeded", "failed"):
+        return run
+    if status != "cancelled" and bool(run.get("cancel_requested")):
+        # 取消旗已置位而行仍为 running：收敛到 cancelled（完成用户意图），
+        # 不悬空 running，更不写成 failed。
+        return runs_module.set_status(run_id, "cancelled", detail or "用户已取消。")
+    return runs_module.set_status(run_id, status, detail)
+
+
 # 单 run 单执行者（进程内锁；跨进程/重启的执行者唯一性由 run 状态机保证：
 # 只有 status=running 的 run 可被认领，认领即 CAS 式 single-flight，见下）。
 _RUN_LOCKS: dict[str, asyncio.Lock] = {}
@@ -306,7 +355,10 @@ async def _execute_under_lock(
     executed = 0
     # 命令归因：AIMessage.tool_calls（call_id→command）＋ ToolMessage
     # （tool_call_id→结果）配对；attempt 只记已完成的 operation。
+    # T5-1：原生文件工具同样记录（它们经 funnel 产生 control operation）；
+    # 每次落盘前检查取消旗——取消后立即收尾，不再提交新操作。
     pending_commands: dict[str, str] = {}
+    file_summaries: dict[str, str] = {}
     try:
         async for _stream_mode, payload in agent.astream(
                 {"messages": [{"role": "user", "content": (
@@ -314,6 +366,10 @@ async def _execute_under_lock(
                     "先看 README 与环境声明，然后安装、试跑，失败就地修复继续。")}]} ,
                 {"configurable": {"thread_id": thread_id}},
                 stream_mode=["updates"]):
+            if runs_module.is_cancel_requested(run_id):
+                set_terminal_status(run_id, "cancelled", "执行期间用户取消。")
+                return {"status": "cancelled", "run_id": run_id,
+                        "attempt_no": executed}
             for _node, delta in (payload or {}).items():
                 messages = delta.get("messages") if isinstance(delta, dict) else None
                 if not messages:
@@ -321,38 +377,48 @@ async def _execute_under_lock(
                 for msg in messages:
                     if isinstance(msg, AIMessage):
                         for call in msg.tool_calls or []:
-                            if call.get("name") == "execute":
+                            call_name = call.get("name") or ""
+                            if call_name == "execute":
                                 pending_commands[str(call.get("id") or "")] = str(
                                     (call.get("args") or {}).get("command", ""))
+                            elif call_name in _FILE_TOOL_NAMES:
+                                file_summaries[str(call.get("id") or "")] = \
+                                    file_tool_summary(call_name, call.get("args"))
                         continue
                     name = getattr(msg, "name", "") or ""
-                    if name != "execute":
+                    if name != "execute" and name not in _FILE_TOOL_NAMES:
                         continue
                     content = msg.content if isinstance(msg.content, str) else str(msg.content)
                     executed += 1
-                    last_exit = parse_exit_code(content)
-                    command = pending_commands.pop(
-                        str(getattr(msg, "tool_call_id", "") or ""), "")
+                    if name == "execute":
+                        last_exit = parse_exit_code(content)
+                        command = pending_commands.pop(
+                            str(getattr(msg, "tool_call_id", "") or ""), "")
+                    else:
+                        last_exit = file_tool_exit(msg)
+                        command = file_summaries.pop(
+                            str(getattr(msg, "tool_call_id", "") or ""), name)
                     # 对账 id 取 Adapter 最近提交（顺序执行保证即本次 op）。
                     operation_id = str(getattr(active_backend, "last_operation_id", "") or "")
                     runs_module.record_attempt(
-                        run_id, actual_command=command or "[execute]",
+                        run_id, actual_command=command or f"[{name}]",
                         operation_id=operation_id,
                         exit_code=last_exit, log_ref=content[-2000:])
     except Exception as error:  # noqa: BLE001 - 图异常 fail-closed 落盘
         logger.warning("experiment graph failed for %s: %s", run_id, type(error).__name__)
-        runs_module.set_status(run_id, "failed", f"实验图异常：{type(error).__name__}")
-        return {"status": "failed", "run_id": run_id, "code": "GRAPH_FAILED"}
+        ended = set_terminal_status(run_id, "failed", f"实验图异常：{type(error).__name__}")
+        return {"status": (ended or {}).get("status", "failed"), "run_id": run_id,
+                "code": "GRAPH_FAILED"}
     if runs_module.is_cancel_requested(run_id):
-        runs_module.set_status(run_id, "cancelled", "执行期间用户取消。")
+        set_terminal_status(run_id, "cancelled", "执行期间用户取消。")
         return {"status": "cancelled", "run_id": run_id, "attempt_no": executed}
     if executed == 0:
-        runs_module.set_status(run_id, "failed", "模型未执行任何命令（零尝试）。")
+        set_terminal_status(run_id, "failed", "模型未执行任何命令（零尝试）。")
         return {"status": "failed", "run_id": run_id, "code": "NO_COMMANDS"}
     if last_exit == 0:
-        runs_module.set_status(run_id, "succeeded", "末次命令退出码 0（指标 verdict 属 T6）。")
+        set_terminal_status(run_id, "succeeded", "末次命令退出码 0（指标 verdict 属 T6）。")
         return {"status": "succeeded", "run_id": run_id, "attempt_no": executed}
-    runs_module.set_status(run_id, "failed", f"末次命令退出码 {last_exit}（日志与配方已保留）。")
+    set_terminal_status(run_id, "failed", f"末次命令退出码 {last_exit}（日志与配方已保留）。")
     return {"status": "failed", "run_id": run_id, "code": "LAST_COMMAND_FAILED"}
 
 

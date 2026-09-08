@@ -337,3 +337,24 @@ T2 自主提案落盘）、`nexus/tests/test_experiment_intake.py`（13 项）�
 注意：本轮 `NexusPage.vue` 与另一在制品会话改动落入同一文件不同区域
 （对方在 capabilities/suggestions 区，本批在 Ask/Auto 与 run 接线区），
 提交时需按 hunk 拆分，勿整文件照单收。
+
+## T5-1（2026-09-08）：真火打通后的两处修正（未提交）
+
+真火点火（合成账号 `nx_verify_fire_331785ed`，setup 小目标）一次跑通：
+批准→后台图在 8 秒内驱动 7 个真实 operation（路由 ls、原生 ls/read/
+glob、目标 `echo hello-autonomous` 输出正确、复核 ls），全 exit 0，
+Runtime 日志零错误。常驻链路（审批→调度→Adapter→控制→容器→回写）打通。
+
+线上实证发现的两处问题（均已修，均有回归测试）：
+
+1. **取消后被改写（bug，已修）**：用户取消与图内错误竞态时，图的异常
+   收尾把 `cancelled` 改写成 `failed`（第二轮冒烟 `nx_verify_t5_f2d02ccf`
+   实证）。修：新增 `set_terminal_status`（终态互斥＋取消旗收敛），异常
+   路径与所有终态落盘经它走；循环内每次落盘前查旗，置位即收尾 cancelled。
+2. **attempt 记录不全（gap，已修）**：只记了 `execute`，漏掉经 funnel 产生
+   control operation 的原生文件工具（实证：7 个 op 只记 3 个 attempt）。
+   修：`write_file/read_file/edit_file/ls/glob/grep/delete` 的工具调用同样
+   记录（成功 0/失败 1，命令摘要），与 control operation 1:1 对账。
+
+回归：nexus 全套件 **206 passed**（新增 4 项：终态守卫、文件工具映射、
+生产记录全覆盖、启动前取消零提交）；`uv.lock` 零改动。

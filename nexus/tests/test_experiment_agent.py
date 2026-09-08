@@ -351,3 +351,123 @@ async def test_ask_hostile_execute_rejected(monkeypatch):
               if isinstance(m, ToolMessage) and m.status == "error"]
     assert {m.name for m in errors} >= {"execute"}
     assert "rm -rf" not in str(result.get("files", ""))
+
+
+def test_terminal_status_never_overwrites_cancelled():
+    """T5-1：取消优先——已终态 run 的终态落盘是空操作，不互相覆盖。"""
+    from nexus import experiment_agent as agent_module
+
+    run = runs_module.create_or_get_run(
+        run_id="t5-guard-1", owner="u1", session_id="s1",
+        proposal_id="pp1", proposal_version=1,
+        scope_hash="h" * 32, approval_id="apv1")
+    assert run["status"] == "running"
+    # running → failed 正常落盘。
+    agent_module.set_terminal_status("t5-guard-1", "failed", "boom")
+    assert runs_module.get_run("t5-guard-1")["status"] == "failed"
+    # failed 后再落 cancelled/succeeded 都不得覆盖。
+    agent_module.set_terminal_status("t5-guard-1", "cancelled", "late cancel")
+    agent_module.set_terminal_status("t5-guard-1", "succeeded", "late success")
+    assert runs_module.get_run("t5-guard-1")["status"] == "failed"
+    # 取消路径：cancelled 后图的 failed 收尾不得覆盖（线上实证 bug）。
+    run2 = runs_module.create_or_get_run(
+        run_id="t5-guard-2", owner="u1", session_id="s1",
+        proposal_id="pp1", proposal_version=1,
+        scope_hash="h" * 32, approval_id="apv2")
+    assert run2["status"] == "running"
+    runs_module.request_cancel("t5-guard-2", "u1")
+    agent_module.set_terminal_status("t5-guard-2", "failed", "实验图异常：Rerun")
+    assert runs_module.get_run("t5-guard-2")["status"] == "cancelled"
+
+
+def test_file_tool_summary_and_exit():
+    """原生文件工具摘要/退出码映射（attempt 记录用）。"""
+    from nexus import experiment_agent as agent_module
+    from langchain_core.messages import ToolMessage
+
+    assert agent_module.file_tool_summary(
+        "write_file", {"file_path": "/workspace/a.txt"}) == "write_file /workspace/a.txt"
+    assert agent_module.file_tool_summary("grep", {"pattern": "x"}) == "grep x"
+    assert agent_module.file_tool_summary("execute", {}) == "execute"
+    assert agent_module.file_tool_exit(
+        ToolMessage(name="write_file", content="ok", tool_call_id="c",
+                    status="success")) == 0
+    assert agent_module.file_tool_exit(
+        ToolMessage(name="read_file", content="nope", tool_call_id="c",
+                    status="error")) == 1
+
+
+async def test_bound_run_records_file_tool_attempts():
+    """T5-1：生产记录覆盖原生文件工具（与 control operation 1:1 对账）。
+
+    脚本化模型走真实 execute_bound_run＋真 Adapter＋假容器：write_file 与
+    execute 调用全部落为 attempt，且每个 attempt 都有真实 operation_id。
+    """
+    import httpx
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from nexus import experiment_agent as agent_module
+    from nexus.experiment_sandbox import HttpSandboxBackend
+
+    container = _ScriptedContainer()
+    proposal = proposals_module.create_proposal(
+        user_id="u-t4", session_id="s-t4", preset=None,
+        kind="autonomous_experiment", scope={
+            "objective": "配置并试跑", "repo_url": "https://github.com/example/r",
+            "repo_revision": "abc", "source_refs": [], "data_refs": [],
+            "network_profile": "pypi-allowed",
+            "resources": {"cpu": 1.0, "memory_mb": 2048, "disk_mb": 5120,
+                          "wall_time_s": 1800},
+            "mode": "smoke", "allow_environment_repair": True})
+    req = proposals_module.request_approval_for_proposal(
+        proposal["proposal_id"], user_id="u-t4", expected_version=1)
+    aid = req["approval"]["approval_id"]
+    approvals.decide_approval(aid, "u-t4", "approved")
+    approvals.consume_approval(aid, user_id="u-t4", session_id="s-t4", preset={})
+    run = runs_module.create_or_get_run(
+        run_id=aid, owner="u-t4", session_id="s-t4",
+        proposal_id=proposal["proposal_id"], proposal_version=1,
+        scope_hash=proposal["scope_hash"], approval_id=aid)
+    backend = HttpSandboxBackend(
+        run_id=run["run_id"], base_url="http://control.test", token="t",
+        transport=httpx.MockTransport(container.responder))
+    result = await agent_module.execute_bound_run(
+        run_id=run["run_id"], owner="u-t4", session_id="s-t4",
+        backend=backend, model=_scripted_model(), checkpointer=InMemorySaver())
+    assert result["status"] == "succeeded"
+    stored = runs_module.get_run(run["run_id"])
+    commands = [a["actual_command"] for a in stored["attempts"]]
+    # 路由 ls＋脚本 6 次工具调用（write_file＋5 execute）全部记录。
+    assert stored["attempt_no"] >= 7
+    assert any(c.startswith("write_file /workspace/probe.txt") for c in commands)
+    assert sum("pip install fakepkg" in c for c in commands) == 1
+    assert sum("python train.py" in c for c in commands) == 2
+    # 每个 attempt 都有真实 operation_id（可与控制服务对账）。
+    op_ids = [a["operation_id"] for a in stored["attempts"]]
+    assert all(op_id.startswith(run["run_id"] + "-op-") for op_id in op_ids)
+    posted = [p["operation_id"] for p in container.operation_posts]
+    assert set(op_ids) <= set(posted)
+
+
+async def test_bound_run_cancel_before_start_stays_cancelled():
+    """取消旗在启动前已置位：直接 cancelled，不提交任何 operation。"""
+    import httpx
+
+    from nexus import experiment_agent as agent_module
+    from nexus.experiment_sandbox import HttpSandboxBackend
+
+    container = _ScriptedContainer()
+    run = runs_module.create_or_get_run(
+        run_id="t5-early-cancel", owner="u1", session_id="s1",
+        proposal_id="pp1", proposal_version=1,
+        scope_hash="h" * 32, approval_id="apv-ec")
+    runs_module.request_cancel("t5-early-cancel", "u1")
+    backend = HttpSandboxBackend(
+        run_id=run["run_id"], base_url="http://control.test", token="t",
+        transport=httpx.MockTransport(container.responder))
+    result = await agent_module.execute_bound_run(
+        run_id=run["run_id"], owner="u1", session_id="s1",
+        backend=backend, model=_scripted_model())
+    assert result["status"] == "cancelled"
+    assert container.operation_posts == []
+    assert runs_module.get_run(run["run_id"])["status"] == "cancelled"
