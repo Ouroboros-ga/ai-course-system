@@ -533,7 +533,15 @@ def build_v2(knowledge_dir: Path, baseline: Path) -> tuple[list[dict], list[dict
     t12 = t12_courseware(BASE / "data" / "rag_corpus_course15.json")
     reg(t12, "T12_课件语料")
 
-    train = t1 + t2 + t3 + t4 + t5 + t6 + t7 + t7b + t9 + t10 + t11 + t12
+    # T13 学科语料接地问答（LLM 生成 + 接地/主题规则过滤，来源含 OSTEP/维基/RFC）
+    t13_path = BASE / "data" / "corpus_qa.jsonl"
+    if t13_path.exists():
+        t13 = [json.loads(l) for l in t13_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    else:
+        t13 = []
+    reg(t13, "T13_语料接地问答")
+
+    train = t1 + t2 + t3 + t4 + t5 + t6 + t7 + t7b + t9 + t10 + t11 + t12 + t13
 
     # 评测集：eval 节点的讲解/关系/引用 + 基准 10 问（不进训练），目标 50 条
     ev: list[dict] = []
