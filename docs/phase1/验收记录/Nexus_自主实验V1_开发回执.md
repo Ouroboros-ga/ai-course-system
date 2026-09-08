@@ -287,3 +287,15 @@ T2 自主提案落盘）、`nexus/tests/test_experiment_intake.py`（13 项）�
 - 真实容器＋真实模型的修复循环（假容器只仿 shell；T7-A/B 用合成仓库＋
   真容器＋脚本化模型先验协议，再用真实模型验收）。
 - 跨进程单执行者（进程内锁＋状态机已备；多副本部署时需认领 CAS，T5）。
+
+## 线上验证（2026-09-08，部署 432c195d，一次性验证账号 `nx_verify_t2_790e4ff5`）
+
+- 发布＋前端构建通过＋Runtime rsync（diff 干净）＋双服务重启；健康全 ok，
+  工具面实证 `prepare_experiment` 进 Research Ask/Auto、General 无；
+  重启后 error/warning 日志零条目（新列 ALTER＋ensure 干净）。
+- T2 回归冒烟 18/18（e2e-t2.py）：自主全链、Ask/Auto 门、scope 漂移失效、
+  偏好往返、preset 零提交回归全过（T4 调度器上线后行为不变：即返 running，
+  后台无控制服务时 run 落 failed，不静默）。
+- T3/T4 线上行为：prepare 走聊天工具面（已在 health 工具面实证）；
+  真实 GitHub 走读与真容器循环待 T7（需 License 已核验仓库＋控制服务常驻，
+  另行授权）。
