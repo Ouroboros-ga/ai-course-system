@@ -69,8 +69,8 @@ async def replay_steps(
     """在给定 backend（已绑定干净沙箱 id）中按序重放并比对退出码。
 
     backend：HttpSandboxBackend（aexecute 真异步）；step_timeout_s 单步
-    上限（超时→CLEAN_STEP_TIMEOUT，不记 verdict）。返回
-    {"verdict", "matched", "total", "results": [...]}。
+    上限（超时先回收沙箱再抛 CLEAN_STEP_TIMEOUT，不记 verdict）。
+    返回 {"verdict", "matched", "total", "results": [...]}。
     """
     steps = replayable_steps(run)
     if not steps:
@@ -88,6 +88,11 @@ async def replay_steps(
                              f"重放中断（{error.code}）：{error}") from error
         observed = response.exit_code
         if observed is None:
+            # 超时≠通过：先回收可能卡住的沙箱（下次重放拿新容器），再如实抛错。
+            try:
+                await backend.cancel()
+            except Exception:  # noqa: BLE001 - 回收 best-effort
+                pass
             raise CleanError(
                 "CLEAN_STEP_TIMEOUT",
                 f"步骤#{step['attempt_no']} 超时未出退出码（`{step['command'][:80]}`）；"
@@ -157,7 +162,7 @@ async def _lock_for(run_id: str) -> asyncio.Lock:
 
 
 async def start_clean_verification(
-    *, run_id: str, user_id: str, step_timeout_s: int = 300,
+    *, run_id: str, user_id: str, step_timeout_s: int = 900,
 ) -> dict[str, Any]:
     """干净B入口（异步）：校验门→置 verifying→调度后台→即返。
 
@@ -239,7 +244,7 @@ async def start_clean_verification(
 
 async def _complete_clean_verification(
     *, run_id: str, user_id: str, backend: Any = None,
-    step_timeout_s: int = 300,
+    step_timeout_s: int = 900,
 ) -> dict[str, Any]:
     """后台完成：重放→落盘→日志产物→回收（锁内串行；失败复位为空，可重试）。"""
     from nexus import experiment_runs as runs_module
@@ -271,7 +276,7 @@ async def _complete_clean_verification(
 
 async def _guarded_verify(
     *, run_id: str, user_id: str, backend: Any = None,
-    step_timeout_s: int = 300, _skip_verifying_check: bool = False,
+    step_timeout_s: int = 900, _skip_verifying_check: bool = False,
 ) -> dict[str, Any]:
     """干净B编排：归属→终态→冻结提案→幂等→重放→落盘→回收。
 
