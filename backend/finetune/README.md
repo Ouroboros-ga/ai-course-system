@@ -59,6 +59,37 @@ python backend/finetune/evaluate.py \
 - `contains`：输出须包含全部 `markers`（自动判定）；
 - `judge0_manual`：需 Judge0 沙箱执行验证（人工/服务端，不自动判定）。
 
+## 比赛提交物转化（模型文件 / ServiceID）
+
+运行 `python backend/finetune/export_platform_payload.py` 一键导出 `export/`：
+
+| 文件 | 格式 | 用途 |
+|---|---|---|
+| `spark_train_messages.jsonl` | messages 对话 | 星火 MaaS 训练集（197 条 ≥ lite 门槛 100） |
+| `spark_train_alpaca.jsonl` | instruction/output | 多平台通用（Alpaca 兼容） |
+| `spark_inference_input_target.jsonl` | input/target | 星火推理/评测集（31 条，10-200 达标，单条 ≤4000 字符） |
+| `benchmark_only_input_target.jsonl` | input/target | 仅基准 10 问（防污染审计：证明不进训练集） |
+| `manifest.json` | — | sha256 / 条数 / 约束校验 / 两路径操作步骤 |
+
+**路径 B：星火 MaaS → ServiceID（推荐主路径，贴合发榜单位生态）**
+
+1. 训练.xfyun.cn 创建数据集，上传 `spark_train_messages.jsonl`；
+2. 选基座（spark lite / 开源 Qwen2.5），提交微调（约 10 分钟-数小时，平台有 Loss 曲线）；
+3. 训练成功 →「发布为服务」绑定讯飞应用 → **得到 ServiceID**（OpenAI 兼容）→ 填材料 05；
+4. `evaluate.py --model <ServiceID>` 跑基座 vs 微调对比。
+
+注意：MaaS 托管不提供权重下载，"模型文件"由路径 A 补齐。
+
+**路径 A：云 GPU → 模型文件（租 4090 约 1-2 元/小时）**
+
+1. 上传 `train_lora.py` + `data/instruction_train.jsonl`，跑 PEFT LoRA（Qwen2.5-7B-Instruct）；
+2. 产物 `adapter_model.safetensors + adapter_config.json` 即**可提交的模型文件**（几十 MB，
+   附基座声明与 model card；不必提交 15GB 合并全量模型）；
+3. 可选：上传 ModelScope 建仓得模型仓 ID，或 vLLM `--enable-lora` 部署为 OpenAI 端点（等效 ServiceID）。
+
+**建议组合**：B 出 ServiceID + A 出 adapter 文件，同一份数据、同一个 `evaluate.py` 评测，
+两条证据互相印证。
+
 ## 数据来源与合规
 
 - 指令数据由公开教材内容摘要（`knowledge_data/`）与自建标准答案构成，
