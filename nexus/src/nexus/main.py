@@ -84,6 +84,10 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
             from nexus.experiment_runs import ensure_runs_table
 
             await asyncio.to_thread(ensure_runs_table, dsn, schema)
+            step = "reset_stale_clean_verifying"
+            from nexus.experiment_runs import reset_verifying_to_idle
+
+            await asyncio.to_thread(reset_verifying_to_idle)
             step = "ensure_session_prefs_table"
             from nexus.execution_mode import ensure_prefs_table
 
@@ -1628,10 +1632,11 @@ async def repro_run_clean_verify(
 ) -> dict[str, Any]:
     """SR6：自主 run 干净B验证（全新沙箱重放冻结配方，比对退出码）。
 
-    只接受本人终态（succeeded/failed）run；结论幂等（已有 passed/failed
-    直接返回，不重放）；新鲜沙箱用后即回收。重放调用实验沙箱——执行门
-    强制 Auto（未知 400，非 auto 403，与 Ask/Auto 契约同口径）。
-    跨用户/不存在一律 404。
+    只接受本人终态（succeeded/failed）run；即返 verifying（后台重放，
+    落盘后经 run 详情可见），已有 passed/failed 直接返回（幂等）；
+    验证日志产物由后台写入并关联本 run。新鲜沙箱用后即回收。
+    重放调用实验沙箱——执行门强制 Auto（未知 400，非 auto 403，
+    与 Ask/Auto 契约同口径）。跨用户/不存在一律 404。
     """
     from nexus import experiment_clean as clean_module
     from nexus import experiment_runs as runs_module
@@ -1646,7 +1651,9 @@ async def repro_run_clean_verify(
     if run is None or (user_id or "") != run["owner"]:
         raise HTTPException(status_code=404, detail="RUN_NOT_FOUND")
     try:
-        outcome = await clean_module.run_clean_verification(
+        # 异步即返：verifying 由后台落盘 passed/failed；调用方轮询同一端点
+        # （幂等）或 run 详情（console 快照带 clean_status）拿结论。
+        return await clean_module.start_clean_verification(
             run_id=run["run_id"], user_id=user_id)
     except clean_module.CleanError as error:
         status_map = {
@@ -1659,22 +1666,11 @@ async def repro_run_clean_verify(
             "CLEAN_SANDBOX_UNAVAILABLE": 503,
             "CLEAN_REPLAY_INTERRUPTED": 502,
             "CLEAN_STEP_TIMEOUT": 504,
+            "CLEAN_SCHEDULER_UNAVAILABLE": 503,
         }
         raise HTTPException(
             status_code=status_map.get(error.code, 409), detail=error.code
         ) from error
-    # 验证日志产物（best-effort： verdict 已落盘，日志写失败不推翻结论）。
-    from nexus import artifact_client
-
-    log_md = clean_module.render_clean_log_markdown(run, outcome)
-    written = await artifact_client.write_artifact_via_backend(
-        artifact_type="markdown", title=f"干净验证日志 · {run['run_id'][:12]}",
-        content=log_md, user_id=user_id, run_id=run["run_id"])
-    artifacts: list[dict[str, Any]] = []
-    if written.get("status") == "success":
-        artifacts.append(written["artifact"])
-    return {**outcome, "artifacts": artifacts,
-            "log_artifact_written": bool(artifacts)}
 
 
 # ---------------------------------------------------------------------------

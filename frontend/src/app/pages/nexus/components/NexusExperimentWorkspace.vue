@@ -481,15 +481,15 @@ const isReportable = computed(() => {
             <SfxButton
               variant="secondary"
               size="sm"
-              :loading="!!run?.cleanRequested"
-              :disabled="isAsk || !!run?.cleanRequested"
+              :loading="run?.cleanStatus === 'verifying'"
+              :disabled="isAsk || run?.cleanStatus === 'verifying'"
               :title="isAsk ? '干净验证重放进沙箱，Ask 模式不可用，切换到 Auto 后可用' : '在全新沙箱重放冻结配方，比对退出码（结论幂等）'"
               @click="emit('clean-verify', active.id)"
             >
               <template #icon><ShieldCheck :size="13" /></template>
               干净验证
             </SfxButton>
-            <span v-if="run?.cleanStatus" class="nxw-note">干净验证：{{ run.cleanStatus }}</span>
+            <span v-if="run?.cleanStatus" class="nxw-note">干净验证：{{ run.cleanStatus === 'verifying' ? '运行中' : run.cleanStatus }}</span>
           </div>
           <table v-if="run.comparison && run.comparison.length" class="nxw-table">
             <thead>

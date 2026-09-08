@@ -1557,6 +1557,9 @@ def _merge_run_console(
     merged["config_status"] = _config_status(run)
     merged["attempt_no"] = console.get("attempt_no", merged.get("attempt_no", 0))
     merged["attempts"] = console.get("attempts", [])
+    # SR6：干净B结论直通（只读投影；""=未验证/verifying=运行中）。
+    merged["clean_status"] = console.get("clean_status", "")
+    merged["clean_note"] = console.get("clean_note", "")
     console_status = console.get("console_status", "unknown")
     merged["live"] = {
         "status": console_status,

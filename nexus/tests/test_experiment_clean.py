@@ -23,13 +23,17 @@ from nexus import proposals as proposals_module
 
 @pytest.fixture(autouse=True)
 def _clean_stores():
+    from nexus import experiment_clean as clean_module
+
     approvals.clear_memory_store()
     proposals_module.clear_memory_store()
     runs_module.clear_memory_store()
+    clean_module._VERIFYING.clear()
     yield
     approvals.clear_memory_store()
     proposals_module.clear_memory_store()
     runs_module.clear_memory_store()
+    clean_module._VERIFYING.clear()
 
 
 def _scope():
@@ -162,19 +166,100 @@ async def test_replay_failed_on_divergence():
     assert runs_module.get_run(run["run_id"])["clean_status"] == "failed"
 
 
-async def test_verdict_idempotent_no_replay():
+async def test_start_returns_verifying_then_complete_persists():
+    """异步语义：start 即返 verifying；后台 _complete 落盘；再 start 幂等。"""
+    from nexus import experiment_clean as clean_module
+
     run = _make_terminal_run()
     container = _ReplayContainer()
     backend = _backend_for(container, clean_module.clean_sandbox_id(run["run_id"]))
-    first = await clean_module.run_clean_verification(
+    started = await clean_module.start_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6")
+    assert started == {"run_id": run["run_id"], "clean_verification": "verifying",
+                       "deduped": False}
+    assert runs_module.get_run(run["run_id"])["clean_status"] == "verifying"
+    # verifying 中重复触发不重复调度。
+    again = await clean_module.start_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6")
+    assert again["clean_verification"] == "verifying"
+    assert again["deduped"] is True
+    assert len(container.posts) == 0
+    # 后台完成（测试内直接 await 确定性驱动）。
+    done = await clean_module._complete_clean_verification(
         run_id=run["run_id"], user_id="u-sr6", backend=backend)
-    assert first["deduped"] is False
-    posts_before = len(container.posts)
-    second = await clean_module.run_clean_verification(
+    assert done["clean_verification"] == "passed"
+    assert runs_module.get_run(run["run_id"])["clean_status"] == "passed"
+    # 终态结论幂等。
+    final = await clean_module.start_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6")
+    assert final["deduped"] is True
+    assert final["clean_verification"] == "passed"
+
+
+async def test_divergent_replay_persists_failed():
+    """退出码不等→failed 落盘（非复位；复位只发生在超时/中断等未知态）。"""
+    from nexus import experiment_clean as clean_module
+
+    run = _make_terminal_run()
+    container = _ReplayContainer(exits={"step-0 --do": 1, "step-1 --do": 1})
+    backend = _backend_for(container, clean_module.clean_sandbox_id(run["run_id"]))
+    await clean_module.start_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6")
+    done = await clean_module._complete_clean_verification(
         run_id=run["run_id"], user_id="u-sr6", backend=backend)
-    assert second["deduped"] is True
-    assert second["clean_verification"] == "passed"
-    assert len(container.posts) == posts_before
+    assert done["clean_verification"] == "failed"
+    assert runs_module.get_run(run["run_id"])["clean_status"] == "failed"
+
+
+async def test_step_timeout_resets_without_verdict():
+    """步骤超时→复位为空（不持久化 passed/failed），可重试。"""
+    from nexus import experiment_clean as clean_module
+
+    run = _make_terminal_run()
+
+    class _HangingBackend:
+        async def aexecute(self, command, timeout=None):
+            from nexus.experiment_sandbox import _operation_to_response
+
+            return _operation_to_response({"status": "running",
+                                           "output_tail": "",
+                                           "output_truncated": True})
+
+        async def cancel(self):
+            return {"status": "cancelled"}
+
+    await clean_module.start_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6")
+    with pytest.raises(clean_module.CleanError) as exc:
+        await clean_module._complete_clean_verification(
+            run_id=run["run_id"], user_id="u-sr6",
+            backend=_HangingBackend(), )
+    assert exc.value.code == "CLEAN_STEP_TIMEOUT"
+    assert runs_module.get_run(run["run_id"])["clean_status"] == ""
+
+
+def test_reset_verifying_to_idle_for_restart():
+    """重启自愈：残留 verifying 复位为空并计数；终态结论不受影响。"""
+    run = _make_terminal_run()
+    runs_module.set_clean_verdict(run["run_id"], "verifying", "运行中")
+    assert runs_module.reset_verifying_to_idle() == 1
+    assert runs_module.get_run(run["run_id"])["clean_status"] == ""
+    runs_module.set_clean_verdict(run["run_id"], "passed", "2/2")
+    assert runs_module.reset_verifying_to_idle() == 0
+    assert runs_module.get_run(run["run_id"])["clean_status"] == "passed"
+
+
+def test_console_snapshot_carries_clean_keys():
+    """console 快照直通 clean_status/clean_note（只读投影）。"""
+    from nexus import experiment_store as store_module
+
+    run = _make_terminal_run()
+    snap = store_module.console_snapshot(run["run_id"])
+    assert snap["clean_status"] == ""
+    runs_module.set_clean_verdict(run["run_id"], "passed", "2/2 一致")
+    snap2 = store_module.console_snapshot(run["run_id"])
+    assert snap2["clean_status"] == "passed"
+    assert snap2["clean_note"] == "2/2 一致"
 
 
 async def test_gate_rejects_unfinished_cancelled_foreign():
@@ -231,7 +316,9 @@ async def test_report_picks_up_persisted_clean_verdict(monkeypatch):
 
 
 async def test_clean_endpoint_codes(monkeypatch):
-    """Runtime clean-verify 端点：Auto 执行；Ask 403；未知模式 400；跨用户 404。"""
+    """Runtime clean-verify 端点：Auto 即返 verifying（异步）；Ask 403；
+    未知模式 400；跨用户 404。重放在后台完成，不阻塞 HTTP。
+    """
     from httpx import ASGITransport, AsyncClient
 
     from nexus.main import app
@@ -254,6 +341,13 @@ async def test_clean_endpoint_codes(monkeypatch):
             json={"research_execution_mode": "auto"},
             headers={"X-Nexus-User-Id": "attacker"})
         assert cross.status_code == 404
+        first = await client.post(
+            f"/api/v1/nexus/repro/runs/{run['run_id']}/clean-verify",
+            json={"research_execution_mode": "auto"}, headers=user)
+        assert first.status_code == 200, first.text
+        assert first.json()["clean_verification"] == "verifying"
+        assert first.json()["deduped"] is False
+        # 去重语义在 start 层单测覆盖（端点后台任务时序不定，此处不断言二次）。
 
 
 async def test_formats_endpoint_writes_word_and_tex(monkeypatch):

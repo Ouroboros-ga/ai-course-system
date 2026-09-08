@@ -572,23 +572,24 @@ async function requestRunFormats(id) {
 }
 
 // ── SR6 干净验证：全新沙箱重放冻结配方（只在 Auto 下可用） ──
+// 即返 verifying（后台落盘后经详情轮询自动更新）；已有结论直接返回。
 async function requestCleanVerify(id) {
   const item = sessionRuns.value.find((r) => r.id === id)
   const run = item?.run
   const runId = item?.runId
-  if (!run || !runId || run.cleanRequested) return
-  run.cleanRequested = true
+  if (!run || !runId || run.cleanStatus === 'verifying') return
   try {
     const res = await requestNexusRunCleanVerify(runId, execMode.value || 'ask')
     run.cleanStatus = res?.clean_verification || ''
     persistSessions()
     if (res?.deduped) {
       showToast(`干净验证（已有结论）：${res?.clean_verification || '—'}`, 'success')
+    } else if (res?.clean_verification === 'verifying') {
+      showToast('干净验证运行中（全新沙箱重放），完成后自动更新', 'success')
     } else {
       showToast(`干净验证：${res?.clean_verification || '—'}（${res?.matched ?? '—'}/${res?.total ?? '—'} 步一致）`, 'success')
     }
   } catch (err) {
-    run.cleanRequested = false
     showToast(err?.message || '干净验证失败', 'error')
   }
 }
@@ -1636,6 +1637,8 @@ function applyRunDetail(turn, detail) {
   run.attempts = Array.isArray(detail.live?.attempts) ? detail.live.attempts : (run.attempts || [])
   run.attempt_no = detail.live?.attempt_no ?? detail.attempt_no ?? run.attempt_no ?? 0
   run.reconciling = (detail.live?.status === 'reconciling')
+  // SR6：干净B结论随详情直通（""=未验证/verifying=运行中/passed/failed）。
+  if (typeof detail.clean_status === 'string') run.cleanStatus = detail.clean_status
   run.detail = detail.live?.detail || detail.live?.note || run.detail || null
   // 自主运行中增量日志：取最后一条有日志尾的 attempt（只读呈现）。
   if (run.status === 'running' && Array.isArray(run.attempts)) {

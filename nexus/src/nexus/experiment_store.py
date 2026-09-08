@@ -58,7 +58,8 @@ def console_snapshot(run_id: str, *, control_reachable: bool = True) -> dict[str
     if run is None:
         return {"run_id": run_id, "status": "unknown",
                 "console_status": "unknown", "attempt_no": 0,
-                "attempts": [], "active_operation": "", "detail": ""}
+                "attempts": [], "active_operation": "", "detail": "",
+                "clean_status": "", "clean_note": ""}
     attempts = [_project_attempt(a) for a in run.get("attempts", [])]
     active = ""
     for projected in reversed(attempts):
@@ -78,6 +79,10 @@ def console_snapshot(run_id: str, *, control_reachable: bool = True) -> dict[str
         "attempts": attempts,
         "active_operation": active,
         "detail": run.get("detail", ""),
+        # SR6：干净B结论直通（""=未验证/verifying=运行中/passed/failed）；
+        # 只读投影，报告与 UI 据此展示，不在此处计算。
+        "clean_status": run.get("clean_status", "") or "",
+        "clean_note": run.get("clean_note", "") or "",
     }
 
 

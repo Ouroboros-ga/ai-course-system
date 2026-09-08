@@ -376,6 +376,43 @@ def set_clean_verdict(run_id: str, status: str, note: str = "") -> dict[str, Any
     return _row_to_dict(updated)
 
 
+def reset_verifying_to_idle() -> int:
+    """复位残留 verifying（lifespan 启动时调用）。
+
+    后台重放任务随进程消失；残留 verifying 无执行者，复位为空以便重试。
+    返回复位行数（内存路径全表扫描；PG 单条 UPDATE）。
+    """
+    pg = _pg_settings()
+    if pg is not None:
+        dsn, schema = pg
+        try:
+            ensure_runs_table(dsn, schema)
+            import psycopg
+
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"UPDATE {schema}.nexus_experiment_runs "
+                        f"SET clean_status='', clean_note='服务重启，干净验证未完成，可重试。', "
+                        f"clean_checked_at=%s, updated_at=%s "
+                        f"WHERE clean_status='verifying'",
+                        (_now(), _now()),
+                    )
+                    return int(cur.rowcount or 0)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("reset verifying pg failed: %s", error)
+    count = 0
+    for run_id, row in list(_memory_runs.items()):
+        if row.get("clean_status") == "verifying":
+            updated = dict(row)
+            updated.update({"clean_status": "",
+                            "clean_note": "服务重启，干净验证未完成，可重试。",
+                            "clean_checked_at": _now(), "updated_at": _now()})
+            _memory_runs[run_id] = updated
+            count += 1
+    return count
+
+
 def set_graph_thread(run_id: str, thread_id: str) -> None:
     """登记图执行线程（恢复/对账用；best-effort）。"""
     run = get_run(run_id)
