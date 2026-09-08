@@ -403,3 +403,14 @@ Runtime 日志零错误。常驻链路（审批→调度→Adapter→控制→�
 未验证项：
 - 线上真实 PG 的报告链（待部署后一次性账号走"执行→报告→下载→回收"）。
 - 真实 GitHub 仓库的配方修订固定（T7 用已核验 License 仓库走读）。
+
+## 线上验证（2026-09-08，部署 cd54d1ff，一次性验证账号 `nx_verify_t6_daa4a5fa`）
+
+- 发布＋Runtime rsync（diff 干净）＋三服务重启＋健康全绿＋零 error 日志。
+- 全链：setup 运行 succeeded → `POST /nexus/runs/{id}/report` 200 →
+  metric_verdict=not_evaluated＋2 产物＋content_version=experiment-report/1
+  → 产物下载 1239 字节非空 → 控制侧该 run 已 cancelled（落盘后回收实证）。
+- 冒烟残留清理：4 个点火/取消演练沙箱＋1 个 e2e-t2 烟囱沙箱全部 cancel，
+  任务容器零残留（均为合成 run，无真实数据）。
+- T6 在此关闭。本批（T0–T6）完成一次确认自主实验闭环：提案→审批→执行→
+  修复→恢复→报告，端到端可跑。转 T7（真实能力验收）与 SR6（正式输出）。
