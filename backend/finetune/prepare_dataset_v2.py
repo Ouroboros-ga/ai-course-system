@@ -394,6 +394,47 @@ def t11_source(node: dict) -> dict:
     return _chat(("user", q), ("assistant", a))
 
 
+# ---------------------------------------------------------------- T12 课件语料问答（真实课件）
+
+# 课程15《算法》真实上传课件（document_blocks）的核校问答，按页码索引；
+# 问题与答案均人工对照课件原文编写，出处标注课件页码。
+COURSEWARE_QA: list[tuple[int, str, str]] = [
+    (2, "什么是连通图的生成树？它有多少条边？",
+     "一个连通图的生成树是一个极小连通子图，它含有图中全部 n 个顶点和构成一棵树的 (n-1) 条边。也就是说，生成树保持图的连通性，但去掉所有构成回路的冗余边，恰好保留 n-1 条边。"),
+    (5, "什么是图的最小生成树？一个图的最小生成树唯一吗？",
+     "对于带权连通图 G（每条边上的权均为大于零的实数），可能存在多棵不同的生成树，每棵生成树所有边的权值之和也可能不同。其中权值之和最小的生成树称为图的最小生成树（MST）。由于可能存在多棵权值和相同的生成树，最小生成树并不一定唯一，但其权值之和唯一。"),
+    (6, "对连通图如何得到生成树？对非连通图呢？",
+     "连通图：仅需调用一次遍历过程（DFS 或 BFS），从图中任一顶点出发即可遍历所有顶点，遍历经过的顶点和边就产生相应的生成树。非连通图：需要多次调用遍历过程，每个连通分量各产生一棵生成树，所有连通分量的生成树合起来构成非连通图的生成森林。"),
+    (7, "请描述 Prim 算法构造最小生成树的基本步骤。",
+     "Prim 算法分两步：（1）初始化 U={v}，v 到其他顶点的所有边作为候选边；（2）重复以下步骤 n-1 次，把其余 n-1 个顶点逐个加入 U：从候选边中挑选权值最小的边输出，设该边在 V-U 中的顶点是 k，将 k 加入 U；然后考察当前 V-U 中的所有顶点 j，修改候选边——若边 (k, j) 的权值小于原来顶点 j 关联的候选边，则用 (k, j) 取代后者作为新的候选边。"),
+    (15, "Prim 算法代码中的 INF 常量起什么作用？初始化阶段做了什么？",
+     "代码中 #define INF 32767，INF 表示无穷大（∞），用于表示两顶点间暂无直接边相连的候选边权值。初始化阶段：对 i 从 0 到 g.n-1，令 lowcost[i] = g.edges[v][i]（起点 v 到各顶点的直接边权作为初始候选边权），closest[i] = v（各顶点的候选边暂时都关联起点 v）。"),
+    (16, "Prim 算法主循环中，lowcost[k]=0 这条语句有什么含义？",
+     "lowcost[k]=0 用于标记顶点 k 已经加入集合 U。在 Prim 的数据结构约定中，lowcost[j]=0 表示顶点 j 已进入 U；此后主循环挑选最近顶点时通过 lowcost[j]!=0 排除已在 U 中的顶点，只继续考察 V-U 中的顶点。"),
+    (16, "Prim 算法每一轮迭代是如何选出要加入 U 的顶点的？",
+     "每一轮在 (V-U) 中找出离 U 最近的顶点 k：置 min=INF，扫描所有顶点 j，若 lowcost[j]!=0（j 尚未加入 U）且 lowcost[j]<min，则更新 min=lowcost[j]、k=j。循环结束后 k 就是当前离 U 最近的顶点，输出边 (closest[k], k)（权 min），并通过 lowcost[k]=0 将 k 标记加入 U。"),
+    (17, "Prim 算法选出新顶点 k 加入 U 之后，还需要对候选边做什么修改？",
+     "需要扫描所有顶点 j（j 在 V-U 中），用新加入的 k 更新候选边：若 g.edges[k][j] < lowcost[j]（经过 k 到 j 的边比 j 原来关联的候选边更短），则更新 lowcost[j] = g.edges[k][j]，同时 closest[j] = k。这一步保证 lowcost 始终保存各顶点到 U 的最短候选边。"),
+]
+
+
+def t12_courseware(cw_path: Path) -> list[dict]:
+    """真实课件语料问答：context=课件原文，出处标注课件页码。"""
+    if not cw_path.exists():
+        return []
+    blocks = {b["page"]: b["text"] for b in json.loads(cw_path.read_text(encoding="utf-8"))["blocks"]}
+    out = []
+    for page, question, answer in COURSEWARE_QA:
+        text = blocks.get(page)
+        if not text:
+            continue
+        context = "【课件原文】\n" + text.strip()
+        out.append(_chat(
+            ("user", f"根据课程课件片段回答问题，并说明出自课件哪一页。\n{context}\n\n问题：{question}"),
+            ("assistant", f"{answer}\n（出处：课程《算法》课件 第 {page} 页）")))
+    return out
+
+
 # ---------------------------------------------------------------- 主流程
 
 def build_v2(knowledge_dir: Path, baseline: Path) -> tuple[list[dict], list[dict], dict]:
@@ -488,7 +529,11 @@ def build_v2(knowledge_dir: Path, baseline: Path) -> tuple[list[dict], list[dict
     t11 = [t11_source(n) for n in train_nodes]
     reg(t11, "T11_出处溯源")
 
-    train = t1 + t2 + t3 + t4 + t5 + t6 + t7 + t7b + t9 + t10 + t11
+    # T12 课件语料问答（真实上传课件的 document_blocks，人工核校）
+    t12 = t12_courseware(BASE / "data" / "rag_corpus_course15.json")
+    reg(t12, "T12_课件语料")
+
+    train = t1 + t2 + t3 + t4 + t5 + t6 + t7 + t7b + t9 + t10 + t11 + t12
 
     # 评测集：eval 节点的讲解/关系/引用 + 基准 10 问（不进训练），目标 50 条
     ev: list[dict] = []

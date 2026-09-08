@@ -30,7 +30,8 @@
 | T9 英文术语对照 | 43 | 术语对齐 | 节点 aliases 字段（46 节点有别名） |
 | T10 知识定位/学习路径 | 101 | 知识地图 | 所属领域（课程映射）+ prerequisite 关系 + 教材 |
 | T11 出处溯源 | 101 | 学术习惯 | source 字段（书名/作者/章节，112 全覆盖） |
-| **合计** | **1105** | | |
+| T12 课件语料问答 | 8 | 真实课件接地 | 课程15 真实上传课件 document_blocks（8 块/1120 字符，Prim 讲义） |
+| **合计** | **1113** | | |
 
 评测集 50 条：训练划分外 11 节点 ×（讲解+引用）22 条 + 相关关系 18 条 + 基准 10 问。
 评测按能力维度覆盖：记忆理解 / 概念辨析 / 应用 / 引用规范 / 基准断言。
@@ -65,8 +66,9 @@
 
 | 文件 | 说明 |
 |---|---|
-| `instruction_train_v2.jsonl` | 训练集 759 条 |
-| `instruction_eval_v2.jsonl` | 评测集 39 条（含基准 10 问） |
+| `instruction_train_v2.jsonl` | 训练集 1113 条 |
+| `instruction_eval_v2.jsonl` | 评测集 50 条（含基准 10 问） |
+| `rag_corpus_course15.json` | 课程 15 RAG 语料快照（document_blocks 有效块 8 个/1120 字符） |
 | `question_bank_course15.json` | 课程 15 题库快照（仅作记录；123/133 为占位草稿，未纳入训练） |
 | `../prepare_dataset_v2.py` | 生成器（确定性，seed=20260908） |
 | `../export_platform_payload.py` | 提交物导出（星火 MaaS / 云 GPU 两种格式） |

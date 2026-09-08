@@ -1,0 +1,63 @@
+{
+ "course_id": 15,
+ "blocks_used": 8,
+ "total_chars": 1120,
+ "blocks": [
+  {
+   "block_id": "blk_e2e2210d4cc71f94a88f9b46b07edd9e",
+   "block_type": "TEXT",
+   "page": 16,
+   "role": "explanation",
+   "text": "for (i=1;i<g.n;i++)\t  \t//输出(n-1)条边\n       {\tmin=INF;\n\tfor (j=0;j<g.n;j++) //在(V-U)中找出离U最近的顶点k\n\t     if (lowcost[j]!=0 && lowcost[j]<min)\n\t     {\tmin=lowcost[j];\n\t\tk=j;\t\t//k记录最近顶点编号\n\t     }\n             printf(\" 边(%d，%d)权为:%d\\n\"，closest[k]，k，min);\n\tlowcost[k]=0;\t\t//标记k已经加入U"
+  },
+  {
+   "block_id": "blk_c08e440ac2a837ef01a372d2d346834d",
+   "block_type": "TEXT",
+   "page": 6,
+   "role": "explanation",
+   "text": "连通图：仅需调用遍历过程（DFS或BFS）一次，从图中任一顶点出发，便可以遍历图中的各个顶点，产生相应的生成树。"
+  },
+  {
+   "block_id": "blk_fc41a8f9555b037297b9f425a3da0360",
+   "block_type": "TEXT",
+   "page": 15,
+   "role": "explanation",
+   "text": "#define INF 32767\t\t//INF表示∞\nvoid  Prim(MatGraph g，int v)\n{     int lowcost[MAXV];\n      int min;\n      int closest[MAXV]， i， j， k;\n      for (i=0;i<g.n;i++)\t//给lowcost[]和closest[]置初值\n      {\tlowcost[i]=g.edges[v][i];\n\tclosest[i]=v;\n       }"
+  },
+  {
+   "block_id": "blk_2721b0c936e72a65415d76c6dec33bdc",
+   "block_type": "TEXT",
+   "page": 5,
+   "role": "explanation",
+   "text": "对于带权连通图G （每条边上的权均为大于零的实数），可能有多棵不同生成树。\n每棵生成树的所有边的权值之和可能不同。\n其中权值之和最小的生成树称为图的最小生成树。"
+  },
+  {
+   "block_id": "blk_150fd0032df4b7dcbe2da08ba52caae2",
+   "block_type": "TEXT",
+   "page": 2,
+   "role": "explanation",
+   "text": "一个连通图的生成树是一个极小连通子图，它含有图中全部n个顶点和构成一棵树的(n-1)条边。"
+  },
+  {
+   "block_id": "blk_b6dfffce9ba607c27a292e40a5c02889",
+   "block_type": "TEXT",
+   "page": 6,
+   "role": "explanation",
+   "text": "非连通图：需多次调用遍历过程。每个连通分量中的顶点集和遍历时走过的边一起构成一棵生成树。所有连通分量的生成树组成非连通图的生成森林。"
+  },
+  {
+   "block_id": "blk_dfb0eba1871fd0e613d59533e8c23075",
+   "block_type": "TEXT",
+   "page": 7,
+   "role": "explanation",
+   "text": "（1）初始化U={v}。v到其他顶点的所有边为候选边；\n       （2）重复以下步骤n-1次，使得其他n-1个顶点被加入到U中：\n           从候选边中挑选权值最小的边输出，设该边在V-U中的顶点是k，将k加入U中；\n           考察当前V-U中的所有顶点j，修改候选边：若(j，k)的权值小于原来和顶点k关联的候选边，则用(k，j)取代后者作为候选边。"
+  },
+  {
+   "block_id": "blk_28ed4a8c91985870e5e1ca25ad143d36",
+   "block_type": "TEXT",
+   "page": 17,
+   "role": "explanation",
+   "text": "for (j=0;j<g.n;j++)\t//修改数组lowcost和closest\n\t       if (lowcost[j]!=0 && g.edges[k][j]<lowcost[j])\n\t       {\tlowcost[j]=g.edges[k][j];\n\t\tclosest[j]=k;\n\t      }\n        }\n}"
+  }
+ ]
+}
