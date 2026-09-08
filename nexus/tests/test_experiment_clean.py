@@ -313,6 +313,31 @@ def test_reset_verifying_to_idle_for_restart():
     assert runs_module.get_run(run["run_id"])["clean_status"] == "passed"
 
 
+async def test_stale_rule_verdict_reverified():
+    """旧规则结论（rule 缺失/过期）不直接采信：重新重放覆盖。"""
+    from nexus import experiment_clean as clean_module
+
+    run = _make_terminal_run()
+    runs_module.set_clean_verdict(run["run_id"], "failed", "旧口径 1/2")
+    assert runs_module.get_run(run["run_id"])["clean_rule"] == ""
+    container = _ReplayContainer()
+    backend = _backend_for(container, clean_module.clean_sandbox_id(run["run_id"]))
+    started = await clean_module.start_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6")
+    assert started["deduped"] is False
+    assert started["clean_verification"] == "verifying"
+    done = await clean_module._complete_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6", backend=backend)
+    assert done["clean_verification"] == "passed"
+    stored = runs_module.get_run(run["run_id"])
+    assert stored["clean_rule"] == clean_module.CLEAN_RULE_VERSION
+    # 同规则下再次触发幂等。
+    again = await clean_module.start_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6")
+    assert again["deduped"] is True
+    assert again["clean_verification"] == "passed"
+
+
 def test_console_snapshot_carries_clean_keys():
     """console 快照直通 clean_status/clean_note（只读投影）。"""
     from nexus import experiment_store as store_module

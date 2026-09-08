@@ -37,6 +37,10 @@ logger = logging.getLogger("nexus.experiment_clean")
 CLEAN_SANDBOX_SUFFIX = "-clean1"
 CLEANABLE_RUN_STATUSES = ("succeeded", "failed")
 CLEAN_PASS_STATUSES = ("passed", "failed")
+# 结论规则版本：判定口径变化时 bump，旧规则结论视为过期重验。
+# v1（隐式 ""）：全部冻结步骤计数（含文件工具摘要，必 127 误杀）；
+# v2（sr6-clean/2）：只比对 shell 步骤，文件工具摘要跳过留痕。
+CLEAN_RULE_VERSION = "sr6-clean/2"
 
 
 class CleanError(Exception):
@@ -246,12 +250,14 @@ async def start_clean_verification(
         raise CleanError("RUN_PROPOSAL_UNAVAILABLE", "绑定的自主提案不可读，无法验证")
     stored_verdict = str(run.get("clean_status") or "")
     if stored_verdict in CLEAN_PASS_STATUSES:
-        return {
-            "run_id": run_id,
-            "clean_verification": stored_verdict,
-            "clean_note": str(run.get("clean_note") or ""),
-            "deduped": True,
-        }
+        if str(run.get("clean_rule") or "") == CLEAN_RULE_VERSION:
+            return {
+                "run_id": run_id,
+                "clean_verification": stored_verdict,
+                "clean_note": str(run.get("clean_note") or ""),
+                "deduped": True,
+            }
+        # 规则过期（口径变化）：视为未验证，重新重放覆盖。
     async with _CLEAN_LOCKS_GUARD:
         if run_id in _VERIFYING or str(
                 (runs_module.get_run(run_id) or {}).get("clean_status") or "") == "verifying":
@@ -360,12 +366,14 @@ async def _guarded_verify(
         raise CleanError("RUN_PROPOSAL_UNAVAILABLE", "绑定的自主提案不可读，无法验证")
     stored_verdict = str(run.get("clean_status") or "")
     if stored_verdict in CLEAN_PASS_STATUSES:
-        return {
-            "run_id": run_id,
-            "clean_verification": stored_verdict,
-            "clean_note": str(run.get("clean_note") or ""),
-            "deduped": True,
-        }
+        if str(run.get("clean_rule") or "") == CLEAN_RULE_VERSION:
+            return {
+                "run_id": run_id,
+                "clean_verification": stored_verdict,
+                "clean_note": str(run.get("clean_note") or ""),
+                "deduped": True,
+            }
+        # 规则过期：继续向下重新重放覆盖。
     if not _skip_verifying_check and stored_verdict == "verifying":
         return {"run_id": run_id, "clean_verification": "verifying",
                 "deduped": True}
@@ -388,8 +396,9 @@ async def _guarded_verify(
         raise
     matched, total = outcome["matched"], outcome["total"]
     note = (f"干净沙箱 {clean_id} 重放 {total} 步，退出码一致 {matched}/{total}；"
-            f"结论 {outcome['verdict']}（确定性比对，非 LLM 判定）。")
-    runs_module.set_clean_verdict(run_id, outcome["verdict"], note)
+            f"结论 {outcome['verdict']}（确定性比对，非 LLM 判定；规则 {CLEAN_RULE_VERSION}）。")
+    runs_module.set_clean_verdict(run_id, outcome["verdict"], note,
+                                  rule=CLEAN_RULE_VERSION)
     try:
         await active_backend.cancel()
     except Exception as error:  # noqa: BLE001 - 回收 best-effort

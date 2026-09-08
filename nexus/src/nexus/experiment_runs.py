@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS {schema}.nexus_experiment_runs (
     clean_status TEXT NOT NULL DEFAULT '',
     clean_note TEXT NOT NULL DEFAULT '',
     clean_checked_at DOUBLE PRECISION NOT NULL DEFAULT 0,
+    clean_rule TEXT NOT NULL DEFAULT '',
     created_at DOUBLE PRECISION NOT NULL DEFAULT 0,
     updated_at DOUBLE PRECISION NOT NULL DEFAULT 0
 );
@@ -87,6 +88,7 @@ def ensure_runs_table(dsn: str, schema: str) -> None:
                 ("clean_status", "TEXT NOT NULL DEFAULT ''"),
                 ("clean_note", "TEXT NOT NULL DEFAULT ''"),
                 ("clean_checked_at", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+                ("clean_rule", "TEXT NOT NULL DEFAULT ''"),
             ):
                 cur.execute(
                     f"ALTER TABLE {schema}.nexus_experiment_runs "
@@ -98,13 +100,13 @@ _RUN_SELECT = (
     "run_id, owner, session_id, proposal_id, proposal_version, scope_hash, "
     "approval_id, status, attempt_no, attempts, graph_thread_id, "
     "cancel_requested, detail, clean_status, clean_note, clean_checked_at, "
-    "created_at, updated_at"
+    "clean_rule, created_at, updated_at"
 )
 
 _RUN_KEYS = ("run_id", "owner", "session_id", "proposal_id", "proposal_version",
              "scope_hash", "approval_id", "status", "attempt_no", "attempts",
              "graph_thread_id", "cancel_requested", "detail",
-             "clean_status", "clean_note", "clean_checked_at",
+             "clean_status", "clean_note", "clean_checked_at", "clean_rule",
              "created_at", "updated_at")
 
 
@@ -133,6 +135,7 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "clean_status": row.get("clean_status", "") or "",
         "clean_note": row.get("clean_note", "") or "",
         "clean_checked_at": row.get("clean_checked_at", 0) or 0,
+        "clean_rule": row.get("clean_rule", "") or "",
         "created_at": row.get("created_at", 0),
         "updated_at": row.get("updated_at", 0),
     }
@@ -159,8 +162,8 @@ def _insert_row(row: dict[str, Any]) -> None:
                         "scope_hash, approval_id, status, attempt_no, attempts, "
                         "graph_thread_id, cancel_requested, detail, "
                         "clean_status, clean_note, clean_checked_at, "
-                        "created_at, updated_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "clean_rule, created_at, updated_at) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                         "ON CONFLICT (run_id) DO NOTHING",
                         (
                             row["run_id"], row["owner"], row["session_id"],
@@ -174,6 +177,7 @@ def _insert_row(row: dict[str, Any]) -> None:
                             row.get("clean_status", ""),
                             row.get("clean_note", ""),
                             row.get("clean_checked_at", 0) or 0,
+                            row.get("clean_rule", ""),
                             row["created_at"], row["updated_at"],
                         ),
                     )
@@ -196,7 +200,8 @@ def _update_row(row: dict[str, Any]) -> None:
                         f"UPDATE {schema}.nexus_experiment_runs SET status=%s, "
                         f"attempt_no=%s, attempts=%s, graph_thread_id=%s, "
                         f"cancel_requested=%s, detail=%s, updated_at=%s, "
-                        f"clean_status=%s, clean_note=%s, clean_checked_at=%s "
+                        f"clean_status=%s, clean_note=%s, clean_checked_at=%s, "
+                        f"clean_rule=%s "
                         f"WHERE run_id=%s",
                         (
                             row["status"], row["attempt_no"],
@@ -208,6 +213,7 @@ def _update_row(row: dict[str, Any]) -> None:
                             row.get("clean_status", ""),
                             row.get("clean_note", ""),
                             row.get("clean_checked_at", 0) or 0,
+                            row.get("clean_rule", ""),
                             row["run_id"],
                         ),
                     )
@@ -276,6 +282,7 @@ def create_or_get_run(
         "clean_status": "",
         "clean_note": "",
         "clean_checked_at": 0,
+        "clean_rule": "",
         "created_at": now,
         "updated_at": now,
     }
@@ -358,8 +365,10 @@ def set_status(run_id: str, status: str, detail: str = "") -> dict[str, Any] | N
     return _row_to_dict(updated)
 
 
-def set_clean_verdict(run_id: str, status: str, note: str = "") -> dict[str, Any] | None:
-    """SR6 干净B结论落盘（passed/failed；调用方已做重放比对，此处只持久化）。
+def set_clean_verdict(run_id: str, status: str, note: str = "",
+                      rule: str = "") -> dict[str, Any] | None:
+    """SR6 干净B结论落盘（passed/failed/verifying/""；调用方已做重放比对，
+    此处只持久化；rule 为结论规则版本，口径变化时旧结论视为过期）。
 
     结论一旦落盘即稳定（attempt 终态后不可追加）；重复落盘覆盖并刷新时间。
     """
@@ -370,6 +379,7 @@ def set_clean_verdict(run_id: str, status: str, note: str = "") -> dict[str, Any
     updated.update({"clean_status": (status or "")[:16],
                     "clean_note": (note or "")[:2000],
                     "clean_checked_at": _now(),
+                    "clean_rule": (rule or "")[:32],
                     "updated_at": _now()})
     _update_row(updated)
     _memory_runs[run_id] = dict(updated)
