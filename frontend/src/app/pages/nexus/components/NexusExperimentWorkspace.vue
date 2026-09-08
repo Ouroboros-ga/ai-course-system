@@ -42,25 +42,131 @@ const props = defineProps({
   activeId: { type: String, default: '' },
   /** 当前 run 关联产物（turn.artifacts） */
   artifacts: { type: Array, default: () => [] },
-  cancelling: { type: Boolean, default: false }
+  cancelling: { type: Boolean, default: false },
+  /** NX-LB5：当前 run 的备注（追加式，升序） */
+  notes: { type: Array, default: () => [] },
+  /** NX-LB1：preset 投影（参数白名单/预算/指标基线的唯一来源），无则 null */
+  preset: { type: Object, default: null },
+  /** 备注提交中（父调 API） */
+  noting: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['switch', 'cancel', 'ask', 'analyze', 'rerun'])
+const emit = defineEmits(['switch', 'cancel', 'ask', 'analyze', 'rerun', 'rename', 'add-note'])
 
 const tab = ref('logs')
 
 const active = computed(() => props.runs.find((r) => r.id === props.activeId) || props.runs[0] || null)
 const run = computed(() => active.value?.run || null)
 const rail = computed(() => (run.value ? reproStageRail(run.value) : []))
-const notes = computed(() => (run.value ? reproStageNotes(run.value) : ''))
+const stageNotes = computed(() => (run.value ? reproStageNotes(run.value) : ''))
 const elapsed = computed(() => (run.value ? reproElapsed(run.value) : ''))
 const cancellable = computed(() => reproCancellable(run.value))
 
 const TABS = [
   { key: 'logs', label: '日志' },
   { key: 'metrics', label: '指标' },
-  { key: 'artifacts', label: '产物' }
+  { key: 'artifacts', label: '产物' },
+  { key: 'notes', label: '备注' }
 ]
+
+/* ── 重命名（NX-LB1）：就地编辑，父组件负责调 PATCH 与乐观锁冲突处理 ──
+   真实请求在父组件；这里只管输入与反馈，失败由父通过 onError 回传。 */
+const renaming = ref(false)
+const renameDraft = ref('')
+const renameErr = ref('')
+const renameBusy = ref(false)
+
+function startRename() {
+  renameDraft.value = active.value?.name || ''
+  renameErr.value = ''
+  renaming.value = true
+}
+function cancelRename() {
+  renaming.value = false
+  renameErr.value = ''
+  renameBusy.value = false
+}
+function submitRename() {
+  const title = renameDraft.value.trim()
+  if (title.length > 120) {
+    renameErr.value = '最多 120 个字符'
+    return
+  }
+  renameBusy.value = true
+  renameErr.value = ''
+  emit('rename', {
+    id: active.value?.id,
+    title,
+    onError: (msg) => {
+      renameBusy.value = false
+      renameErr.value = msg
+    },
+    onDone: () => {
+      renameBusy.value = false
+      renaming.value = false
+    }
+  })
+}
+
+/* ── 备注（NX-LB5）：追加式，不提供编辑/删除；author_kind 由服务端判定 ── */
+const noteDraft = ref('')
+const NOTE_MAX = 4000
+
+function submitNote() {
+  const content = noteDraft.value.trim()
+  if (!content) return
+  emit('add-note', {
+    content,
+    onError: () => {},
+    onDone: () => {
+      noteDraft.value = ''
+    }
+  })
+}
+
+function noteTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return Number.isNaN(d.getTime())
+    ? String(ts)
+    : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/* preset 投影：参数白名单只来自服务端，前端不硬编码参数列表 */
+const presetRows = computed(() => {
+  const p = props.preset
+  if (!p) return []
+  const rows = []
+  const push = (k, v) => {
+    if (v === undefined || v === null || v === '') return
+    rows.push({ k, v: typeof v === 'object' ? JSON.stringify(v) : String(v) })
+  }
+  push('preset', p.display_name || p.preset_id)
+  push('论文', p.paper_title)
+  push('预算', p.budget?.estimated_minutes != null ? `${p.budget.estimated_minutes} 分钟` : null)
+  push('步数上限', p.budget?.max_steps)
+  push('CPU 可用', p.budget?.cpu_friendly === true ? '是' : p.budget?.cpu_friendly === false ? '否' : null)
+  push('指标', p.metric?.name || p.metrics?.name)
+  push('基线', p.metric?.baseline ?? p.metrics?.baseline)
+  push('容差', p.metric?.tolerance ?? p.metrics?.tolerance)
+  return rows
+})
+
+const presetParams = computed(() => {
+  const p = props.preset
+  if (!p) return []
+  const schema = p.parameters || p.parameter_schema || p.params
+  if (!schema) return []
+  if (Array.isArray(schema)) return schema
+  return Object.entries(schema).map(([name, def]) => ({
+    name,
+    type: def?.type || def?.kind || '',
+    default: def?.default ?? def?.default_value,
+    enum: def?.enum || def?.choices,
+    min: def?.min,
+    max: def?.max
+  }))
+})
 
 const statusClass = computed(() => {
   const s = run.value?.status
@@ -145,6 +251,29 @@ const reportErr = computed(() => run.value?.reportError || '')
         </select>
       </label>
 
+      <!-- NX-LB1 重命名：就地编辑；提交走 PATCH /runs/{id}（乐观锁）。
+           改名只改显示名，不改变执行 hash 或运行配置——提示写在输入框里，别让用户误会。 -->
+      <template v-if="!renaming">
+        <SfxButton
+          variant="tertiary"
+          size="sm"
+          title="重命名本次运行（仅改显示名，不改变执行配置）"
+          @click="startRename"
+        >重命名</SfxButton>
+      </template>
+      <span v-else class="nxw-rename">
+        <input
+          v-model="renameDraft"
+          class="nxw-rename-input"
+          maxlength="120"
+          placeholder="留空恢复默认名"
+          @keydown.enter.prevent="submitRename"
+          @keydown.esc.prevent="cancelRename"
+        />
+        <SfxButton variant="secondary" size="sm" :loading="renameBusy" @click="submitRename">保存</SfxButton>
+        <SfxButton variant="tertiary" size="sm" :disabled="renameBusy" @click="cancelRename">取消</SfxButton>
+      </span>
+
       <SfxButton variant="tertiary" size="sm" @click="emit('ask', active.id)">
         <template #icon><MessageSquare :size="13" /></template>
         询问 Nexus
@@ -183,7 +312,7 @@ const reportErr = computed(() => run.value?.reportError || '')
         </div>
       </template>
     </div>
-    <p v-if="notes" class="nxw-stagenotes">{{ notes }}</p>
+    <p v-if="stageNotes" class="nxw-stagenotes">{{ stageNotes }}</p>
 
     <!-- 主体：左配置/步骤 · 右输出 -->
     <div class="nxw-body">
@@ -193,6 +322,26 @@ const reportErr = computed(() => run.value?.reportError || '')
           <span>{{ row.k }}</span>
           <b>{{ row.v }}</b>
         </div>
+
+        <!-- NX-LB1 preset 投影：参数白名单/默认值/预算/指标基线的唯一来源。
+             前端禁止硬编码参数列表；服务端没给就整块不渲染，不猜。 -->
+        <template v-if="presetRows.length">
+          <div class="nxw-cap">预设 · 只读</div>
+          <div v-for="row in presetRows" :key="row.k" class="nxw-kv">
+            <span>{{ row.k }}</span>
+            <b>{{ row.v }}</b>
+          </div>
+        </template>
+        <template v-if="presetParams.length">
+          <div class="nxw-cap">可改参数 · {{ presetParams.length }}</div>
+          <div v-for="p in presetParams" :key="p.name" class="nxw-kv">
+            <span>{{ p.name }}</span>
+            <b>{{ p.default === undefined || p.default === null || p.default === '' ? '—' : p.default }}</b>
+          </div>
+          <p class="nxw-note">
+            仅白名单内参数可改，范围与默认值由服务端投影；越界会被拒绝。
+          </p>
+        </template>
 
         <div class="nxw-cap">步骤 · {{ steps.length }}</div>
         <ol class="nxw-steps">
@@ -228,6 +377,7 @@ const reportErr = computed(() => run.value?.reportError || '')
           >
             {{ t.label }}
             <b v-if="t.key === 'artifacts' && artifacts.length" class="nxw-tabn">{{ artifacts.length }}</b>
+            <b v-else-if="t.key === 'notes' && notes.length" class="nxw-tabn">{{ notes.length }}</b>
           </span>
           <span class="nxw-spacer" />
           <span v-if="tab === 'logs' && logText" class="nxw-logsrc">{{ reproLogSource(run) }}</span>
@@ -266,6 +416,45 @@ const reportErr = computed(() => run.value?.reportError || '')
             <TriangleAlert :size="13" /> {{ reportErr }}
           </p>
           <p v-else-if="!hasReport" class="nxw-empty">报告尚未生成（终态后由服务端产出）。</p>
+        </div>
+
+        <!-- 备注（NX-LB5）：追加式，不提供编辑/删除；author_kind 由服务端判定。
+             Agent 备注只是解释或建议，不改日志/指标/PASS-FAIL —— 标签里写清楚。 -->
+        <div v-else-if="tab === 'notes'" class="nxw-pane">
+          <div v-for="n in notes" :key="n.note_id || n.created_at" class="nxw-note-row">
+            <span class="nxw-note-who" :class="n.author_kind === 'agent' ? 'is-agent' : 'is-me'">
+              {{ n.author_kind === 'agent' ? 'Nexus' : '我' }}
+            </span>
+            <div class="nxw-note-body">
+              <p>{{ n.content }}</p>
+              <span class="nxw-note-tm">
+                {{ noteTime(n.created_at) }}
+                <template v-if="n.author_kind === 'agent'"> · 解释或建议，不改结果</template>
+              </span>
+            </div>
+          </div>
+          <p v-if="!notes.length" class="nxw-empty">本次运行还没有备注。</p>
+
+          <div class="nxw-note-add">
+            <textarea
+              v-model="noteDraft"
+              class="nxw-note-input"
+              rows="2"
+              :maxlength="NOTE_MAX"
+              placeholder="记一条备注（例如：为什么改这个参数）"
+            />
+            <div class="nxw-note-act">
+              <span class="nxw-note-count">{{ noteDraft.length }} / {{ NOTE_MAX }}</span>
+              <span class="nxw-spacer" />
+              <SfxButton
+                variant="secondary"
+                size="sm"
+                :disabled="!noteDraft.trim() || noting"
+                :loading="noting"
+                @click="submitNote"
+              >添加备注</SfxButton>
+            </div>
+          </div>
         </div>
 
         <!-- 产物 -->
@@ -497,6 +686,39 @@ const reportErr = computed(() => run.value?.reportError || '')
 .nxw-fname { font-family: var(--font-mono); font-size: var(--caption-size); color: var(--text-primary); }
 .nxw-fsize { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-disabled); }
 .nxw-empty { font-size: var(--ui-sm-size); color: var(--text-disabled); padding: var(--space-4); text-align: center; }
+
+/* 重命名就地编辑 */
+.nxw-rename { display: inline-flex; align-items: center; gap: 6px; }
+.nxw-rename-input {
+  width: 230px; height: 28px; padding: 0 10px;
+  border: 1px solid var(--nexus-accent); border-radius: 4px;
+  background: var(--surface-panel); color: var(--text-primary);
+  font-family: var(--font-sans); font-size: 12.5px; outline: none;
+}
+.nxw-note {
+  margin: 6px 0 0; font-size: 10.5px; line-height: 1.6; color: var(--text-disabled);
+}
+
+/* 备注（NX-LB5） */
+.nxw-note-row { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-default); }
+.nxw-note-who {
+  font-family: var(--font-mono); font-size: 9.5px; height: fit-content;
+  padding: 1px 6px; border-radius: 3px; text-align: center;
+}
+.nxw-note-who.is-me { color: var(--nexus-accent); background: var(--nexus-accent-soft); }
+.nxw-note-who.is-agent { color: #8a6a1f; background: #fdf6e3; }
+.nxw-note-body p { font-size: 12px; line-height: 1.75; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; }
+.nxw-note-tm { display: block; margin-top: 4px; font-family: var(--font-mono); font-size: 9.5px; color: var(--text-disabled); }
+.nxw-note-add { margin-top: 12px; border-top: 1px solid var(--border-default); padding-top: 12px; }
+.nxw-note-input {
+  width: 100%; padding: 8px 10px; resize: vertical;
+  border: 1px solid var(--border-default); border-radius: 4px;
+  background: var(--surface-canvas); color: var(--text-primary);
+  font-family: var(--font-sans); font-size: 12px; line-height: 1.7; outline: none;
+}
+.nxw-note-input:focus { border-color: var(--nexus-accent); }
+.nxw-note-act { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.nxw-note-count { font-family: var(--font-mono); font-size: 10px; color: var(--text-disabled); font-variant-numeric: tabular-nums; }
 .nxw-err {
   display: flex; align-items: center; gap: 6px; margin-top: var(--space-3);
   font-size: var(--caption-size); color: var(--red-700);

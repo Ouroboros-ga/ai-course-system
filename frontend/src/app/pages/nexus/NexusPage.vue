@@ -59,7 +59,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -194,8 +194,12 @@ const sessionRuns = computed(() => {
       const preset = t.reproRun.preset_id
       const seq = arr.slice(0, i).filter((x) => x?.reproRun?.preset_id === preset).length + 1
       const backend = backendRunNames.value[t.reproRun.job_id] || {}
+      // runId = nexus_runs.run_id（NX-LB1 稳定标识）：重命名 / 备注 / 详情用它；
+      // job_id 只服务 Worker cancel / report。无 runId → 重命名不可用。
+      const runId = t.reproRun.runId || t.reproRun.run_id || ''
       return {
         id: t.reproRun.job_id,
+        runId,
         name: experimentName({ ...t.reproRun, ...backend }, seq),
         run: t.reproRun,
         turn: t
@@ -275,6 +279,115 @@ function rerunFromWorkspace() {
   showToast('复制本次冻结配置 → 新提案 → 重新审批后创建新运行（工作台复跑入口尚未实现，可先在对话里口述改参数）', 'info')
 }
 
+// ── NX-LB1 重命名：PATCH /runs/{run_id}，乐观锁 ──
+// 只改显示名，不改执行 hash / 配置；冲突 409 拉最新不覆盖用户输入。
+async function renameRunFromWorkspace({ id, title, onError, onDone }) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const runId = item?.runId
+  if (!runId) {
+    onError?.('本次运行还没有服务端记录（run_id 缺失），暂不能重命名')
+    return
+  }
+  const version = Number(item.run.version ?? item.run.run_number ?? 0)
+  try {
+    const res = await renameNexusRun(runId, title || null, version)
+    const merged = res?.data ?? res
+    if (merged && typeof merged === 'object') {
+      item.run.title = merged.title ?? item.run.title
+      item.run.display_title = merged.display_title ?? item.run.display_title
+      item.run.version = merged.version ?? item.run.version
+    }
+    // 让 sessionRuns 重算显示名（服务端 display_title 优先）
+    backendRunNames.value[item.run.job_id] = {
+      ...(backendRunNames.value[item.run.job_id] || {}),
+      ...(merged || {}),
+      runId
+    }
+    onDone?.()
+    showToast(title ? '已重命名' : '已恢复默认名', 'success')
+  } catch (err) {
+    const code = err?.response?.data?.code || err?.code || ''
+    if (code === 'RUN_VERSION_CONFLICT') {
+      onError?.('运行信息已被别处更新，已刷新为最新名称')
+    } else if (err?.response?.status === 422) {
+      onError?.('名称不合法（1–120 字符）')
+    } else {
+      onError?.('重命名失败，请稍后重试')
+    }
+  }
+}
+
+// ── NX-LB5 运行备注：追加式，request_id 幂等 ──
+const runNotes = ref([])
+const noting = ref(false)
+
+async function loadRunNotes(runId) {
+  if (!runId) {
+    runNotes.value = []
+    return
+  }
+  try {
+    const res = await listNexusRunNotes(runId)
+    const data = res?.data ?? res
+    runNotes.value = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+  } catch {
+    // fail-closed：拉不到就显示为空并如实说明，不伪造条目
+    runNotes.value = []
+  }
+}
+
+watch(
+  () => activeRun.value?.runId || '',
+  (rid) => {
+    if (isLabView.value) loadRunNotes(rid)
+  },
+  { immediate: true }
+)
+watch(isLabView, (v) => {
+  if (v) loadRunNotes(activeRun.value?.runId || '')
+})
+
+async function addRunNote({ content, onError, onDone }) {
+  const runId = activeRun.value?.runId
+  if (!runId) {
+    onError?.('本次运行还没有服务端记录，暂不能加备注')
+    return
+  }
+  noting.value = true
+  const requestId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  try {
+    await createNexusRunNote(runId, content, requestId)
+    await loadRunNotes(runId)
+    onDone?.()
+  } catch {
+    onError?.('备注保存失败，请重试')
+  } finally {
+    noting.value = false
+  }
+}
+
+// ── NX-LB1 preset 投影：参数白名单唯一来源，前端不硬编码 ──
+const reproPresets = ref([])
+const activePreset = computed(() => {
+  const pid = activeRun.value?.run?.preset_id
+  if (!pid) return null
+  return reproPresets.value.find((p) => (p.preset_id || p.id) === pid) || null
+})
+
+async function loadReproPresets() {
+  try {
+    const res = await listNexusReproPresets()
+    const data = res?.data ?? res
+    const list = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+    reproPresets.value = list
+  } catch {
+    reproPresets.value = []
+  }
+}
+onMounted(() => {
+  if (nexusDataSourceMode.value === 'real') loadReproPresets()
+})
+
 /**
  * 输入框上方的审批浮窗要展示的提案：本会话**最近一个仍处于 pending** 的审批。
  * 已批准 / 已拒绝 / 已过期的都不再浮在输入框上——它们归消息流留存。
@@ -287,6 +400,125 @@ const pendingApproval = computed(() => {
   }
   return null
 })
+
+/* ── NX-LB2 审批待办恢复 + 提案摘要（审批浮窗 v2）──
+ * SSE 推来的审批卡在消息流里；但刷新/换设备后只剩服务端记录，
+ * 浮窗必须能从 GET /approvals?session_id&status=pending 恢复待办。
+ * 两条来源按 approval_id 去重，服务端为准（它可能更新了版本/失效）。 */
+const restoredApprovals = ref([])
+
+async function loadPendingApprovals() {
+  const sid = activeSessionId.value
+  if (!sid || nexusDataSourceMode.value !== 'real') {
+    restoredApprovals.value = []
+    return
+  }
+  try {
+    const res = await listNexusApprovals(sid, 'pending')
+    const data = res?.data ?? res
+    const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+    restoredApprovals.value = items
+  } catch {
+    // fail-closed：拉不到就只显示 SSE 来源的待办，不伪造
+    restoredApprovals.value = []
+  }
+}
+
+/** 归一化：SSE 的 turn 与服务端待办项形状不同，浮窗只认这一种 */
+function normalizeApproval(src) {
+  const ap = src?.approval || src || {}
+  return {
+    id: ap.approval_id || ap.id || '',
+    preset: ap.preset_id || ap.preset || '',
+    objective: ap.objective || '',
+    repo: ap.repo_url || ap.repo || '',
+    license: ap.repo_license || ap.license || '',
+    budget: ap.budget || {},
+    planHash: ap.plan_hash || ap.hash || '',
+    expiresAt: ap.expires_at || '',
+    proposalId: ap.proposal_id || '',
+    proposalVersion: ap.proposal_version ?? ap.version ?? null,
+    diff: Array.isArray(ap.diff) ? ap.diff : Array.isArray(ap.parameter_diff) ? ap.parameter_diff : [],
+    baselineNote: ap.baseline_note || ap.metric_policy || '',
+    status: ap.status || '',
+    turn: src?.approval ? src : null
+  }
+}
+
+/** 浮窗要展示的待办：服务端恢复项 + SSE 卡，按 approval_id 去重（服务端优先） */
+const pendingItems = computed(() => {
+  const map = new Map()
+  const push = (raw) => {
+    const n = normalizeApproval(raw)
+    if (!n.id) return
+    if (!map.has(n.id)) map.set(n.id, n)
+  }
+  for (const raw of restoredApprovals.value) push(raw)
+  const t = pendingApproval.value
+  if (t) {
+    const n = normalizeApproval(t)
+    // 服务端那条可能带更全的 diff/objective：有提案信息的留服务端，否则补 SSE
+    if (!map.has(n.id)) map.set(n.id, n)
+  }
+  return [...map.values()]
+})
+
+/** 服务端恢复项（没有 SSE turn）批准：decide 后走同一 execute 核销 */
+async function approveRestored(item) {
+  if (item.turn) {
+    await decideApprovalFor(item.turn, 'approved')
+    await loadPendingApprovals()
+    return
+  }
+  try {
+    await decideNexusApproval(item.id, 'approved')
+    await executeApprovedRepro(item.id, activeSessionId.value || 'default')
+    showToast('已批准并提交执行', 'success')
+  } catch (err) {
+    const code = err?.response?.data?.code || err?.code || ''
+    if (code === 'APPROVAL_STALE' || code === 'APPROVAL_INVALID') {
+      showToast('方案已更新或票据失效，请重新确认', 'error')
+    } else {
+      showToast('批准失败，请重试', 'error')
+    }
+  }
+  await loadPendingApprovals()
+}
+
+async function rejectRestored(item) {
+  if (item.turn) {
+    await decideApprovalFor(item.turn, 'rejected')
+    await loadPendingApprovals()
+    return
+  }
+  try {
+    await decideNexusApproval(item.id, 'rejected')
+    showToast('已拒绝', 'success')
+  } catch {
+    showToast('拒绝失败，请重试', 'error')
+  }
+  await loadPendingApprovals()
+}
+
+watch(activeSessionId, () => {
+  loadPendingApprovals()
+})
+onMounted(() => {
+  if (nexusDataSourceMode.value === 'real') loadPendingApprovals()
+})
+
+function diffKindLabel(kind) {
+  const k = String(kind || '').toLowerCase()
+  if (k.includes('add') || k === 'new') return '新增'
+  if (k.includes('del') || k.includes('remove')) return '移除'
+  return '修改'
+}
+function diffKindClass(kind) {
+  const k = String(kind || '').toLowerCase()
+  if (k.includes('add') || k === 'new') return 'is-add'
+  if (k.includes('del') || k.includes('remove')) return 'is-del'
+  return 'is-mod'
+}
 
 /**
  * 浮窗继承的引用徽标：如实写出「带进去了什么」。
@@ -2416,11 +2648,16 @@ const emptySuggestions = computed(() =>
         :active-id="activeRunId"
         :artifacts="activeRunArtifacts"
         :cancelling="!!activeRun?.run?.cancelling"
+        :notes="runNotes"
+        :preset="activePreset"
+        :noting="noting"
         @switch="switchActiveRun"
         @cancel="cancelRunFromWorkspace"
         @ask="openAskWindow"
         @analyze="analyzeRunResult"
         @rerun="rerunFromWorkspace"
+        @rename="renameRunFromWorkspace"
+        @add-note="addRunNote"
       />
 
       <!-- Context Chips：首屏只保留 ready 能力 + 课程；其余收进「待接入」popover -->
@@ -2524,7 +2761,10 @@ const emptySuggestions = computed(() =>
                   <i class="nx-seg-no">{{ String(i + 1).padStart(2, '0') }}</i>{{ cfg.label }}
                 </span>
               </div>
-              <span class="nx-wl-tools">
+              <span
+                class="nx-wl-tools"
+                :title="`可用工具 ${NEXUS_MODE_CONFIG[activeMode].tools.length} 项：${NEXUS_MODE_CONFIG[activeMode].tools.map(formatToolDisplayName).join(' · ')}`"
+              >
                 <em>·</em>可用工具 <b>{{ NEXUS_MODE_CONFIG[activeMode].tools.length }}</b> 项<em>·</em>
                 <template
                   v-for="(t, i) in NEXUS_MODE_CONFIG[activeMode].tools.slice(0, 5)"
@@ -3020,39 +3260,74 @@ const emptySuggestions = computed(() =>
                理由：决定与「提出修改」必须在同一个视线落点——用户在输入框打字时
                就能看到提案并改它，不必上翻到消息流里找那张卡（历史上滚过就看不见了）。
                消息流里那张卡保留不动，作为提案的留存记录。 -->
-          <div v-if="pendingApproval" class="nx-approval-dock">
+          <!-- v2（NX-LB2）：支持多条待办（服务端恢复 + SSE），带结构化 diff 与基线提示。
+               不静默替用户选中某个运行——每条都写明 preset 与指纹。 -->
+          <div v-for="item in pendingItems" :key="item.id" class="nx-approval-dock">
             <div class="nx-ad-head">
               <FlaskConical :size="14" class="nx-ad-icon" />
-              <span class="nx-ad-title">复现方案待你确认 · {{ pendingApproval.approval.preset_id }}</span>
+              <span class="nx-ad-title">复现方案待你确认 · {{ item.preset || '未命名 preset' }}</span>
               <span class="nx-ad-status">待批准</span>
             </div>
+            <p v-if="item.objective" class="nx-ad-obj">{{ item.objective }}</p>
             <div class="nx-ad-meta">
-              <span class="nx-ad-repo">{{ pendingApproval.approval.repo_url }}</span>
-              <span>许可 {{ pendingApproval.approval.repo_license }}</span>
+              <span v-if="item.repo" class="nx-ad-repo">{{ item.repo }}</span>
+              <span v-if="item.license">许可 {{ item.license }}</span>
               <span>
-                预算约 {{ pendingApproval.approval.budget?.estimated_minutes ?? '—' }} 分钟 /
-                {{ pendingApproval.approval.budget?.max_steps ?? '—' }} 步
+                预算约 {{ item.budget?.estimated_minutes ?? '—' }} 分钟 /
+                {{ item.budget?.max_steps ?? '—' }} 步
               </span>
+              <span v-if="item.expiresAt">有效期至 {{ item.expiresAt }}</span>
             </div>
+
+            <!-- 结构化 diff：只渲染服务端给的差异，前端不自己比对 -->
+            <div v-if="item.diff.length" class="nx-ad-diff">
+              <div class="nx-ad-diffcap">与上一版的差异</div>
+              <div v-for="(d, di) in item.diff" :key="di" class="nx-ad-drow">
+                <span class="nx-ad-dk" :class="diffKindClass(d.kind || d.type)">
+                  {{ diffKindLabel(d.kind || d.type) }}
+                </span>
+                <span class="nx-ad-dn">{{ d.name || d.key || d.field || '—' }}</span>
+                <span class="nx-ad-dv">
+                  <s v-if="d.before !== undefined && d.before !== null">{{ d.before }}</s>
+                  <template v-if="d.before !== undefined && d.before !== null"> → </template>
+                  <b>{{ d.after ?? d.value ?? '—' }}</b>
+                </span>
+              </div>
+            </div>
+
+            <!-- 基线不匹配：如实标注，不沿用旧容差判 PASS -->
+            <p v-if="item.baselineNote" class="nx-ad-warn">
+              {{ item.baselineNote }}
+            </p>
+
             <p class="nx-ad-note">
-              计划指纹 {{ String(pendingApproval.approval.plan_hash || '').slice(0, 12) }}…
+              计划指纹 {{ String(item.planHash || '').slice(0, 12) }}…
+              <template v-if="item.proposalId"> · 提案 v{{ item.proposalVersion ?? '—' }}</template>
               · 批准后才提交执行，未批准不会运行任何代码
             </p>
             <div class="nx-ad-actions">
               <SfxButton
                 variant="primary"
                 size="sm"
-                :loading="pendingApproval.approval.deciding || pendingApproval.approval.executing"
-                @click="decideApprovalFor(pendingApproval, 'approved')"
+                :loading="item.turn?.approval?.deciding || item.turn?.approval?.executing"
+                @click="approveRestored(item)"
               >
                 批准执行
               </SfxButton>
               <SfxButton variant="secondary" size="sm" @click="scrollToApprovalInStream">
                 查看完整方案
               </SfxButton>
+              <SfxButton
+                variant="danger"
+                size="sm"
+                :disabled="item.turn?.approval?.deciding"
+                @click="rejectRestored(item)"
+              >
+                拒绝
+              </SfxButton>
               <span class="nx-ad-hint">↓ 在下面输入框提出修改，改完重新确认</span>
             </div>
-            <p v-if="pendingApproval.approval.error" class="nx-ad-error">{{ pendingApproval.approval.error }}</p>
+            <p v-if="item.turn?.approval?.error" class="nx-ad-error">{{ item.turn.approval.error }}</p>
           </div>
 
           <textarea
@@ -4108,6 +4383,78 @@ const emptySuggestions = computed(() =>
   color: var(--red-700);
 }
 
+/* 审批浮窗 v2：目标 / diff / 基线提示 */
+.nx-ad-obj {
+  margin: var(--space-2) 0 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.nx-ad-diff {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-2);
+}
+
+.nx-ad-diffcap {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.nx-ad-drow {
+  display: grid;
+  grid-template-columns: 44px 120px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.nx-ad-dk {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  text-align: center;
+  padding: 1px 0;
+  border-radius: var(--radius-xs);
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+}
+
+.nx-ad-dk.is-mod { color: var(--nexus-accent); background: var(--nexus-accent-soft); }
+.nx-ad-dk.is-add { color: var(--green-700); background: var(--green-100); }
+.nx-ad-dk.is-del { color: var(--red-700); background: var(--red-100); }
+
+.nx-ad-dn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.nx-ad-dv {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.nx-ad-dv s { color: var(--text-disabled); }
+
+.nx-ad-warn {
+  margin: var(--space-2) 0 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-xs);
+  background: #fdf6e3;
+  box-shadow: inset 0 0 0 1px #ecd9a4;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: #8a6a1f;
+}
+
 .nx-mode-sfx-btn {
   padding: 4px var(--space-2);
   min-height: 40px;
@@ -4393,6 +4740,9 @@ const emptySuggestions = computed(() =>
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* 预留滚动条槽位：Research 建议 4 条比 General 3 条高，若刚好跨过
+     出滚动条的临界点，宽度会突变导致整块横向抖一下。 */
+  scrollbar-gutter: stable;
   padding: var(--space-6);
   display: flex;
   flex-direction: column;
@@ -4406,8 +4756,13 @@ const emptySuggestions = computed(() =>
    不引入任何装饰性字符（v1 的衬线大标题与幽灵描边字已废弃）。
    ══════════════════════════════════════════════════════════════ */
 .nx-welcome {
-  /* 竖向仍居中，横向铺满：左缘与消息列对齐，发第一条消息时不跳位 */
-  margin: auto 0;
+  /* 顶部对齐，不用 margin:auto 垂直居中。
+     原因（实测）：General 3 条建议 / Research 4 条，工具白名单 5 vs 10 项，
+     切换模式时内容高度会变；居中会把这个差值的一半变成"整块上下平移"，
+     用户看到的就是整个启动页在跳。顶部对齐后，上方元素零位移，
+     只有最下方的建议列表向下增长——这是列表变长该有的行为。 */
+  margin: 0;
+  padding-top: var(--space-2);
   width: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
@@ -4445,6 +4800,9 @@ const emptySuggestions = computed(() =>
 .nx-wl-lede {
   margin-top: 8px;
   max-width: 34em;
+  /* min-height = 2 行：两种模式的引导句长短不同（34 字 / 25 字），
+     不锁下限会出现 2 行↔1 行的抖动。 */
+  min-height: calc(13.5px * 1.8 * 2);
   font-size: 13.5px;
   line-height: 1.8;
   color: var(--text-secondary);
@@ -4456,7 +4814,9 @@ const emptySuggestions = computed(() =>
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
+  /* nowrap：工具行在窄屏若换行，整行高度 18→36，切换模式时下方全部位移 */
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .nx-seg {
@@ -4507,9 +4867,17 @@ const emptySuggestions = computed(() =>
 
 /* 工具白名单：mono 一行，不用绿色药丸（绿色会被读成"成功态"） */
 .nx-wl-tools {
+  /* 恒为一行：可伸缩 + 溢出省略，全量工具名挂 title。
+     Research 10 项比 General 5 项长得多，不锁一行就会换行导致高度抖动。 */
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 18px;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: var(--font-mono);
   font-size: 10.5px;
-  line-height: 1.7;
   color: var(--text-muted);
 }
 

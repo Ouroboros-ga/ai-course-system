@@ -79,6 +79,56 @@ export function getNexusApproval(approvalId) {
 }
 
 /**
+ * 审批待办恢复（NX-LB2）：进入会话即拉本人的 pending 待办，
+ * 供输入框上方浮窗展示。不能静默替用户选中另一个运行的审批——
+ * 浮窗必须写明目标运行，因此调用方要按 session_id 过滤并展示全部。
+ */
+export function listNexusApprovals(sessionId = '', status = 'pending') {
+  return request.get('/nexus/approvals', {
+    params: { session_id: sessionId, status },
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/** 可见 preset 投影（NX-LB1）：参数白名单/默认值/预算/指标基线的唯一来源。 */
+export function listNexusReproPresets() {
+  return request.get('/nexus/repro/presets', {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/** 建提案草案（NX-LB2）：创建不执行；client_request_id 幂等。 */
+export function createNexusProposal(payload) {
+  return request.post('/nexus/repro/proposals', payload, { allowFlatResponse: true })
+}
+
+/** 提案详情（NX-LB2）：完整方案 + 校验结果 + 与父运行/上一版本的 diff。 */
+export function getNexusProposal(proposalId) {
+  return request.get(`/nexus/repro/proposals/${encodeURIComponent(proposalId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/** 改提案（NX-LB2）：乐观锁 expected_version；仅 draft；旧批准随 hash 失效。 */
+export function patchNexusProposal(proposalId, payload) {
+  return request.patch(`/nexus/repro/proposals/${encodeURIComponent(proposalId)}`, payload, {
+    allowFlatResponse: true,
+  })
+}
+
+/** 请求审批（NX-LB2）：pin 版本 + hash 生成/复用审批；不直接执行。 */
+export function requestNexusProposalApproval(proposalId, expectedVersion) {
+  return request.post(
+    `/nexus/repro/proposals/${encodeURIComponent(proposalId)}/request-approval`,
+    { expected_version: expectedVersion },
+    { allowFlatResponse: true }
+  )
+}
+
+/**
  * 批准/拒绝（NX-G2 Hard Workflow）：决定动作本人发起，服务端原子转换。
  * UI 只负责展示提案与提交决定，不代替服务端做任何放行判断。
  */
