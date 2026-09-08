@@ -1,0 +1,15 @@
+{
+  "schema_version": "corpus-sources/1",
+  "description": "五类公开 CS 语料登记（CR0）。file 相对 source_root；部署源目录如 /opt/smartcarb/shared/knowledge_corpus。本地无语料文件时 inventory 报 file_unavailable，不伪造数量。",
+  "sources": [
+    {"source_kind": "textbook", "file": "corpus_textbooks.jsonl", "format": "textbooks", "id_prefix": ["ostep-", "sicp-"], "license_note": "作者自由授权版本（OSTEP/SICP），逐文档 license 为准"},
+    {"source_kind": "zhwiki", "file": "corpus_zhwiki_cs.jsonl", "format": "wiki", "id_prefix": ["zhwiki-"], "license_note": "CC BY-SA 4.0"},
+    {"source_kind": "enwiki", "file": "corpus_enwiki_cs.jsonl", "format": "wiki", "id_prefix": ["enwiki-"], "license_note": "CC BY-SA 4.0"},
+    {"source_kind": "rfc", "file": "corpus_rfc.jsonl", "format": "rfc", "id_prefix": ["rfc-"], "license_note": "IETF 自由分发"},
+    {"source_kind": "arxiv", "file": "corpus_arxiv_cs.jsonl", "format": "arxiv", "id_prefix": ["arxiv-"], "license_note": "论文自带 CC 许可，实验性结论属研究层"}
+  ],
+  "sets": {
+    "cs-public": ["corpus_textbooks.jsonl", "corpus_zhwiki_cs.jsonl", "corpus_enwiki_cs.jsonl", "corpus_rfc.jsonl", "corpus_arxiv_cs.jsonl"],
+    "cs-textbooks": ["corpus_textbooks.jsonl"]
+  }
+}

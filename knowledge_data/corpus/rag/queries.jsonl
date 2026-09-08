@@ -1,0 +1,120 @@
+{"query_id": "synth-q-001", "kind": "zh", "text": "进程和线程的区别", "relevant_passage_ids": ["synth-p-os-01"]}
+{"query_id": "synth-q-002", "kind": "zh", "text": "进程线程切换开销为什么不同", "relevant_passage_ids": ["synth-p-os-01"]}
+{"query_id": "synth-q-003", "kind": "zh", "text": "页表的作用是什么", "relevant_passage_ids": ["synth-p-os-02"]}
+{"query_id": "synth-q-004", "kind": "zh", "text": "虚拟内存缺页会发生什么", "relevant_passage_ids": ["synth-p-os-02"]}
+{"query_id": "synth-q-005", "kind": "zh", "text": "死锁四个必要条件", "relevant_passage_ids": ["synth-p-os-03"]}
+{"query_id": "synth-q-006", "kind": "zh", "text": "银行家算法用来做什么", "relevant_passage_ids": ["synth-p-os-03"]}
+{"query_id": "synth-q-007", "kind": "zh", "text": "时间片轮转", "relevant_passage_ids": ["synth-p-os-04"]}
+{"query_id": "synth-q-008", "kind": "zh", "text": "多级反馈队列的特点", "relevant_passage_ids": ["synth-p-os-04"]}
+{"query_id": "synth-q-009", "kind": "zh", "text": "系统调用是什么", "relevant_passage_ids": ["synth-p-os-05"]}
+{"query_id": "synth-q-010", "kind": "zh", "text": "用户态如何进入内核态", "relevant_passage_ids": ["synth-p-os-05"]}
+{"query_id": "synth-q-011", "kind": "zh", "text": "TCP 三次握手", "relevant_passage_ids": ["synth-p-net-01"]}
+{"query_id": "synth-q-012", "kind": "zh", "text": "TCP 如何保证可靠", "relevant_passage_ids": ["synth-p-net-01"]}
+{"query_id": "synth-q-013", "kind": "zh", "text": "IPv4 和 IPv6 地址长度", "relevant_passage_ids": ["synth-p-net-02"]}
+{"query_id": "synth-q-014", "kind": "zh", "text": "点分十进制是什么", "relevant_passage_ids": ["synth-p-net-02"]}
+{"query_id": "synth-q-015", "kind": "zh", "text": "拥塞窗口的作用", "relevant_passage_ids": ["synth-p-net-03"]}
+{"query_id": "synth-q-016", "kind": "zh", "text": "丢包后窗口如何变化", "relevant_passage_ids": ["synth-p-net-03"]}
+{"query_id": "synth-q-017", "kind": "zh", "text": "DNS 解析过程", "relevant_passage_ids": ["synth-p-net-04"]}
+{"query_id": "synth-q-018", "kind": "zh", "text": "递归查询和迭代查询区别", "relevant_passage_ids": ["synth-p-net-04"]}
+{"query_id": "synth-q-019", "kind": "zh", "text": "HTTP 三个版本区别", "relevant_passage_ids": ["synth-p-net-05"]}
+{"query_id": "synth-q-020", "kind": "zh", "text": "多路复用解决什么问题", "relevant_passage_ids": ["synth-p-net-05"]}
+{"query_id": "synth-q-021", "kind": "zh", "text": "二分查找的前提条件", "relevant_passage_ids": ["synth-p-algo-01"]}
+{"query_id": "synth-q-022", "kind": "zh", "text": "二分查找复杂度", "relevant_passage_ids": ["synth-p-algo-01"]}
+{"query_id": "synth-q-023", "kind": "zh", "text": "快速排序平均复杂度", "relevant_passage_ids": ["synth-p-algo-02"]}
+{"query_id": "synth-q-024", "kind": "zh", "text": "快速排序最坏情况", "relevant_passage_ids": ["synth-p-algo-02"]}
+{"query_id": "synth-q-025", "kind": "zh", "text": "哈希冲突怎么办", "relevant_passage_ids": ["synth-p-algo-03"]}
+{"query_id": "synth-q-026", "kind": "zh", "text": "链地址法原理", "relevant_passage_ids": ["synth-p-algo-03"]}
+{"query_id": "synth-q-027", "kind": "zh", "text": "动态规划适用条件", "relevant_passage_ids": ["synth-p-algo-04"]}
+{"query_id": "synth-q-028", "kind": "zh", "text": "备忘录的作用", "relevant_passage_ids": ["synth-p-algo-04"]}
+{"query_id": "synth-q-029", "kind": "zh", "text": "近似算法是什么", "relevant_passage_ids": ["synth-p-algo-05"]}
+{"query_id": "synth-q-030", "kind": "zh", "text": "NP 难问题如何近似求解", "relevant_passage_ids": ["synth-p-algo-05"]}
+{"query_id": "synth-q-031", "kind": "zh", "text": "ACID 四个特性", "relevant_passage_ids": ["synth-p-db-01"]}
+{"query_id": "synth-q-032", "kind": "zh", "text": "事务隔离性是什么", "relevant_passage_ids": ["synth-p-db-01"]}
+{"query_id": "synth-q-033", "kind": "zh", "text": "B+ 树范围查询为什么快", "relevant_passage_ids": ["synth-p-db-02"]}
+{"query_id": "synth-q-034", "kind": "zh", "text": "B+ 树叶子结构", "relevant_passage_ids": ["synth-p-db-02"]}
+{"query_id": "synth-q-035", "kind": "zh", "text": "第三范式的要求", "relevant_passage_ids": ["synth-p-db-03"]}
+{"query_id": "synth-q-036", "kind": "zh", "text": "传递依赖是什么", "relevant_passage_ids": ["synth-p-db-03"]}
+{"query_id": "synth-q-037", "kind": "zh", "text": "预写日志的作用", "relevant_passage_ids": ["synth-p-db-04"]}
+{"query_id": "synth-q-038", "kind": "zh", "text": "崩溃恢复怎么做", "relevant_passage_ids": ["synth-p-db-04"]}
+{"query_id": "synth-q-039", "kind": "zh", "text": "两阶段锁", "relevant_passage_ids": ["synth-p-db-05"]}
+{"query_id": "synth-q-040", "kind": "zh", "text": "等待图用来做什么", "relevant_passage_ids": ["synth-p-db-05"]}
+{"query_id": "synth-q-041", "kind": "en", "text": "paging frames", "relevant_passage_ids": ["synth-p-en-01"]}
+{"query_id": "synth-q-042", "kind": "zh", "text": "页表映射什么", "relevant_passage_ids": ["synth-p-en-01"]}
+{"query_id": "synth-q-043", "kind": "en", "text": "handshake sequence numbers", "relevant_passage_ids": ["synth-p-en-02"]}
+{"query_id": "synth-q-044", "kind": "zh", "text": "TCP 握手几次", "relevant_passage_ids": ["synth-p-en-02"]}
+{"query_id": "synth-q-045", "kind": "en", "text": "sorted array search", "relevant_passage_ids": ["synth-p-en-03"]}
+{"query_id": "synth-q-046", "kind": "zh", "text": "二分查找的条件是什么", "relevant_passage_ids": ["synth-p-en-03"]}
+{"query_id": "synth-q-047", "kind": "en", "text": "hash function slots", "relevant_passage_ids": ["synth-p-en-04"]}
+{"query_id": "synth-q-048", "kind": "zh", "text": "哈希冲突如何处理", "relevant_passage_ids": ["synth-p-en-04"]}
+{"query_id": "synth-q-049", "kind": "en", "text": "pivot partition", "relevant_passage_ids": ["synth-p-en-05"]}
+{"query_id": "synth-q-050", "kind": "zh", "text": "快速排序最坏情况是什么", "relevant_passage_ids": ["synth-p-en-05"]}
+{"query_id": "synth-q-051", "kind": "en", "text": "slow start", "relevant_passage_ids": ["synth-p-en-06"]}
+{"query_id": "synth-q-052", "kind": "zh", "text": "拥塞窗口何时减半", "relevant_passage_ids": ["synth-p-en-06"]}
+{"query_id": "synth-q-053", "kind": "en", "text": "128-bit address", "relevant_passage_ids": ["synth-p-en-07"]}
+{"query_id": "synth-q-054", "kind": "zh", "text": "IPv6 地址多长", "relevant_passage_ids": ["synth-p-en-07"]}
+{"query_id": "synth-q-055", "kind": "en", "text": "redo undo recovery", "relevant_passage_ids": ["synth-p-en-08"]}
+{"query_id": "synth-q-056", "kind": "zh", "text": "预写日志起什么作用", "relevant_passage_ids": ["synth-p-en-08"]}
+{"query_id": "synth-q-057", "kind": "en", "text": "leaf level scan", "relevant_passage_ids": ["synth-p-en-09"]}
+{"query_id": "synth-q-058", "kind": "zh", "text": "B+ 树范围查询为什么快", "relevant_passage_ids": ["synth-p-en-09"]}
+{"query_id": "synth-q-059", "kind": "en", "text": "hold and wait", "relevant_passage_ids": ["synth-p-en-10"]}
+{"query_id": "synth-q-060", "kind": "zh", "text": "死锁四个条件是什么", "relevant_passage_ids": ["synth-p-en-10"]}
+{"query_id": "synth-q-061", "kind": "en", "text": "address space sharing", "relevant_passage_ids": ["synth-p-en-11"]}
+{"query_id": "synth-q-062", "kind": "zh", "text": "线程切换为什么快", "relevant_passage_ids": ["synth-p-en-11"]}
+{"query_id": "synth-q-063", "kind": "en", "text": "recursive vs iterative DNS", "relevant_passage_ids": ["synth-p-en-12"]}
+{"query_id": "synth-q-064", "kind": "zh", "text": "DNS 有哪两种查询", "relevant_passage_ids": ["synth-p-en-12"]}
+{"query_id": "synth-q-065", "kind": "en", "text": "optimal substructure", "relevant_passage_ids": ["synth-p-en-13"]}
+{"query_id": "synth-q-066", "kind": "zh", "text": "动态规划适用什么问题", "relevant_passage_ids": ["synth-p-en-13"]}
+{"query_id": "synth-q-067", "kind": "en", "text": "durability meaning", "relevant_passage_ids": ["synth-p-en-14"]}
+{"query_id": "synth-q-068", "kind": "zh", "text": "ACID 包含哪些特性", "relevant_passage_ids": ["synth-p-en-14"]}
+{"query_id": "synth-q-069", "kind": "en", "text": "multiplexing streams", "relevant_passage_ids": ["synth-p-en-15"]}
+{"query_id": "synth-q-070", "kind": "zh", "text": "HTTP/2 解决了什么", "relevant_passage_ids": ["synth-p-en-15"]}
+{"query_id": "synth-q-071", "kind": "en", "text": "provable bounds", "relevant_passage_ids": ["synth-p-en-16"]}
+{"query_id": "synth-q-072", "kind": "zh", "text": "近似算法保证什么", "relevant_passage_ids": ["synth-p-en-16"]}
+{"query_id": "synth-q-073", "kind": "en", "text": "fixed quantum", "relevant_passage_ids": ["synth-p-en-17"]}
+{"query_id": "synth-q-074", "kind": "zh", "text": "时间片轮转是什么", "relevant_passage_ids": ["synth-p-en-17"]}
+{"query_id": "synth-q-075", "kind": "en", "text": "transitive dependency", "relevant_passage_ids": ["synth-p-en-18"]}
+{"query_id": "synth-q-076", "kind": "zh", "text": "第三范式要求什么", "relevant_passage_ids": ["synth-p-en-18"]}
+{"query_id": "synth-q-077", "kind": "en", "text": "privileged operations gate", "relevant_passage_ids": ["synth-p-en-19"]}
+{"query_id": "synth-q-078", "kind": "zh", "text": "系统调用是什么", "relevant_passage_ids": ["synth-p-en-19"]}
+{"query_id": "synth-q-079", "kind": "en", "text": "serializability lock", "relevant_passage_ids": ["synth-p-en-20"]}
+{"query_id": "synth-q-080", "kind": "zh", "text": "两阶段锁保证什么", "relevant_passage_ids": ["synth-p-en-20"]}
+{"query_id": "synth-q-081", "kind": "zh", "text": "缺页中断的过程", "relevant_passage_ids": ["synth-p-os-02"]}
+{"query_id": "synth-q-082", "kind": "zh", "text": "序号和确认号的作用", "relevant_passage_ids": ["synth-p-net-01"]}
+{"query_id": "synth-q-083", "kind": "zh", "text": "基准元素怎么选", "relevant_passage_ids": ["synth-p-algo-02"]}
+{"query_id": "synth-q-084", "kind": "zh", "text": "原子性保证什么", "relevant_passage_ids": ["synth-p-db-01"]}
+{"query_id": "synth-q-085", "kind": "zh", "text": "循环等待怎么破", "relevant_passage_ids": ["synth-p-os-03"]}
+{"query_id": "synth-q-086", "kind": "zh", "text": "慢启动的过程", "relevant_passage_ids": ["synth-p-net-03"]}
+{"query_id": "synth-q-087", "kind": "zh", "text": "哈希函数的作用", "relevant_passage_ids": ["synth-p-algo-03"]}
+{"query_id": "synth-q-088", "kind": "zh", "text": "叶子节点存什么", "relevant_passage_ids": ["synth-p-db-02"]}
+{"query_id": "synth-q-089", "kind": "zh", "text": "地址空间共享的含义", "relevant_passage_ids": ["synth-p-os-01"]}
+{"query_id": "synth-q-090", "kind": "zh", "text": "多路复用的好处", "relevant_passage_ids": ["synth-p-net-05"]}
+{"query_id": "synth-q-091", "kind": "en", "text": "acknowledgment numbers use", "relevant_passage_ids": ["synth-p-en-02"]}
+{"query_id": "synth-q-092", "kind": "en", "text": "chaining colliding entries", "relevant_passage_ids": ["synth-p-en-04"]}
+{"query_id": "synth-q-093", "kind": "en", "text": "crash recovery steps", "relevant_passage_ids": ["synth-p-en-08"]}
+{"query_id": "synth-q-094", "kind": "en", "text": "circular wait condition", "relevant_passage_ids": ["synth-p-en-10"]}
+{"query_id": "synth-q-095", "kind": "en", "text": "memoization benefit", "relevant_passage_ids": ["synth-p-en-13"]}
+{"query_id": "synth-q-096", "kind": "en", "text": "virtual to physical mapping", "relevant_passage_ids": ["synth-p-en-01"]}
+{"query_id": "synth-q-097", "kind": "en", "text": "ordered leaf traversal", "relevant_passage_ids": ["synth-p-en-09"]}
+{"query_id": "synth-q-098", "kind": "en", "text": "isolation level meaning", "relevant_passage_ids": ["synth-p-en-14"]}
+{"query_id": "synth-q-099", "kind": "en", "text": "quadratic worst case cause", "relevant_passage_ids": ["synth-p-en-05"]}
+{"query_id": "synth-q-100", "kind": "en", "text": "wait-for graph usage", "relevant_passage_ids": ["synth-p-en-20"]}
+{"query_id": "synth-qn-01", "kind": "no_answer", "text": "怎么做红烧肉", "relevant_passage_ids": []}
+{"query_id": "synth-qn-02", "kind": "no_answer", "text": "how to bake sourdough bread", "relevant_passage_ids": []}
+{"query_id": "synth-qn-03", "kind": "no_answer", "text": "昨晚的足球比分是多少", "relevant_passage_ids": []}
+{"query_id": "synth-qn-04", "kind": "no_answer", "text": "who won the football match last night", "relevant_passage_ids": []}
+{"query_id": "synth-qn-05", "kind": "no_answer", "text": "阳台绿萝多久浇一次水", "relevant_passage_ids": []}
+{"query_id": "synth-qn-06", "kind": "no_answer", "text": "best time to visit Paris", "relevant_passage_ids": []}
+{"query_id": "synth-qn-07", "kind": "no_answer", "text": "高铁票怎么改签", "relevant_passage_ids": []}
+{"query_id": "synth-qn-08", "kind": "no_answer", "text": "how to file taxes online", "relevant_passage_ids": []}
+{"query_id": "synth-qn-09", "kind": "no_answer", "text": "这件毛衣缩水了怎么办", "relevant_passage_ids": []}
+{"query_id": "synth-qn-10", "kind": "no_answer", "text": "why is the sky blue", "relevant_passage_ids": []}
+{"query_id": "synth-qn-11", "kind": "no_answer", "text": "地铁三号线首班车几点", "relevant_passage_ids": []}
+{"query_id": "synth-qn-12", "kind": "no_answer", "text": "stock market today", "relevant_passage_ids": []}
+{"query_id": "synth-qn-13", "kind": "no_answer", "text": "航班延误了找谁投诉", "relevant_passage_ids": []}
+{"query_id": "synth-qn-14", "kind": "no_answer", "text": "how to potty train a cat", "relevant_passage_ids": []}
+{"query_id": "synth-qn-15", "kind": "no_answer", "text": "会议室投影仪没信号", "relevant_passage_ids": []}
+{"query_id": "synth-qn-16", "kind": "no_answer", "text": "symptoms of common cold", "relevant_passage_ids": []}
+{"query_id": "synth-qn-17", "kind": "no_answer", "text": "楼下小猫吃什么", "relevant_passage_ids": []}
+{"query_id": "synth-qn-18", "kind": "no_answer", "text": "car insurance renewal tips", "relevant_passage_ids": []}
+{"query_id": "synth-qn-19", "kind": "no_answer", "text": "奶茶三分糖是多少糖", "relevant_passage_ids": []}
+{"query_id": "synth-qn-20", "kind": "no_answer", "text": "ancient Roman recipes", "relevant_passage_ids": []}

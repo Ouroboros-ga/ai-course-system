@@ -833,6 +833,12 @@ test('disciplineKnowledge.js: 学科知识库客户端路径与后端路由一�
   assert.equal(extractFirstPath(src, 'getDisciplineKnowledgeOverview'), '/discipline-knowledge/overview')
   assert.match(backend, /@router\.get\("\/overview"\)/)
 
+  assert.equal(
+    extractFirstPath(src, 'getDisciplineCorpusChunk'),
+    '/discipline-knowledge/chunks/${encodeURIComponent(chunkId)}',
+  )
+  assert.match(backend, /@router\.get\("\/chunks\/\{chunk_id\}"\)/)
+
   assert.equal(extractFirstPath(src, 'reloadDisciplineKnowledge'), '/discipline-knowledge/reload')
   assert.match(backend, /@router\.post\("\/reload"\)/)
 
@@ -852,6 +858,63 @@ test('DisciplineKnowledgePage.vue: 消费解包后的 data（request.js 拦截�
   assert.doesNotMatch(src, /body\?\.data/)
   assert.match(src, /overview\.value = body \?\? null/)
   assert.match(src, /results\.value = body\?\.results \?\? \[\]/)
+})
+
+test('DisciplineKnowledgePage.vue: 资料检索模式与原文查看（CR5）', () => {
+  const src = read('frontend/src/app/pages/discipline/DisciplineKnowledgePage.vue')
+  const client = read('frontend/src/api/disciplineKnowledge.js')
+  const lib = read('frontend/src/app/lib/disciplineCorpusPresentation.js')
+  // 模式切换与原文查看必须使用 SfxButton；资料模式只调 chunk 引用端点
+  assert.match(src, /switchMode\('corpus'\)/)
+  assert.match(src, /getDisciplineCorpusChunk/)
+  assert.match(src, /formatCorpusCoverage/)
+  assert.match(client, /getDisciplineCorpusChunk/)
+  assert.match(client, /\/discipline-knowledge\/chunks\//)
+  assert.match(lib, /formatCorpusCoverage/)
+  // 不拼磁盘路径、不渲染绝对路径
+  assert.doesNotMatch(src, /object_key/)
+  assert.doesNotMatch(src, /\/opt\//)
+  // 出处链接经白名单（P2-8）：只渲染 http/https，不裸绑 source_url
+  assert.match(src, /safeSourceUrl/)
+  assert.doesNotMatch(src, /:href="row\.source_url"/)
+})
+
+test('DisciplineKnowledgePage.vue: 概念/语料结果独立渲染（P1-2 修复）', () => {
+  const src = read('frontend/src/app/pages/discipline/DisciplineKnowledgePage.vue')
+  // 结果列表不得挂在提示 template 的 v-else-if 链上：检索成功后概念卡会永不渲染
+  assert.match(src, /<ul v-if="conceptResults\.length && !loading"/)
+  assert.doesNotMatch(src, /<ul v-else-if="conceptResults\.length"/)
+  assert.match(src, /<ul v-if="corpusResults\.length && !loading"/)
+})
+
+test('AgentAssistantBubble.vue: 语料引用行内查看原文（CR5）', () => {
+  const src = read('frontend/src/app/components/learn/AgentAssistantBubble.vue')
+  assert.match(src, /getDisciplineCorpusChunk/)
+  assert.match(src, /reference_id/)
+  assert.match(src, /isCorpusRef/)
+  assert.doesNotMatch(src, /object_key/)
+  // 许可字段来自端点 source_license（P2-4 修复：不再只读 ref.license）
+  assert.match(src, /source_license/)
+  // 出处链接经白名单（P2-8）：不裸绑 source_url
+  assert.match(src, /safeSourceUrl/)
+  assert.doesNotMatch(src, /:href="ref\.source_url"/)
+})
+
+test('useLearningWorkspace.js: 学科版本与引用声明透传、历史回看兼容（CR5）', () => {
+  const src = read('frontend/src/features/student-learning/composables/useLearningWorkspace.js')
+  assert.match(src, /disciplineReleaseId/)
+  assert.match(src, /usedDisciplineReferenceIds/)
+  assert.match(src, /msg\.discipline_references/)
+})
+
+test('NexusPage.vue: CS 语料条目保留回源身份（CR5）', () => {
+  const src = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  assert.match(src, /search_cs_knowledge/)
+  assert.match(src, /reference_id/)
+  assert.match(src, /chunk_id/)
+  // 回源身份与许可要真的渲染出来（P2-5 修复），不只是收集
+  assert.match(src, /k\.reference_id/)
+  assert.match(src, /k\.license/)
 })
 
 // ── CodeNexus 转型 S1：Nexus AI 全局入口 ────────────────────────────────────

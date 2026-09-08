@@ -3,8 +3,9 @@
 锁定三件事：
 1. course_id 只信请求作用域（代理层注入），无绑定课程时 fail-closed；
 2. 内部端点未配置/不可达/403 时如实返回错误码，绝不假造检索结果；
-3. 成功路径的条目映射带权威标签（课程资料=经核实 / CS=权威来源），
-   is_supplementary=False，与 web 检索的"补充参考"边界区分。
+3. 成功路径的条目映射带权威标签（课程资料=经核实 / CS=语料参考补充），
+   顶层与逐条均为 is_supplementary=True（CR4 语义修正：CS 结果不再标
+   "教材级权威"，可追溯不等于正确）。
 """
 
 import json
@@ -72,15 +73,32 @@ def _cs_body() -> dict:
         "code": 200,
         "data": {
             "authority": "cs_kb",
+            "release_id": "dkr_test",
+            "mode": "hybrid",
+            "degraded_reasons": [],
+            "is_supplementary": True,
             "items": [
                 {
+                    "result_type": "concept",
                     "id": "kb-hash-1",
                     "name": "哈希表",
                     "node_type": "concept",
                     "definition": "平均 O(1) 查找的键值映射结构。",
                     "source": "教材第 6 章",
                     "course": "数据结构与算法",
-                }
+                    "authority_label": "精编概念（书目来源）",
+                    "is_supplementary": True,
+                },
+                {
+                    "result_type": "corpus_chunk",
+                    "chunk_id": "dkch_test",
+                    "reference_id": "dkr_test:dkch_test",
+                    "title": "合成标题",
+                    "text": "页表记录虚拟页与物理页的映射。",
+                    "source_kind": "textbook",
+                    "authority_label": "开放教材",
+                    "is_supplementary": True,
+                },
             ],
         },
     }
@@ -155,10 +173,39 @@ async def test_internal_call_sends_identity_and_token(monkeypatch: pytest.Monkey
     assert seen["auth"] == f"Bearer {TOKEN}"
     assert seen["user"] == "42"
     assert seen["path"] == "/api/v1/nexus-internal/cs-knowledge"
-    assert result["authority_label"] == "CS 知识库（权威来源）"
-    assert result["is_supplementary"] is False
+    assert result["authority_label"] == "CS 语料参考（补充，需核对原文）"
+    assert result["is_supplementary"] is True
     assert result["items"][0]["name"] == "哈希表"
     assert result["items"][0]["source"] == "教材第 6 章"
+    # 语料条目：引用身份与补充标记逐条透传（模型上下文与回源入口依据）
+    corpus = result["items"][1]
+    assert corpus["chunk_id"] == "dkch_test"
+    assert corpus["reference_id"] == "dkr_test:dkch_test"
+    assert corpus["is_supplementary"] is True
+    # 版本与降级随工具结果透传（模型/界面据此知道语料版本与可用通路）
+    assert result["release_id"] == "dkr_test"
+    assert result["mode"] == "hybrid"
+    assert result["degraded_reasons"] == []
+    assert result["items_total"] == 2
+    assert result["items_truncated"] == 0
+
+
+async def test_cs_search_reports_truncated_items(monkeypatch: pytest.MonkeyPatch):
+    body = _cs_body()
+    body["data"]["items"] = [
+        {"result_type": "corpus_chunk", "chunk_id": f"dkch_{i}",
+         "reference_id": f"dkr_test:dkch_{i}", "title": f"t{i}",
+         "is_supplementary": True}
+        for i in range(10)
+    ]
+    with _settings_ready(monkeypatch), _mock_backend(
+        lambda request: httpx.Response(200, json=body)
+    ):
+        request_scope.set_scope("42", None)
+        result = await search_cs_knowledge.ainvoke({"query": "哈希表"})
+    assert len(result["items"]) == 8
+    assert result["items_total"] == 10
+    assert result["items_truncated"] == 2
 
 
 async def test_cs_search_works_without_course_binding(monkeypatch: pytest.MonkeyPatch):
@@ -185,3 +232,27 @@ def test_tool_surface_includes_retrieval_tools():
 
     names = {t.name for t in NEXUS_TOOLS}
     assert {"search_course_materials", "search_cs_knowledge"} <= names
+
+
+def test_cs_tool_result_event_keeps_reference_id():
+    """展示事件保留结构化条目：回源入口不受展示截断影响。
+
+    模型消费的 ToolMessage content 为完整 JSON；事件层只做条目边界截断。
+    """
+    import json
+
+    from nexus.main import _tool_result_payload
+    from nexus.tools.course_retrieval import search_cs_knowledge
+
+    assert "补充参考" in (search_cs_knowledge.description or "")
+    assert "reference_id" in (search_cs_knowledge.description or "")
+    content = json.dumps(
+        {"status": "success", "items": _cs_body()["data"]["items"]},
+        ensure_ascii=False)
+    payload = _tool_result_payload(
+        type("Msg", (), {"content": content, "name": "search_cs_knowledge",
+                         "status": "success"})())
+    by_chunk = next(i for i in payload["items"]
+                    if i.get("result_type") == "corpus_chunk")
+    assert by_chunk["reference_id"] == "dkr_test:dkch_test"
+    assert by_chunk["chunk_id"] == "dkch_test"

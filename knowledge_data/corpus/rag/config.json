@@ -1,0 +1,41 @@
+{
+  "schema_version": "corpus-rag-config/1",
+  "status": "draft-unfrozen",
+  "status_note": "结构已定；model.revision/files_hash 与对照实测在模型下载获批、真实小批运行后回填，在此之前不得宣称参数已冻结或覆盖已全量。",
+  "model": {
+    "id": "intfloat/multilingual-e5-small",
+    "revision": null,
+    "files_hash": null,
+    "pooling": "attention-mask mean",
+    "prefixes": {"query": "query: ", "passage": "passage: "},
+    "normalize": "l2",
+    "dimension": 384,
+    "max_length": 512,
+    "code_version": "corpus-embedding/1"
+  },
+  "baseline_model": {
+    "id": "bge-small-zh-v1.5-local",
+    "note": "历史中文子集基线（教材+中文维基），只代表部分来源覆盖"
+  },
+  "chunking": {
+    "target_tokens": 320,
+    "overlap_tokens": 32,
+    "title_max_tokens": 64,
+    "total_max_tokens": 512,
+    "split": "保留段落/代码块边界，超长显式拆分，禁止静默截断"
+  },
+  "retrieval": {
+    "lexical_k": 30,
+    "vector_k": 30,
+    "top_k": 6,
+    "context_budget_tokens": 3000,
+    "fusion": "rrf-k60"
+  },
+  "serving": {
+    "host": "127.0.0.1",
+    "port": 8310,
+    "query_batch_max": 8,
+    "doc_batch_init": 16,
+    "note": "仅 loopback；端口冲突由部署预检报出，不对公网暴露"
+  }
+}

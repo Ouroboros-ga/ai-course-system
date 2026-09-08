@@ -344,6 +344,9 @@ export function useLearningWorkspace(courseId, options = {}) {
         role: msg.role === 'assistant' ? 'assistant' : 'user',
         content: String(msg.content || ''),
         citations: Array.isArray(msg.citations) ? msg.citations : [],
+        // 历史回看兼容：后端 Conversation Domain 仅持久化课程 citations，
+        // 学科参考缺席时为空数组，不伪造引用。
+        disciplineReferences: Array.isArray(msg.discipline_references) ? msg.discipline_references : [],
         conceptId: msg.concept_id ?? null,
         restored: true,
       }))
@@ -678,6 +681,11 @@ export function useLearningWorkspace(courseId, options = {}) {
       answer: String(result?.answer || '暂时没有可用回答。'),
       citations: Array.isArray(result?.citations) ? result.citations : [],
       disciplineReferences: Array.isArray(result?.discipline_references) ? result.discipline_references : [],
+      // CR5：版本与引用声明透传（只读呈现；原文查看走 chunk 引用端点）。
+      disciplineReleaseId: result?.discipline_release_id ?? '',
+      usedDisciplineReferenceIds: Array.isArray(result?.used_discipline_reference_ids)
+        ? result.used_discipline_reference_ids
+        : [],
       fallbackRequired: result?.status === 'fallback_required',
       fallbackNotice,
       // 透传 warnings 数组，供未来面板展示（本次面板已有 fallbackNotice 展示位）。
@@ -759,6 +767,10 @@ export function useLearningWorkspace(courseId, options = {}) {
           content: result.answer,
           citations: result.citations,
           disciplineReferences: Array.isArray(result.disciplineReferences) ? result.disciplineReferences : [],
+          disciplineReleaseId: result.disciplineReleaseId || '',
+          usedDisciplineReferenceIds: Array.isArray(result.usedDisciplineReferenceIds)
+            ? result.usedDisciplineReferenceIds
+            : [],
           lowConfidence: result.lowConfidence,
           fallbackNotice: result.fallbackNotice || '',
           nodeId: currentNodeId.value,

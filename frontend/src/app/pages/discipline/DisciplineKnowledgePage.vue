@@ -2,28 +2,39 @@
 /**
  * XH-202620 学科知识库检索页（CS 垂类）。
  *
- * 数据源：GET /api/v1/discipline-knowledge/*（知识库 72 节点/64 关系，权威来源可追溯）。
+ * 双模式：精编概念（默认兼容）/ 资料检索（版本化语料原文块）。
+ * 数据源：GET /api/v1/discipline-knowledge/*；资料模式只调用 chunk 引用
+ * 端点取原文（固定 release_id），不拼磁盘路径。
  * 设计遵循 design.md：三层滚动模型（本页为 L3，根容器 height:100% + 内部滚动）、
  * 语义令牌（--color-brand / --surface-panel / --border-default 等）、SfxButton 规范。
  */
 import { computed, onMounted, ref } from 'vue'
-import { BookOpen, ChevronDown, ChevronUp, RefreshCw, Search, Sparkles } from 'lucide-vue-next'
+import { BookOpen, ChevronDown, ChevronUp, FileText, RefreshCw, Search, Sparkles } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import {
+  getDisciplineCorpusChunk,
   getDisciplineKnowledgeOverview,
   getDisciplineKnowledgeNode,
   searchDisciplineKnowledge,
   reloadDisciplineKnowledge,
 } from '@/api/disciplineKnowledge.js'
+import { formatCorpusCoverage, safeSourceUrl } from '@/app/lib/disciplineCorpusPresentation.js'
 
 const query = ref('')
 const topK = ref(5)
+const mode = ref('concept') // concept | corpus | all
 const loading = ref(false)
 const error = ref('')
 const results = ref([])
 const overview = ref(null)
 const expanded = ref(null) // 展开的节点 id
 const nodeDetail = ref(null)
+const degradedReasons = ref([])
+const releaseId = ref('')
+const expandedChunk = ref(null) // 展开原文的 chunk_id
+const chunkText = ref(null)
+const chunkLoading = ref(false)
+const chunkError = ref('')
 
 const hasSearched = ref(false)
 
@@ -54,15 +65,68 @@ async function runSearch() {
   hasSearched.value = true
   expanded.value = null
   nodeDetail.value = null
+  degradedReasons.value = []
+  releaseId.value = ''
+  expandedChunk.value = null
+  chunkText.value = null
+  chunkError.value = ''
   try {
-    const body = await searchDisciplineKnowledge(q, topK.value)
+    const body = await searchDisciplineKnowledge(q, topK.value, mode.value)
     results.value = body?.results ?? []
+    releaseId.value = body?.release_id ?? ''
+    degradedReasons.value = body?.degraded_reasons ?? []
   } catch (err) {
     error.value = err?.response?.data?.detail || '检索失败，请稍后重试。'
     results.value = []
   } finally {
     loading.value = false
   }
+}
+
+function isCorpusRow(row) {
+  return row?.result_type === 'corpus_chunk'
+}
+
+const conceptResults = computed(() => results.value.filter((row) => !isCorpusRow(row)))
+const corpusResults = computed(() => results.value.filter(isCorpusRow))
+
+async function toggleChunkDetail(row) {
+  const key = row.chunk_id
+  if (expandedChunk.value === key && chunkText.value) {
+    expandedChunk.value = null
+    chunkText.value = null
+    return
+  }
+  expandedChunk.value = key
+  chunkText.value = null
+  chunkError.value = ''
+  if (!key || !releaseId.value) {
+    chunkError.value = '缺少引用身份，无法查看原文。'
+    return
+  }
+  chunkLoading.value = true
+  try {
+    const body = await getDisciplineCorpusChunk(key, releaseId.value)
+    chunkText.value = body ?? null
+  } catch (err) {
+    chunkError.value = err?.response?.status === 410
+      ? '该来源已撤回，不再展示原文。'
+      : '原文加载失败，请稍后重试。'
+    chunkText.value = null
+  } finally {
+    chunkLoading.value = false
+  }
+}
+
+function switchMode(next) {
+  if (mode.value === next) return
+  mode.value = next
+  hasSearched.value = false
+  results.value = []
+  degradedReasons.value = []
+  releaseId.value = ''
+  expandedChunk.value = null
+  chunkText.value = null
 }
 
 async function toggleDetail(node) {
@@ -94,7 +158,12 @@ onMounted(loadOverview)
 
 const overviewText = computed(() => {
   if (!overview.value) return ''
-  return `${overview.value.node_count} 知识点 · ${overview.value.relation_count} 关系 · ${Object.keys(overview.value.courses || {}).length} 门课`
+  return `${overview.value.node_count} 精编概念 · ${overview.value.relation_count} 关系 · ${Object.keys(overview.value.courses || {}).length} 门课`
+})
+
+const corpusCoverageText = computed(() => {
+  if (!overview.value) return ''
+  return formatCorpusCoverage(overview.value.corpus ?? null)
 })
 </script>
 
@@ -104,8 +173,20 @@ const overviewText = computed(() => {
       <div class="dk-title-row">
         <h1 class="dk-title">CS 学科知识库</h1>
         <span v-if="overviewText" class="dk-overview">{{ overviewText }}</span>
+        <span v-if="corpusCoverageText" class="dk-overview dk-corpus-coverage">{{ corpusCoverageText }}</span>
         <SfxButton variant="tertiary" size="sm" class="dk-refresh" @click="refreshData">
           <RefreshCw :size="14" /> 刷新
+        </SfxButton>
+      </div>
+      <div class="dk-modes" role="tablist" aria-label="检索模式">
+        <SfxButton :variant="mode === 'concept' ? 'secondary' : 'tertiary'" size="sm" @click="switchMode('concept')">
+          <Sparkles :size="14" /> 精编概念
+        </SfxButton>
+        <SfxButton :variant="mode === 'corpus' ? 'secondary' : 'tertiary'" size="sm" @click="switchMode('corpus')">
+          <FileText :size="14" /> 资料检索
+        </SfxButton>
+        <SfxButton :variant="mode === 'all' ? 'secondary' : 'tertiary'" size="sm" @click="switchMode('all')">
+          <Search :size="14" /> 全部
         </SfxButton>
       </div>
       <form class="dk-search" @submit.prevent="runSearch">
@@ -134,15 +215,25 @@ const overviewText = computed(() => {
       <p v-else-if="loading" class="dk-hint"><span class="dk-spinner" /> 检索中…</p>
 
       <p v-else-if="hasSearched && results.length === 0" class="dk-hint">
-        未找到匹配的知识节点，请尝试其他关键词。
+        {{ mode === 'concept' ? '未找到匹配的知识节点，请尝试其他关键词。' : '未找到匹配的语料段落，请尝试其他关键词。' }}
       </p>
 
       <p v-else-if="!hasSearched" class="dk-hint">
-        输入关键词检索 CS 学科知识库；每条结果附带<b>权威来源</b>（教材/标准/论文），可追溯可核查。
+        输入关键词检索 CS 学科知识库；精编概念附带<b>权威来源</b>（教材/标准/论文），可追溯可核查。
+        资料检索返回版本化语料原文块，可打开出处查看定位。
       </p>
 
-      <ul v-else class="dk-results">
-        <li v-for="node in results" :key="node.id" class="dk-card">
+      <template v-if="hasSearched && !loading && !error">
+        <p v-if="degradedReasons.length" class="dk-hint dk-degraded">
+          部分通路降级：{{ degradedReasons.join('、') }}；当前仅展示可用通路结果。
+        </p>
+        <p v-if="releaseId" class="dk-hint dk-release">语料版本：{{ releaseId }}</p>
+      </template>
+
+      <!-- 概念/语料结果各自独立 v-if：不得挂在提示 template 的 v-else-if 上，
+           否则检索成功后概念卡永远不渲染（2026-09-08 全量审核 P1-2）。 -->
+      <ul v-if="conceptResults.length && !loading" class="dk-results">
+        <li v-for="node in conceptResults" :key="node.id" class="dk-card">
           <button type="button" class="dk-card-head" @click="toggleDetail(node)">
             <span class="dk-card-name">{{ node.name }}</span>
             <span class="dk-card-type">{{ nodeTypeLabel(node.node_type) }}</span>
@@ -180,6 +271,46 @@ const overviewText = computed(() => {
               <p v-else class="dk-hint">该节点暂无图关系。</p>
             </template>
             <p v-else class="dk-hint">加载关系详情…</p>
+          </div>
+        </li>
+      </ul>
+
+      <ul v-if="corpusResults.length && !loading" class="dk-results dk-corpus">
+        <li v-for="row in corpusResults" :key="row.reference_id || row.chunk_id" class="dk-card">
+          <p class="dk-card-name">{{ row.title }}</p>
+          <p class="dk-card-def">{{ row.snippet }}</p>
+          <div class="dk-card-meta">
+            <span class="dk-card-type">{{ row.source_kind || '语料' }}</span>
+            <span v-if="row.section_path" class="dk-aliases">{{ row.section_path }}</span>
+            <span v-if="(row.matched_by || []).length" class="dk-card-score">
+              {{ row.matched_by.join('+') }}
+            </span>
+          </div>
+          <div class="dk-card-meta">
+            <span class="dk-source">
+              <BookOpen :size="13" /> {{ row.title }}
+              <template v-if="row.license"> · {{ row.license }}</template>
+            </span>
+            <a
+              v-if="safeSourceUrl(row.source_url)"
+              class="dk-source-link"
+              :href="safeSourceUrl(row.source_url)"
+              target="_blank"
+              rel="noopener noreferrer"
+            >打开出处</a>
+          </div>
+          <div class="dk-card-actions">
+            <SfxButton variant="tertiary" size="sm" :loading="chunkLoading && expandedChunk === row.chunk_id" @click="toggleChunkDetail(row)">
+              {{ expandedChunk === row.chunk_id && chunkText ? '收起原文' : '查看原文' }}
+            </SfxButton>
+          </div>
+          <div v-if="expandedChunk === row.chunk_id" class="dk-detail">
+            <p v-if="chunkLoading" class="dk-hint">原文加载中…</p>
+            <p v-else-if="chunkError" class="dk-error">{{ chunkError }}</p>
+            <template v-else-if="chunkText">
+              <p class="dk-detail-heading">原文（{{ chunkText.char_start }}–{{ chunkText.char_end }}）</p>
+              <p class="dk-chunk-text">{{ chunkText.text }}</p>
+            </template>
           </div>
         </li>
       </ul>
@@ -303,6 +434,40 @@ const overviewText = computed(() => {
 }
 
 @keyframes dk-spin { to { transform: rotate(360deg); } }
+
+.dk-modes {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.dk-corpus-coverage { color: var(--text-secondary); }
+
+.dk-degraded { color: var(--amber-700, #9B6618); }
+
+.dk-release {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.dk-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dk-chunk-text {
+  margin: 6px 0 0;
+  padding: 8px 12px;
+  background: var(--surface-cool);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 .dk-results {
   list-style: none;

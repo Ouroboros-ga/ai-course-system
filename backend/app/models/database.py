@@ -246,6 +246,27 @@ from app.models.research_workspace_model import (
     ResearchTodo,
     ResearchWorkspace,
 )
+# 学科知识库自动化构建 V1（DK1）：全局参考库表（discipline_*），挂载到迁移 metadata。
+from app.models.discipline_knowledge_model import (  # noqa: F401
+    DisciplineAlias,
+    DisciplineAssertion,
+    DisciplineBuild,
+    DisciplineChunk,
+    DisciplineConcept,
+    DisciplineDecision,
+    DisciplineDocumentVersion,
+    DisciplineHead,
+    DisciplineMention,
+    DisciplineRelease,
+    DisciplineReleaseItem,
+    DisciplineSupport,
+    DisciplineWorkItem,
+)
+# CS 语料 RAG（CR1）：向量缓存与版本成员表，挂载到迁移 metadata。
+from app.models.discipline_corpus_index_model import (  # noqa: F401
+    DisciplineCorpusIndexMember,
+    DisciplineCorpusVector,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

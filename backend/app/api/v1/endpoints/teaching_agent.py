@@ -556,9 +556,13 @@ async def _respond_for_subject(
     # R14：学科参考（is_supplementary）随回答透出，供前端展示"学科参考"区块；
     # 与 citations（课程证据闭包）严格分离。2026-09-01 起兼容两级来源：
     # discipline_kb（概念层）与 discipline_corpus（语料段落层，RAG 白名单）。
+    # CR4：语料块带 reference_id/release_id（版本与来源透传，CR5 原文查看用），
+    # 旧字段（node_id/source_title 等）全部保留；node_id 命名空间分离——
+    # 语料块 node_id 恒为空，禁止拿 chunk_id 调 /nodes/{node_id}。
     discipline_references = [
         {
             "node_id": ref.get("node_id"),
+            "result_type": ref.get("result_type", "concept"),
             "name": ref.get("name"),
             "course": ref.get("course"),
             "node_type": ref.get("node_type", "concept"),
@@ -566,22 +570,43 @@ async def _respond_for_subject(
             "key_points": ref.get("key_points", []),
             "doc_id": ref.get("doc_id"),
             "chunk_no": ref.get("chunk_no"),
+            "chunk_id": ref.get("chunk_id"),
+            "reference_id": ref.get("reference_id"),
+            "release_id": ref.get("release_id"),
+            "section_path": ref.get("section_path"),
+            "source_kind": ref.get("source_kind"),
+            "source_url": ref.get("source_url"),
             "matched_by": ref.get("matched_by", []),
             "source_title": ref.get("source_title"),
             "source_authors": ref.get("source_authors"),
             "source_chapter": ref.get("source_chapter"),
             "source_license": ref.get("source_license"),
+            "authority_label": ref.get("authority_label"),
             "retrieval_source": ref.get("retrieval_source", "discipline_kb"),
             "is_supplementary": True,
         }
         for ref in state.get("discipline_kb_results", [])
         if ref.get("name")
     ]
+    discipline_release_id = next(
+        (str(ref.get("release_id") or "") for ref in discipline_references
+         if ref.get("release_id")), "")
+    # 纵深校验（validate_response 已过滤一遍）：声明的引用必须属于本次
+    # 返回，伪造/过期引用在此剔除，未使用结果不得声称已被引用。
+    returned_refs = {str(ref.get("reference_id") or "")
+                     for ref in discipline_references
+                     if ref.get("reference_id")}
+    used_discipline_reference_ids = [
+        str(ref) for ref in state.get("used_discipline_reference_ids", [])
+        if str(ref) in returned_refs
+    ]
     response = {
         "trace_id": state["trace_id"], "status": "ok", "intent": state.get("intent"), "concept": concept,
         "teaching_action": state.get("teaching_action"), "answer": state.get("final_answer"),
         "citations": state.get("citations", []),
         "discipline_references": discipline_references,
+        "discipline_release_id": discipline_release_id,
+        "used_discipline_reference_ids": used_discipline_reference_ids,
         "recommended_resources": [{"resource_id": resource_id} for resource_id in state.get("selected_resource_ids", [])],
         "warnings": state.get("warnings", []), "degraded_services": state.get("degraded_services", []),
         "learning_adjustment": state.get("learning_adjustment"),

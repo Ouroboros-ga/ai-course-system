@@ -23,8 +23,12 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.exceptions import unified_response
+from app.models.access_control_model import PlatformPermission
 from app.models.database import get_session
-from app.services.course_access_service import resolve_course_access
+from app.services.course_access_service import (
+    require_platform_permission,
+    resolve_course_access,
+)
 from app.services import nexus_artifact_service
 from app.platform.knowledge.discipline_kb import search_nodes
 from app.platform.knowledge.sql_lance_provider import SqlLanceCourseKnowledgeProvider
@@ -137,16 +141,115 @@ async def nexus_internal_cs_knowledge(
     top_k: int = Query(default=5, ge=1, le=10),
     authorization: str | None = Header(default=None),
     x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    session: Session = Depends(get_session),
 ):
-    """CS 学科知识库检索（只读，权威来源随条目返回）。"""
+    """CS 学科参考检索（只读；概念层兼容 + 语料层同版本，全补充参考）。
+
+    - 服务凭据 + 用户身份 + ``platform.nexus.use`` 显式授权三重校验
+      （停用用户 401、无授权 403；不读 ``User.role`` 兜底）；
+    - 概念层（``search_nodes``，旧字段原样保留）与语料层
+      （``CorpusSearchService`` 按已发布 head 版本）结果合并，
+      顶层与每条均为 ``is_supplementary=True``；
+    - 来源标签按来源/核验状态逐条标注，不再全标"教材级权威"。
+    """
     _require_service_token(authorization)
-    _require_user_identity(x_nexus_user_id)
-    results = await asyncio.to_thread(search_nodes, q, top_k)
+    user_id = _require_user_identity(x_nexus_user_id)
+    require_platform_permission(
+        session, {"user_id": user_id}, PlatformPermission.NEXUS_USE)
+    concept_items = await asyncio.to_thread(search_nodes, q, top_k)
+    items: list[dict[str, Any]] = [
+        {
+            "result_type": "concept",
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "node_type": item.get("node_type"),
+            "definition": item.get("definition"),
+            "key_points": item.get("key_points", []),
+            "example": item.get("example", ""),
+            "aliases": item.get("aliases", []),
+            "source": item.get("source"),
+            "course": item.get("course"),
+            "score": item.get("score"),
+            "authority_label": "精编概念（书目来源）",
+            "is_supplementary": True,
+        }
+        for item in concept_items
+    ]
+    corpus = await asyncio.to_thread(_search_corpus_release, q, top_k)
+    items.extend(corpus["items"])
     return unified_response(
         code=200,
-        message=f"CS 知识库检索完成（{len(results)} 条）",
-        data={"authority": "cs_kb", "items": results},
+        message=f"CS 学科参考检索完成（概念 {len(concept_items)} 条 + 语料 {len(corpus['items'])} 条）",
+        data={"authority": "cs_kb", "release_id": corpus["release_id"],
+              "mode": corpus["mode"],
+              "degraded_reasons": corpus["degraded_reasons"],
+              "is_supplementary": True, "items": items},
     )
+
+
+def _search_corpus_release(query: str, top_k: int) -> dict[str, Any]:
+    """语料层检索（独立 session；无已发布版本/失败即空 + 降级原因）。"""
+    from app.models.database import session_factory
+    from app.platform.knowledge.corpus_embedding import HttpEmbedClient
+    from app.services.discipline_knowledge.corpus_index import read_head
+    from app.services.discipline_knowledge.corpus_search import (
+        CorpusSearchService,
+    )
+
+    url = (settings.CORPUS_EMBEDDING_URL or "").strip()
+    client = HttpEmbedClient(base_url=url) if url else None
+    with session_factory() as session:
+        try:
+            if not read_head(session).get("release_id"):
+                return {"release_id": "", "mode": "legacy",
+                        "degraded_reasons": ["NO_PUBLISHED_RELEASE"], "items": []}
+            result = CorpusSearchService().search(
+                session, query, top_k=top_k, embed_client=client)
+        except Exception as error:  # noqa: BLE001 - 语料层失败不影响概念层
+            logger.warning("nexus cs corpus search failed: %s",
+                           type(error).__name__)
+            return {"release_id": "", "mode": "lexical",
+                    "degraded_reasons": ["CORPUS_SEARCH_FAILED"], "items": []}
+        # 全文进工具结果（模型上下文），展示截断由 Runtime 事件层处理，
+        # 回源入口（reference_id）不受展示截断影响。
+        items = []
+        for row in result.get("results") or []:
+            items.append({
+                "result_type": "corpus_chunk",
+                "chunk_id": row.get("chunk_id"),
+                "reference_id": row.get("reference_id"),
+                "title": row.get("title"),
+                "text": row.get("context_text"),
+                "snippet": row.get("snippet"),
+                "doc_id": row.get("doc_id"),
+                "section_path": row.get("section_path"),
+                "source_kind": row.get("source_kind"),
+                "source_url": row.get("source_url"),
+                "license": row.get("license"),
+                "matched_by": row.get("matched_by", []),
+                "authority_label": _corpus_authority_label(
+                    row.get("source_kind")),
+                "is_supplementary": True,
+            })
+        return {"release_id": result.get("release_id") or "",
+                "mode": result.get("mode") or "",
+                "degraded_reasons": result.get("degraded_reasons") or [],
+                "items": items}
+
+
+def _corpus_authority_label(source_kind: Any) -> str:
+    """按来源的诚实标签；未知来源原样返回，不全称教材。"""
+    labels = {
+        "textbook": "开放教材",
+        "zhwiki": "维基百科（CC BY-SA）",
+        "enwiki": "维基百科（CC BY-SA）",
+        "rfc": "RFC（IETF）",
+        "arxiv": "arXiv 论文（研究层）",
+    }
+    kind = str(source_kind or "").strip()
+    if not kind:
+        return "未知来源"
+    return labels.get(kind, kind)
 
 
 class NexusArtifactWriteRequest(BaseModel):
@@ -154,6 +257,8 @@ class NexusArtifactWriteRequest(BaseModel):
 
     NX-LB5：run_id 可选——报告链/工具写入时可关联运行，供 run 详情投影
     已授权产物引用。
+    SR6：content_b64 可选——word 二进制经 base64 写入（content 须为空，
+    走二进制分支；文本类型沿用 content）。
     """
 
     artifact_type: str = Field(min_length=1, max_length=16)

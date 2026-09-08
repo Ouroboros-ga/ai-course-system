@@ -229,6 +229,8 @@ class RespondEndpointCorpusProjectionTest(unittest.TestCase):
         self.assertEqual(refs[0]["doc_id"], "fixture-tcp")
         self.assertEqual(refs[0]["retrieval_source"], "discipline_corpus")
         self.assertEqual(refs[0]["source_license"], "CC BY-SA 4.0")
+        # 端口保留 chunk_no（端点投影依赖；P2-3 修复）
+        self.assertEqual(refs[0]["chunk_no"], 0)
         self.assertEqual(refs[0]["node_type"], "corpus_paragraph")
         self.assertTrue(refs[0]["is_supplementary"])
 

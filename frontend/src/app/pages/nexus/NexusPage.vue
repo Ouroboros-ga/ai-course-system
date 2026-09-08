@@ -4113,14 +4113,16 @@ const emptySuggestions = computed(() =>
               </div>
 
               <div v-if="sessionSources.csKb.length" class="nx-src-group">
-                <div class="nx-src-head">CS 知识库 · {{ sessionSources.csKb.length }}（权威来源）</div>
+                <div class="nx-src-head">CS 知识库 · {{ sessionSources.csKb.length }}</div>
                 <div
                   v-for="(k, i) in sessionSources.csKb"
                   :key="`k${i}`"
                   class="nx-src-row"
                 >
                   <span class="nx-src-title">{{ k.name }}</span>
-                  <span class="nx-src-meta">{{ [k.source, k.course].filter(Boolean).join(' · ') }}</span>
+                  <span class="nx-src-meta">
+                    {{ [k.source, k.course, k.license].filter(Boolean).join(' · ') }}<template v-if="k.reference_id"> · {{ k.reference_id }}</template>
+                  </span>
                 </div>
               </div>
 
