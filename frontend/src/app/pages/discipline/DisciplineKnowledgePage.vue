@@ -81,6 +81,12 @@ async function toggleDetail(node) {
   }
 }
 
+// 点击整张知识卡片：未展开时自动展开详情；已展开时保持现状（收起走标题栏按钮/箭头）
+async function handleCardClick(node) {
+  if (expanded.value === node.id) return
+  await toggleDetail(node)
+}
+
 async function refreshData() {
   try {
     await reloadDisciplineKnowledge()
@@ -142,8 +148,19 @@ const overviewText = computed(() => {
       </p>
 
       <ul v-else class="dk-results">
-        <li v-for="node in results" :key="node.id" class="dk-card">
-          <button type="button" class="dk-card-head" @click="toggleDetail(node)">
+        <li
+          v-for="node in results"
+          :key="node.id"
+          class="dk-card"
+          :class="{ 'dk-card--expanded': expanded === node.id }"
+          @click="handleCardClick(node)"
+        >
+          <button
+            type="button"
+            class="dk-card-head"
+            :aria-expanded="expanded === node.id"
+            @click.stop="toggleDetail(node)"
+          >
             <span class="dk-card-name">{{ node.name }}</span>
             <span class="dk-card-type">{{ nodeTypeLabel(node.node_type) }}</span>
             <span class="dk-card-score">{{ node.score?.toFixed?.(2) }}</span>
@@ -318,6 +335,18 @@ const overviewText = computed(() => {
   border: 1px solid var(--border-default);
   border-radius: 10px;
   padding: 12px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* 整卡可点：悬停给出可点击暗示，展开态高亮描边 */
+.dk-card:hover {
+  border-color: var(--color-focus, #355C7D);
+}
+
+.dk-card--expanded {
+  border-color: var(--color-focus, #355C7D);
+  box-shadow: 0 0 0 1px var(--color-brand-soft, rgba(53, 92, 125, 0.12));
 }
 
 .dk-card-head {
