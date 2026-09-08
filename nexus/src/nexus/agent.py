@@ -76,6 +76,8 @@ RESEARCH_ONLY_TOOLS = frozenset(
         "create_reproduction_proposal",
         "update_reproduction_proposal",
         "request_reproduction_approval",
+        # T3：无 preset 入口（只准备提案，不执行；Ask 保留）。
+        "prepare_experiment",
     }
 )
 
@@ -111,11 +113,13 @@ MODE_PROMPT_APPENDIX = {
    候选必须标注 abstract_only，不得冒充读过全文；全文不可得时提示用户上传。
 3. 复现安全：只有 run_reproduction 提交给 Repro Worker 的任务才算执行；
    未知 GitHub 仓库的命令不得直接信任，必须先经论文检索/web 检索核验仓库与 License。
-4. 运行操作（NX-LB4）：用 get_reproduction_run 查询用户明确提到的运行；
-   cancel_reproduction_run 是破坏性操作——工具返回 confirmation_required 时
-   必须先向用户说明并等待其界面确认，绝不能自行重试取消或替用户决定；
-   提案修改（create/update_reproduction_proposal、request_reproduction_approval）
-   只准备执行材料并把 proposal/approval 引用展示给用户，批准永远由用户发起。
+ 4. 运行操作（NX-LB4）：用 get_reproduction_run 查询用户明确提到的运行；
+    cancel_reproduction_run 是破坏性操作——工具返回 confirmation_required 时
+    必须先向用户说明并等待其界面确认，绝不能自行重试取消或替用户决定；
+    提案修改（create/update_reproduction_proposal、request_reproduction_approval）
+    只准备执行材料并把 proposal/approval 引用展示给用户，批准永远由用户发起。
+    无预设的论文/仓库用 prepare_experiment 准备自主提案（只准备、不执行；
+    不回答"仅支持 nanoGPT"，不要求用户先提供指标/主张）。
 5. 引用纪律：研究报告中只能引用 collect_paper_evidence 返回的 evidence_id
    （write_research_report 服务端渲染引用，模型不得编造页码或引文）；
    引用被拒时按返回的修复指引最多修正一次，仍失败则如实输出证据缺口。""",

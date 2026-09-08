@@ -93,8 +93,12 @@ def plan_reproduction(target: str) -> dict[str, Any]:
             "没有已核验的复现预设。请先用 search_arxiv_papers 与 web_search 调研论文、"
             "官方仓库与 License；License 允许复现用途后，方可把复现步骤提交给 "
             "Repro Worker 执行。禁止直接信任未核验仓库的命令。"
+            "无预设的论文/仓库可直接用 prepare_experiment 准备自主实验提案"
+            "（只准备、不执行；用户确认一次后按审批流执行）。"
         ),
         "known_presets": list(REPRO_PRESETS.keys()),
+        # T3：无 preset 入口的建议工具（加法字段，旧调用方忽略不受影响）。
+        "suggested_tool": "prepare_experiment",
         "is_supplementary": True,
     }
 
@@ -967,6 +971,12 @@ async def execute_autonomous_experiment(
     proposals_module.mark_proposal_executed(
         str(frozen.get("proposal_id", "")),
         int(frozen.get("version", 0) or 0))
+    # T4：新 run 交长运行生命周期（后台图执行；HTTP 即返 running，断开不杀）。
+    # 已登记重试（deduped）不重调度。调度失败只记日志（run 仍为 running，
+    # 图可在 T5 恢复入口认领；调度器本身永不抛异常到调用方）。
+    if not run.get("deduped"):
+        _schedule_bound_run(run_id=run["run_id"], owner=user_id,
+                            session_id=session_id)
     return {
         "status": "running",
         "run_id": run["run_id"],
@@ -976,3 +986,31 @@ async def execute_autonomous_experiment(
         "approval_id": approval_id,
         "is_supplementary": True,
     }
+
+
+def _schedule_bound_run(*, run_id: str, owner: str, session_id: str) -> None:
+    """调度 run 绑定实验图到后台（fire-and-forget，内部全捕获）。"""
+    import asyncio
+
+    from nexus import experiment_agent as agent_module
+
+    async def _guarded() -> None:
+        try:
+            await agent_module.execute_bound_run(
+                run_id=run_id, owner=owner, session_id=session_id)
+        except Exception as error:  # noqa: BLE001 - 后台任务绝不裸抛
+            logger.warning("bound run launcher failed for %s: %s",
+                           run_id, type(error).__name__)
+            try:
+                from nexus import experiment_runs as runs_module
+
+                runs_module.set_status(
+                    run_id, "failed",
+                    f"调度器异常：{type(error).__name__}（可重试认领）")
+            except Exception:  # noqa: BLE001 - 落盘失败只记日志
+                logger.warning("bound run failover persist failed for %s", run_id)
+
+    try:
+        asyncio.get_running_loop().create_task(_guarded())
+    except RuntimeError as error:
+        logger.warning("no running loop to schedule bound run %s: %s", run_id, error)

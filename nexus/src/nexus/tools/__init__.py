@@ -14,6 +14,7 @@ from nexus.tools.reproduction import (
     update_reproduction_proposal,
 )
 from nexus.tools.web_search import web_search as web_search_tool
+from nexus.experiment_intake import prepare_experiment
 
 NEXUS_TOOLS = [
     web_search_tool,
@@ -34,6 +35,8 @@ NEXUS_TOOLS = [
     create_reproduction_proposal,
     update_reproduction_proposal,
     request_reproduction_approval,
+    # T3：无 preset 入口（Research-only；只准备提案，不执行）。
+    prepare_experiment,
 ]
 
 __all__ = [
@@ -54,4 +57,5 @@ __all__ = [
     "create_reproduction_proposal",
     "update_reproduction_proposal",
     "request_reproduction_approval",
+    "prepare_experiment",
 ]

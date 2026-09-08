@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS {schema}.nexus_experiment_runs (
     status TEXT NOT NULL DEFAULT 'running',
     attempt_no INTEGER NOT NULL DEFAULT 0,
     attempts JSONB NOT NULL DEFAULT '[]',
+    graph_thread_id TEXT NOT NULL DEFAULT '',
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    detail TEXT NOT NULL DEFAULT '',
     created_at DOUBLE PRECISION NOT NULL DEFAULT 0,
     updated_at DOUBLE PRECISION NOT NULL DEFAULT 0
 );
@@ -67,20 +70,32 @@ def _pg_settings() -> tuple[str, str] | None:
 
 
 def ensure_runs_table(dsn: str, schema: str) -> None:
+    """幂等建表＋T4 列补齐（老表逐列 ADD COLUMN IF NOT EXISTS，可重入）。"""
     import psycopg
 
     with psycopg.connect(dsn, autocommit=True) as conn:
         with conn.cursor() as cur:
             cur.execute(RUNS_DDL.format(schema=schema))
+            for column, ddl in (
+                ("graph_thread_id", "TEXT NOT NULL DEFAULT ''"),
+                ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
+                ("detail", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                cur.execute(
+                    f"ALTER TABLE {schema}.nexus_experiment_runs "
+                    f"ADD COLUMN IF NOT EXISTS {column} {ddl}"
+                )
 
 
 _RUN_SELECT = (
     "run_id, owner, session_id, proposal_id, proposal_version, scope_hash, "
-    "approval_id, status, attempt_no, attempts, created_at, updated_at"
+    "approval_id, status, attempt_no, attempts, graph_thread_id, "
+    "cancel_requested, detail, created_at, updated_at"
 )
 
 _RUN_KEYS = ("run_id", "owner", "session_id", "proposal_id", "proposal_version",
              "scope_hash", "approval_id", "status", "attempt_no", "attempts",
+             "graph_thread_id", "cancel_requested", "detail",
              "created_at", "updated_at")
 
 
@@ -102,6 +117,9 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "status": row.get("status", "running") or "running",
         "attempt_no": int(row.get("attempt_no", 0) or 0),
         "attempts": attempts if isinstance(attempts, list) else [],
+        "graph_thread_id": row.get("graph_thread_id", "") or "",
+        "cancel_requested": bool(int(row.get("cancel_requested", 0) or 0)),
+        "detail": row.get("detail", "") or "",
         "created_at": row.get("created_at", 0),
         "updated_at": row.get("updated_at", 0),
     }
@@ -126,8 +144,9 @@ def _insert_row(row: dict[str, Any]) -> None:
                         f"INSERT INTO {schema}.nexus_experiment_runs "
                         "(run_id, owner, session_id, proposal_id, proposal_version, "
                         "scope_hash, approval_id, status, attempt_no, attempts, "
+                        "graph_thread_id, cancel_requested, detail, "
                         "created_at, updated_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                         "ON CONFLICT (run_id) DO NOTHING",
                         (
                             row["run_id"], row["owner"], row["session_id"],
@@ -135,6 +154,9 @@ def _insert_row(row: dict[str, Any]) -> None:
                             row["scope_hash"], row["approval_id"], row["status"],
                             row["attempt_no"],
                             json.dumps(row["attempts"], ensure_ascii=False),
+                            row.get("graph_thread_id", ""),
+                            1 if row.get("cancel_requested") else 0,
+                            row.get("detail", ""),
                             row["created_at"], row["updated_at"],
                         ),
                     )
@@ -155,11 +177,15 @@ def _update_row(row: dict[str, Any]) -> None:
                 with conn.cursor() as cur:
                     cur.execute(
                         f"UPDATE {schema}.nexus_experiment_runs SET status=%s, "
-                        f"attempt_no=%s, attempts=%s, updated_at=%s "
+                        f"attempt_no=%s, attempts=%s, graph_thread_id=%s, "
+                        f"cancel_requested=%s, detail=%s, updated_at=%s "
                         f"WHERE run_id=%s",
                         (
                             row["status"], row["attempt_no"],
                             json.dumps(row["attempts"], ensure_ascii=False),
+                            row.get("graph_thread_id", ""),
+                            1 if row.get("cancel_requested") else 0,
+                            row.get("detail", ""),
                             row["updated_at"], row["run_id"],
                         ),
                     )
@@ -209,7 +235,7 @@ def create_or_get_run(
             raise RunError("RUN_FORBIDDEN", "无权操作他人的运行")
         if (session_id or "") != existing["session_id"]:
             raise RunError("RUN_SESSION_MISMATCH", "运行与当前会话不一致")
-        return existing
+        return {**existing, "deduped": True}
     now = _now()
     row = {
         "run_id": run_id,
@@ -222,13 +248,18 @@ def create_or_get_run(
         "status": "running",
         "attempt_no": 0,
         "attempts": [],
+        "graph_thread_id": "",
+        "cancel_requested": False,
+        "detail": "",
         "created_at": now,
         "updated_at": now,
     }
     _insert_row(row)
     # 并发竞争：对方先落盘则读回对方行（同归属已在上方校验）。
     stored = get_run(run_id)
-    return stored if stored is not None else _row_to_dict(row)
+    result = _row_to_dict(dict(stored) if stored is not None else row)
+    result["deduped"] = existing is not None
+    return result
 
 
 def record_attempt(
@@ -284,6 +315,58 @@ async def retry_start(run_id: str, *, user_id: str, session_id: str) -> dict[str
     if (session_id or "") != run["session_id"]:
         raise RunError("RUN_SESSION_MISMATCH", "运行与当前会话不一致")
     return run
+
+
+def set_status(run_id: str, status: str, detail: str = "") -> dict[str, Any] | None:
+    """设置 run 终态/状态（succeeded/failed/cancelled/running），附原因。"""
+    run = get_run(run_id)
+    if run is None:
+        return None
+    updated = dict(run)
+    updated.update({"status": status, "detail": (detail or "")[:2000],
+                    "updated_at": _now()})
+    _update_row(updated)
+    _memory_runs[run_id] = dict(updated)
+    return _row_to_dict(updated)
+
+
+def set_graph_thread(run_id: str, thread_id: str) -> None:
+    """登记图执行线程（恢复/对账用；best-effort）。"""
+    run = get_run(run_id)
+    if run is None:
+        return
+    updated = dict(run)
+    updated.update({"graph_thread_id": (thread_id or "")[:128],
+                    "updated_at": _now()})
+    _update_row(updated)
+    _memory_runs[run_id] = dict(updated)
+
+
+def request_cancel(run_id: str, user_id: str) -> dict[str, Any]:
+    """用户取消 run（置旗；执行者在下一个检查点诚实化为 cancelled）。
+
+    T5 接 Console 取消链时调用；控制服务侧操作取消由 T5 完成。
+    """
+    run = get_run(run_id)
+    if run is None:
+        raise RunError("RUN_NOT_FOUND", "运行不存在或已不可恢复")
+    if (user_id or "") != run["owner"]:
+        raise RunError("RUN_FORBIDDEN", "无权操作他人的运行")
+    updated = dict(run)
+    updated.update({"cancel_requested": True, "updated_at": _now()})
+    _update_row(updated)
+    _memory_runs[run_id] = dict(updated)
+    return _row_to_dict(updated)
+
+
+def is_cancel_requested(run_id: str) -> bool:
+    """取消旗查询（执行者检查点用；存储不可读按未取消处理并记日志）。"""
+    try:
+        run = get_run(run_id)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("cancel flag read failed: %s", error)
+        return False
+    return bool((run or {}).get("cancel_requested"))
 
 
 def clear_memory_store() -> None:

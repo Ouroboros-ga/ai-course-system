@@ -54,6 +54,13 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
     """
     global _agents, _pg_saver, _pg_ctx
     settings = get_settings()
+    # T4：实验图独立 provider profile 与 PG 无关，两种持久化模式都注册。
+    try:
+        from nexus.experiment_agent import ensure_experiment_profile
+
+        ensure_experiment_profile()
+    except Exception as error:  # noqa: BLE001 - 注册失败只记日志（首次构建时重试）
+        logger.warning("experiment profile register failed: %s", error)
     dsn = settings.postgres_dsn.strip()
     if dsn:
         step = "init"

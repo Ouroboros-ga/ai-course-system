@@ -224,3 +224,66 @@ Resources/ExperimentScope/SandboxResult pydantic＋Run/Attempt TypedDict）、
   （零 Worker 提交）→待办列表/前端 Nexus 页 200。
 - 真实 PG 下验证通过：提案锁 CAS、run 幂等、偏好落盘（同账号同会话恢复 auto）。
   上两项“未验证”关闭；剩余未验证仅 UI 选择器（T5）与正式输出物。
+
+## T3（2026-09-08）：无 preset 入口 prepare_experiment（未提交）
+
+新增 `nexus/src/nexus/experiment_intake.py`（任务书 §2 形状不变：scope 经
+T2 自主提案落盘）、`nexus/tests/test_experiment_intake.py`（13 项）；修改
+`tools/reproduction.py`（no_preset 分支加法指引 `suggested_tool`）、
+`tools/__init__.py`（注册）、`agent.py`（Research-only＋提示词一句）。
+
+- `prepare(target, objective)`：GitHub 直达／论文引用→web_search 找仓库
+  （作者页无机器可读代码字段，搜“<标题> github”是诚实机制）／空目标或
+  不可达→need_input（问题 ≤3，非逐字段表单）；只准备不执行。
+- 初始 repo 固定 revision（GitHub branch SHA；取不到记 note，T4 记录实际
+  SHA）；License 取 API SPDX（verified），未知如实进 missing_inputs，不阻止
+  试跑（执行前核验交 T4 门）；环境声明只记“识别到/未识别到”，版本留给沙箱
+  试验；data_refs 默认为空（reproduce 才进 missing）；默认资源即服务端声明
+  值（cpu 2／mem 4096／disk 10240／wall 3600，容量核对属 T4）。
+- fixture:// 仅测试 Reader 识别：默认 Reader 下拒 `TARGET_UNSUPPORTED`；
+  注入 Reader 才试读（不可达→need_input）。Ask 保留准备工具（仅执行被禁），
+  General 不可见；模型无模式入参（沿 T2 门）。
+- 回归：nexus 全套件 **194 passed**（新增 13 项：任务书示例形态夹具＋
+  preset 指纹保持＋论文找仓＋License 两态＋三 mode 推断＋歧义/不可达问询＋
+  摘要形状＋正式拒 fixture＋工具面/SCOPE 门＋no_preset 指引＋Research 面）；
+  `uv.lock` 零改动；Backend/前端无改动。
+
+未验证项：
+- 真实 GitHub API 的 revision/SHA/License 形态（本地合成覆盖；在线验证待
+  部署后用已核验 License 的公开仓库走读）。
+- 真实模型是否按提示词选用 prepare（属 T7；脚本化覆盖见 T4）。
+
+## T4（2026-09-08）：自主安装/试跑/修复循环（未提交）
+
+新增 `nexus/src/nexus/experiment_agent.py`、`nexus/tests/test_experiment_agent.py`
+（3 项）；修改 `experiment_runs.py`（状态/线程/取消列＋老表 ALTER）、
+`config.py`（`repro_control_url/token` 加法）、`tools/reproduction.py`
+（核销后调度后台图）、`main.py`（lifespan 注册实验 profile）；
+`agent.py` 经论证零改动（隔离靠构造＋测试锁定，见下）。
+
+- 实例级装配（实测结论）：`excluded_tools` 合并为并集语义，per-model 覆盖
+  无法重新开放 execute；实验图改走独立 provider 键 `nexus-experiment`
+  （`_ExperimentChatOpenAI` 只改 LangSmith `ls_provider`，API 模型/端点不变；
+  独立 profile 仅禁 task＋禁子代理）。全局 openai profile（主聊天三模式）
+  一字未动；Ask hostile execute 照拒（测试锁定）。
+- `build_experiment_agent(backend, checkpointer, model)`：原生文件/execute
+  经 run 绑定 Backend 进沙箱；Todo＋Compact 保留；提示约束只描述任务
+  （自行定安装步骤、看退出码修依赖继续、不逐步报批、不改指标凑 PASS）。
+- 长运行：`execute_bound_run`（单 run 单执行者锁；意图先落盘，attempt 只在
+  完成后追加→恢复不重放；后台持有图执行，HTTP 断开不杀；取消旗启动/结束
+  检查，执行中取消由控制服务完成，T5 接 Console 链）；`reproduction` 核销
+  后 fire-and-forget 调度（内部全捕获，即返 running）。
+- 环境路线：`select_environment_route` 按工作区声明选择并记首个 attempt；
+  repo2docker 命中 fail-closed（`ROUTE_NOT_DELIVERED`，T7-B 验收时接构建器，
+  不等同基础镜像安装）；requirements/脚本走预置容器 pip/conda。
+- 控制服务未配置 → run 落 failed（`SANDBOX_NOT_CONFIGURED`），不静默 running；
+  常驻部署待生产决策（沿 T1-b 未竟）。
+- 回归：nexus 全套件 **197 passed**（新增 3 项：脚本化“读→装→缺包→查错→
+  修复→重跑”走真图＋真 Adapter＋假容器，审批恒 1、execute≥3、先败后成、
+  末退出码 0、原生文件工具；实例隔离；Ask 敌意拒绝）；`uv.lock` 零改动；
+  Backend/前端无改动。
+
+未验证项：
+- 真实容器＋真实模型的修复循环（假容器只仿 shell；T7-A/B 用合成仓库＋
+  真容器＋脚本化模型先验协议，再用真实模型验收）。
+- 跨进程单执行者（进程内锁＋状态机已备；多副本部署时需认领 CAS，T5）。
