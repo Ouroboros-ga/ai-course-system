@@ -115,6 +115,9 @@ function sync(el, instant = false) {
   } else {
     slider.style.width = `${Math.max(0, rect.width - pad * 2)}px`
     slider.style.height = `${thickness}px`
+    // 全局样式固定了 top:0；横向指示线必须显式解除 top，否则 top/bottom 同时
+    // 指定且高度确定时 bottom 被忽略，指示线会跑到导航顶部（实测回归）。
+    slider.style.top = 'auto'
     // -1px 压住导航容器的 1px 底边框，与原 ::after 的视觉一致
     slider.style.bottom = '-1px'
     slider.style.transform = `translate3d(${x + pad}px, 0, 0)`
@@ -168,7 +171,11 @@ function setup(el, options = {}) {
   }
   state.set(el, st)
 
-  st.mo = new MutationObserver(() => scheduleSync(el))
+  // 忽略指示器自身样式变更引起的回调，避免 sync → 改样式 → 再 sync 的空转
+  st.mo = new MutationObserver((records) => {
+    if (records.every((r) => r.target === indicator)) return
+    scheduleSync(el)
+  })
   st.mo.observe(el, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] })
 
   if (typeof ResizeObserver !== 'undefined') {
