@@ -175,6 +175,15 @@ def build_experiment_report(
     clean_rule = str((clean or {}).get("rule") or "")
     resources = scope.get("resources") or {}
     revision = str(scope.get("repo_revision") or "")
+    # F4：构建身份（repo2docker 成功 attempt 的双镜像记录；无则空）。
+    build_image = ""
+    exec_image = ""
+    for attempt in attempts:
+        changes = attempt.get("config_changes") or {}
+        if str(changes.get("route") or "") == "repo2docker" \
+                and attempt.get("exit_code") == 0:
+            build_image = str(changes.get("build_image") or "") or build_image
+            exec_image = str(changes.get("exec_image") or "") or exec_image
     recipe = {
         "kind": "autonomous_experiment",
         "repo_url": str(scope.get("repo_url") or ""),
@@ -182,6 +191,8 @@ def build_experiment_report(
         "revision_pinned": _is_sha(revision),
         "base_image": image or "",
         "image_digest": image_digest or "",
+        "build_image": build_image,
+        "exec_image": exec_image,
         "network_profile": str(scope.get("network_profile") or ""),
         "resources": dict(resources),
         "mode": str(scope.get("mode") or ""),
@@ -250,6 +261,10 @@ def render_recipe_markdown(report: dict[str, Any]) -> str:
            else "（未固定到 commit，重跑时以实际解析为准）"),
         f"- 基础镜像：{recipe.get('base_image', '')}"
         + (f"@{recipe.get('image_digest', '')}" if recipe.get("image_digest") else ""),
+        *(([
+            f"- 构建镜像：{recipe.get('build_image', '')}",
+            f"- 执行镜像：{recipe.get('exec_image', '')}（含固定版本运行时）",
+        ] if recipe.get("exec_image") else [])),
         f"- 网络策略：{recipe.get('network_profile', '')}",
         f"- 资源：cpu={resources.get('cpu', '—')} "
         f"mem={resources.get('memory_mb', '—')}MB "

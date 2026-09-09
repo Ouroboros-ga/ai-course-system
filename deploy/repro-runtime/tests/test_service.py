@@ -621,3 +621,187 @@ async def _snapshot_body(api, snap):
     # 已完成操作保留结果（只把未终态标 unknown），未知操作查不到报 unknown。
     assert fresh.runs["run-6"]["operations"]["op-1"]["status"] in (
         "succeeded", "unknown")
+
+
+# ── F4：构建作业（固定源码输入＋双镜像身份＋run 生命周期） ──
+
+class _FakeBuilder:
+    """构建器替身： submit→排队，query 按脚本终态。"""
+
+    def __init__(self, final=None):
+        self.submitted: list[dict] = []
+        self.final = final or {"status": "succeeded",
+                               "build_image": "registry.local/proj:abc",
+                               "exec_image": "registry.local/proj-exec:abc",
+                               "log_tail": "ok", "detail": ""}
+
+    async def submit(self, *, repo_url, revision):
+        self.submitted.append({"repo_url": repo_url, "revision": revision})
+        return "bld-remote-1"
+
+    async def query(self, build_id):
+        assert build_id == "bld-remote-1"
+        return {"build_id": build_id, **self.final}
+
+
+async def test_build_unconfigured_fails_closed(api, monkeypatch):
+    """构建器未配置 → 501 BUILDER_NOT_CONFIGURED（不等同基础镜像）。"""
+    import environment_builder as builder_module
+    import service as service_module
+
+    monkeypatch.setenv("REPO2DOCKER_BUILDER_URL", "")
+    monkeypatch.setenv("REPO2DOCKER_BUILDER_TOKEN", "")
+    await api.put("/sandboxes/run-b0")
+    rejected = await api.post(
+        "/sandboxes/run-b0/builds",
+        json={"repo_url": "https://github.com/e/r", "revision": "deadbeef1234"})
+    assert rejected.status_code == 501
+    assert "BUILDER_NOT_CONFIGURED" in rejected.json()["detail"]
+    assert builder_module.builder_configured() is False
+
+
+async def test_build_success_records_dual_images(api, monkeypatch):
+    """构建成功落双镜像身份；未知构建查不到报 unknown。"""
+    import environment_builder as builder_module
+    import service as service_module
+
+    monkeypatch.setenv("REPO2DOCKER_BUILDER_URL", "http://builder.test")
+    monkeypatch.setenv("REPO2DOCKER_BUILDER_TOKEN", "tok")
+    fake = _FakeBuilder()
+    monkeypatch.setattr(service_module, "Repo2DockerBuilder", lambda: fake)
+    await api.put("/sandboxes/run-b1")
+    submitted = await api.post(
+        "/sandboxes/run-b1/builds",
+        json={"repo_url": "https://github.com/e/r", "revision": "deadbeef1234"})
+    assert submitted.status_code == 200
+    build_id = submitted.json()["build_id"]
+    for _ in range(200):
+        if fake.submitted:
+            break
+        import asyncio as _asyncio
+
+        await _asyncio.sleep(0.05)
+    assert fake.submitted[0]["revision"] == "deadbeef1234"
+    for _ in range(200):
+        viewed = await api.get(f"/sandboxes/run-b1/builds/{build_id}")
+        if viewed.json()["status"] in ("succeeded", "failed", "cancelled",
+                                       "timed_out"):
+            break
+        import asyncio as _asyncio
+
+        await _asyncio.sleep(0.05)
+    body = viewed.json()
+    assert body["status"] == "succeeded"
+    assert body["build_image"] == "registry.local/proj:abc"
+    assert body["exec_image"] == "registry.local/proj-exec:abc"
+    missing = await api.get("/sandboxes/run-b1/builds/bld-nope")
+    assert missing.json()["status"] == "unknown"
+    # 同 run 不并行构建。
+    await api.put("/sandboxes/run-b1x")
+    first = await api.post(
+        "/sandboxes/run-b1x/builds",
+        json={"repo_url": "https://github.com/e/r", "revision": "deadbeef1234"})
+    assert first.status_code == 200
+    second = await api.post(
+        "/sandboxes/run-b1x/builds",
+        json={"repo_url": "https://github.com/e/r", "revision": "deadbeef1234"})
+    assert second.status_code == 409
+
+
+async def test_build_failure_and_cancel(api, monkeypatch):
+    """构建失败落盘；run 级取消停止跟踪（远端可能继续，如实注记）。"""
+    import service as service_module
+
+    monkeypatch.setenv("REPO2DOCKER_BUILDER_URL", "http://builder.test")
+    monkeypatch.setenv("REPO2DOCKER_BUILDER_TOKEN", "tok")
+    fake = _FakeBuilder(final={"status": "failed", "build_image": "",
+                               "exec_image": "", "log_tail": "conda boom",
+                               "detail": "solve failed"})
+    monkeypatch.setattr(service_module, "Repo2DockerBuilder", lambda: fake)
+    await api.put("/sandboxes/run-b2")
+    submitted = await api.post(
+        "/sandboxes/run-b2/builds",
+        json={"repo_url": "https://github.com/e/r", "revision": "deadbeef1234"})
+    build_id = submitted.json()["build_id"]
+    for _ in range(200):
+        import asyncio as _asyncio
+
+        viewed = await api.get(f"/sandboxes/run-b2/builds/{build_id}")
+        if viewed.json()["status"] != "running":
+            break
+        await _asyncio.sleep(0.05)
+    assert viewed.json()["status"] == "failed"
+    assert "conda boom" in viewed.json()["log_tail"]
+    # 取消路径：慢构建在途时 run 级取消 → 构建 cancelled＋注记。
+    slow = _FakeBuilder(final={"status": "running"})
+    monkeypatch.setattr(service_module, "Repo2DockerBuilder", lambda: slow)
+    await api.put("/sandboxes/run-b3")
+
+    async def _never(_self, build_id):
+        import asyncio as _asyncio
+
+        await _asyncio.sleep(30)
+        return {"build_id": build_id, "status": "running"}
+
+    slow.query = _never.__get__(slow, _FakeBuilder)
+    submitted = await api.post(
+        "/sandboxes/run-b3/builds",
+        json={"repo_url": "https://github.com/e/r", "revision": "deadbeef1234"})
+    build_id = submitted.json()["build_id"]
+    cancelled = await api.post("/sandboxes/run-b3/cancel")
+    assert cancelled.status_code == 200
+    viewed = await api.get(f"/sandboxes/run-b3/builds/{build_id}")
+    assert viewed.json()["status"] == "cancelled"
+    assert "远端" in viewed.json()["detail"]
+
+
+async def test_ensure_image_migration(api):
+    """同 run 迁移执行镜像：换容器、刷新身份、清会话、在途拒绝。"""
+    import asyncio as _asyncio
+
+    await api.put("/sandboxes/run-b4")
+    await api.post("/sandboxes/run-b4/operations",
+                   json={"operation_id": "op-1", "command": "echo hi"})
+    for _ in range(100):
+        query = await api.get("/sandboxes/run-b4/operations/op-1")
+        if query.json()["status"] in ("succeeded", "failed", "cancelled"):
+            break
+        await _asyncio.sleep(0.02)
+    before = _FakeAdapter.instances[-1]
+    count_before = len(_FakeAdapter.instances)
+    migrated = await api.put("/sandboxes/run-b4",
+                             json={"image": "registry.local/proj-exec:abc"})
+    assert migrated.status_code == 200
+    body = migrated.json()
+    assert body.get("migrated") is True
+    assert body["image"] == "registry.local/proj-exec:abc"
+    assert len(_FakeAdapter.instances) == count_before + 1
+    assert _FakeAdapter.instances[-1] is not before, "换了新实例"
+    assert _FakeAdapter.instances[-1].image == "registry.local/proj-exec:abc"
+    view = await api.get("/sandboxes/run-b4")
+    assert view.json()["image"] == "registry.local/proj-exec:abc"
+
+
+async def test_builder_client_fail_closed():
+    """构建器客户端：未配置/不可达/坏响应一律 BuilderError，不伪装。"""
+    import httpx
+
+    import environment_builder as builder_module
+
+    client = builder_module.Repo2DockerBuilder(base_url="", token="")
+    with pytest.raises(builder_module.BuilderError) as exc:
+        await client.submit(repo_url="https://github.com/e/r",
+                            revision="deadbeef1234")
+    assert exc.value.code == "BUILDER_NOT_CONFIGURED"
+    assert "swerex==1.4.0" in builder_module.build_appendix()
+
+    def _boom(request):
+        raise httpx.ConnectError("down")
+
+    down = builder_module.Repo2DockerBuilder(
+        base_url="http://builder.test", token="tok",
+        transport=httpx.MockTransport(_boom))
+    with pytest.raises(builder_module.BuilderError) as exc2:
+        await down.submit(repo_url="https://github.com/e/r",
+                          revision="deadbeef1234")
+    assert exc2.value.code == "BUILDER_UNAVAILABLE"

@@ -31,6 +31,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from swerex_adapter import DockerBackendUnavailableError, SwerexDockerAdapter
+from environment_builder import (
+    BuilderError,
+    Repo2DockerBuilder,
+    builder_configured,
+    new_build_id,
+)
 
 logger = logging.getLogger("repro_runtime.service")
 
@@ -47,6 +53,8 @@ SESSION_FIRST_WINDOW_S = 15.0
 SESSION_PROBE_TIMEOUT_S = 2.0
 SESSION_OP_STATE_DIR = "/tmp/.nexus-ops"
 SESSION_LOG_MAX_BYTES = 1024 * 1024
+# F4：构建作业超时上限（秒；调用方可指定更小值，wall_time 剩余同时约束）。
+BUILD_JOB_TIMEOUT_S = 1800.0
 
 # 服务端可用容量上限（超出即 422，不静默截断；部署可经 env 收紧/放宽）。
 MAX_MEMORY_MB = int(os.environ.get("REPRO_MAX_MEMORY_MB") or 8192)
@@ -201,6 +209,9 @@ class EnsureRequest(BaseModel):
     resources: ResourcesSpec | None = None
     # F3：网络策略档案名（服务端映射到固定部署网络；未知档案 422）。
     network_profile: str = Field(default="", max_length=64)
+    # F4：执行镜像覆写（repo2docker 构建成功后的迁移；空即不变）。
+    # 仅非终态、无在途操作时允许；更换后会话/意图重建由调用方负责。
+    image: str = Field(default="", max_length=256)
 
 
 def _check_resources_limits(resources: "ResourcesSpec | None") -> None:
@@ -341,6 +352,11 @@ class _Store:
                 for op in kept.values():
                     tail, _ = _tail(str(op.get("output_tail") or ""))
                     op["output_tail"] = tail
+                builds = run.get("builds") or {}
+                kept_builds = dict(list(builds.items())[-5:])
+                for build in kept_builds.values():
+                    if isinstance(build, dict):
+                        build["log_tail"] = str(build.get("log_tail") or "")[-4096:]
                 slim[run_id] = {
                     "run_id": run_id,
                     "sandbox_id": run.get("sandbox_id", ""),
@@ -357,6 +373,7 @@ class _Store:
                     "created_at": run.get("created_at", 0),
                     "updated_at": run.get("updated_at", 0),
                     "operations": kept,
+                    "builds": kept_builds,
                 }
             tmp = f"{path}.tmp.{os.getpid()}"
             with open(tmp, "w", encoding="utf-8") as handle:
@@ -384,6 +401,13 @@ class _Store:
                 if isinstance(op, dict) and op.get("status") not in TERMINAL_OP:
                     op["status"] = "unknown"
                     op["note"] = "服务重启，执行状态未知（不重放）"
+            builds = row.get("builds") if isinstance(
+                row.get("builds"), dict) else {}
+            for build in builds.values():
+                if isinstance(build, dict) and build.get("status") not in (
+                        "succeeded", "failed", "cancelled", "timed_out"):
+                    build["status"] = "unknown"
+                    build["detail"] = "服务重启，构建状态未知（不重建）"
             self.runs[str(run_id)] = {
                 "run_id": str(run_id),
                 "sandbox_id": str(row.get("sandbox_id", "")),
@@ -401,6 +425,7 @@ class _Store:
                 "created_at": float(row.get("created_at", 0) or 0),
                 "updated_at": now,
                 "operations": operations,
+                "builds": builds,
             }
 
 
@@ -548,6 +573,22 @@ async def ensure_sandbox(run_id: str, body: EnsureRequest | None = None,
                     status_code=409,
                     detail="RUN_UNKNOWN_STATE:服务重启后该 run 状态未知（不重放、不复用），请换新 run_id",
                 )
+            # F4：执行镜像迁移（构建成功后切到执行镜像；同授权 hash，不重核）。
+            requested_image = ((body.image if body else "") or "").strip()[:256]
+            if requested_image and requested_image != str(existing.get("image") or ""):
+                if existing.get("status") in TERMINAL_RUN:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"RUN_TERMINAL:{existing.get('status')}：终态 run 不再迁移镜像",
+                    )
+                if str(existing.get("active_operation_id") or ""):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="ACTIVE_OPERATION_RUNNING:有在途操作时不得迁移镜像，先取消或等待完成。",
+                    )
+                migrated = await _migrate_run_image(existing, requested_image)
+                return {**_public_run(existing), "deduped": False,
+                        "migrated": True, "image": migrated}
             return {**_public_run(existing), "deduped": True}
         docker_args = _task_docker_args(resources)
         if network_name:
@@ -632,6 +673,43 @@ def _tail_text(data: bytes, limit: int = OUTPUT_TAIL_MAX) -> tuple[str, bool]:
     if len(raw) <= limit:
         return raw.decode("utf-8", errors="replace"), False
     return raw[-limit:].decode("utf-8", errors="replace"), True
+
+
+async def _migrate_run_image(run: dict[str, Any], image: str) -> str:
+    """F4：同 run 迁移到执行镜像（构建成功后；调用方已校验终态/在途）。
+
+    杀旧实例 → 按原限额起新镜像实例 → 刷新 image/digest/container，
+    清会话位（新容器无旧 shell），保留 operations 审计与 fencing。
+    失败抛 DockerBackendUnavailableError（旧实例已杀，run 需重新 ensure，
+    如实报错不伪装）。
+    """
+    from swerex_adapter import DockerBackendUnavailableError
+
+    run_id = run["run_id"]
+    old = store.adapters.pop(run_id, None)
+    if old is not None:
+        try:
+            await old.kill()
+        except Exception:  # noqa: BLE001
+            logger.warning("run %s migrate kill failed", run_id)
+    adapter = SwerexDockerAdapter(
+        run_id=run_id, image=image,
+        docker_args=list(run.get("docker_args") or []), pull=_task_pull())
+    await adapter.start()
+    digest = await adapter.image_digest()
+    store.adapters[run_id] = adapter
+    run["image"] = image
+    run["image_digest"] = digest
+    run["container_name"] = str(adapter.container_name or "")
+    run["session_name"] = ""
+    run["session_ready"] = False
+    run["active_operation_id"] = ""
+    previous = str(run.get("note") or "")
+    migrated_note = f"已迁移到执行镜像 {image[:80]}"
+    run["note"] = (f"{previous} | {migrated_note}" if previous else migrated_note)[:500]
+    run["updated_at"] = _now()
+    store.save_snapshot()
+    return image
 
 
 async def _restart_adapter_for_rebuild(run: dict[str, Any]) -> Any:
@@ -913,6 +991,188 @@ async def _submit_session_operation(
             status="succeeded" if exit_code == 0 else "failed",
             exit_code=exit_code)
     return _public_operation(run["run_id"], op)
+
+
+TERMINAL_BUILD = ("succeeded", "failed", "cancelled", "timed_out")
+
+
+class BuildSubmit(BaseModel):
+    """F4：构建提交体（固定源码输入；fencing 与提交同规则）。"""
+
+    repo_url: str = Field(min_length=1, max_length=500)
+    revision: str = Field(min_length=7, max_length=128)
+    timeout_s: float | None = None
+    fencing: str = Field(default="", max_length=128)
+
+
+def _public_build(build: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "build_id": build.get("build_id", ""),
+        "status": build.get("status", "unknown"),
+        "repo_url": build.get("repo_url", ""),
+        "revision": build.get("revision", ""),
+        "build_image": build.get("build_image", ""),
+        "exec_image": build.get("exec_image", ""),
+        "log_tail": build.get("log_tail", ""),
+        "detail": build.get("detail", ""),
+        "started_at": build.get("started_at", 0),
+        "finished_at": build.get("finished_at", 0),
+    }
+
+
+async def _drive_build(run_id: str, build_id: str) -> None:
+    """F4：构建作业后台驱动（提交→轮询远端→落盘；异常转失败，不抛）。
+
+    超时（min 指定/wall 剩余/1800 上限）即 timed_out；远端无取消语义，
+    run 级取消只停止跟踪（远端可能继续，如实注记，不谎称已停）。
+    """
+    run = store.runs.get(run_id)
+    if run is None:
+        return
+    build = (run.get("builds") or {}).get(build_id)
+    if build is None or build.get("status") != "running":
+        return
+
+    def _finish(**fields: object) -> None:
+        if build.get("status") == "running":
+            build.update(fields)
+
+    timeout_s = build.get("timeout_s") or 1800.0
+    try:
+        wall = float(run.get("deadline_at") or 0)
+        if wall:
+            timeout_s = min(float(timeout_s), max(1.0, wall - _now()),
+                            BUILD_JOB_TIMEOUT_S)
+        else:
+            timeout_s = min(float(timeout_s), BUILD_JOB_TIMEOUT_S)
+    except (TypeError, ValueError):
+        timeout_s = min(float(build.get("timeout_s") or 1800.0),
+                        BUILD_JOB_TIMEOUT_S)
+    deadline = _now() + max(1.0, timeout_s)
+    try:
+        builder = Repo2DockerBuilder()
+        remote_id = await builder.submit(repo_url=str(build.get("repo_url") or ""),
+                                         revision=str(build.get("revision") or ""))
+        build["remote_build_id"] = remote_id
+        store.save_snapshot()
+    except BuilderError as error:
+        _finish(status="failed", finished_at=_now(),
+                detail=f"{error.code}：{error}")
+        run["updated_at"] = _now()
+        store.save_snapshot()
+        return
+    while True:
+        if _now() >= deadline:
+            _finish(status="timed_out", finished_at=_now(),
+                    detail="构建超时（远端可能仍在继续；未采信任何镜像）。")
+            break
+        await asyncio.sleep(5.0)
+        current = store.runs.get(run_id)
+        if current is None:
+            return
+        build = (current.get("builds") or {}).get(build_id)
+        if build is None or build.get("status") != "running":
+            return
+        try:
+            viewed = await Repo2DockerBuilder().query(
+                str(build.get("remote_build_id") or build_id))
+        except BuilderError as error:
+            _finish(status="failed", finished_at=_now(),
+                    detail=f"构建查询失败（{error.code}）：{error}")
+            break
+        status = str(viewed.get("status") or "unknown")
+        build["log_tail"] = str(viewed.get("log_tail") or "")[-OUTPUT_TAIL_MAX:]
+        if status in ("succeeded", "failed", "cancelled", "timed_out"):
+            build.update({
+                "status": status,
+                "build_image": str(viewed.get("build_image") or "")[:256],
+                "exec_image": str(viewed.get("exec_image") or "")[:256],
+                "detail": str(viewed.get("detail") or "")[:500],
+                "finished_at": _now(),
+            })
+            break
+        run["updated_at"] = _now()
+        store.save_snapshot()
+    run["updated_at"] = _now()
+    store.save_snapshot()
+
+
+@app.post("/sandboxes/{run_id}/builds")
+async def submit_build(run_id: str, body: BuildSubmit,
+                       _: None = Depends(require_token)):
+    """F4：提交 repo2docker 构建作业（固定 revision；先登记后执行）。
+
+    构建器未配置 → 501 BUILDER_NOT_CONFIGURED（fail-closed，不等同基础
+    镜像安装）。同 run 一次只跑一个构建（已有 running 即 409）。
+    """
+    run_id = _check_run_id(run_id)
+    repo_url = (body.repo_url or "").strip()[:500]
+    revision = (body.revision or "").strip()[:128]
+    if not repo_url or not revision:
+        raise HTTPException(status_code=422, detail="INVALID_BUILD_REQUEST")
+    if body.timeout_s is not None and (body.timeout_s <= 0 or body.timeout_s > 3600):
+        raise HTTPException(status_code=422, detail="INVALID_TIMEOUT")
+    if not builder_configured():
+        # 未交付即拒（不等、不建空作业；调用方按构建路线 fail-closed）。
+        raise HTTPException(
+            status_code=501,
+            detail="BUILDER_NOT_CONFIGURED:repo2docker 构建器未配置；"
+            "构建路线 fail-closed，不等同基础镜像安装。",
+        )
+    async with store.lock_for(run_id):
+        run = store.runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="UNKNOWN_RUN")
+        if run.get("status") in TERMINAL_RUN:
+            raise HTTPException(
+                status_code=409,
+                detail=f"RUN_TERMINAL:{run.get('status')}：终态 run 不再接受构建作业",
+            )
+        fencing = (body.fencing or "").strip()[:128]
+        locked = str(run.get("fencing") or "")
+        if locked and fencing != locked:
+            raise HTTPException(
+                status_code=409,
+                detail="FENCING_REJECTED:提交 token 已过期；旧持有者不得提交构建。",
+            )
+        builds = run.setdefault("builds", {})
+        for existing in builds.values():
+            if existing.get("status") == "running":
+                raise HTTPException(
+                    status_code=409,
+                    detail="BUILD_ALREADY_RUNNING:同 run 已有构建在途，不并行构建。",
+                )
+        build_id = new_build_id()
+        build = {
+            "build_id": build_id, "status": "running",
+            "repo_url": repo_url, "revision": revision,
+            "timeout_s": body.timeout_s, "remote_build_id": "",
+            "build_image": "", "exec_image": "", "log_tail": "",
+            "detail": "", "started_at": _now(), "finished_at": 0,
+        }
+        builds[build_id] = build
+        if fencing and not locked:
+            run["fencing"] = fencing
+        run["updated_at"] = _now()
+        task = asyncio.create_task(_drive_build(run_id, build_id))
+        run.setdefault("build_tasks", {})[build_id] = task
+        store.save_snapshot()
+        return {**_public_build(build), "deduped": False}
+
+
+@app.get("/sandboxes/{run_id}/builds/{build_id}")
+async def query_build(run_id: str, build_id: str,
+                      _: None = Depends(require_token)):
+    """F4：查询构建作业（未知 id 诚实 unknown，不重建）。"""
+    run_id = _check_run_id(run_id)
+    build_id = (build_id or "").strip()[:128]
+    run = store.runs.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="UNKNOWN_RUN")
+    build = (run.get("builds") or {}).get(build_id)
+    if build is None:
+        return {"build_id": build_id, "status": "unknown"}
+    return _public_build(build)
 
 
 @app.post("/sandboxes/{run_id}/operations")
@@ -1266,6 +1526,17 @@ async def cancel_run(run_id: str, _: None = Depends(require_token)):
                            "output_tail": str(op.get("output_tail") or ""),
                            "output_truncated": bool(op.get("output_truncated"))})
         run["tasks"] = {}
+        # F4：在途构建停止跟踪（远端 daemon 无取消语义，可能继续；如实注记，
+        # 不谎称已停；构建产物永不自动采用）。
+        for build_id, task in list((run.get("build_tasks") or {}).items()):
+            if not task.done():
+                task.cancel()
+            build = (run.get("builds") or {}).get(build_id)
+            if build is not None and build.get("status") == "running":
+                build.update({"status": "cancelled", "finished_at": _now(),
+                              "detail": "run 级取消：已停止跟踪；远端构建可能仍在继续，"
+                                        "其产物不被采用。"})
+        run["build_tasks"] = {}
         run["active_operation_id"] = ""
         adapter = store.adapters.pop(run_id, None)
         if adapter is not None:

@@ -118,7 +118,13 @@ async def test_explicit_repo_never_answers_nanogpt_only(intake):
     assert result["scope"].get("metric_refs") is None
 
 
-async def test_paper_input_finds_repo_via_search():
+async def test_paper_input_single_unverified_hit_asks():
+    """F4 替代旧“首个命中即成功”：单个无确证搜索命中必须询问，不默认作者仓库。
+
+    旧断言（test_paper_input_finds_repo_via_search）对应已被替代的行为，
+    由本测试＋ test_paper_page_link_accepts_verified 接替覆盖。
+    """
+
     async def _searcher(query):
         assert "github" in query
         return {"repo_url": REPO_A, "paper_title": "Fixture Paper",
@@ -126,11 +132,60 @@ async def test_paper_input_finds_repo_via_search():
 
     flow = _Intake(searcher=_searcher)
     result = await flow.prepare("Fixture Paper 做图像分类", "复现论文指标")
+    assert result["status"] == "need_input"
+    assert REPO_A in str(result.get("questions", ""))
+    assert "首个" in str(result.get("questions", ""))
+
+
+async def test_paper_page_link_accepts_verified():
+    """论文页明确链接＋可达即取（作者自陈，不 HAVE 歧义）。"""
+
+    async def _searcher(query):
+        return {"repo_url": None}
+
+    from nexus import experiment_intake as intake_module
+
+    async def _fake_links(arxiv_id):
+        assert arxiv_id == "2401.00001"
+        return [REPO_A]
+
+    async def _fake_meta(arxiv_id):
+        return {"title": "Fixture Paper", "authors": ["Ada"]}
+
+    real_links = intake_module._fetch_paper_code_links
+    real_meta = intake_module._fetch_arxiv_meta
+    intake_module._fetch_paper_code_links = _fake_links
+    intake_module._fetch_arxiv_meta = _fake_meta
+    try:
+        flow = _Intake(searcher=_searcher)
+        result = await flow.prepare("arxiv:2401.00001", "配置环境并试跑")
+    finally:
+        intake_module._fetch_paper_code_links = real_links
+        intake_module._fetch_arxiv_meta = real_meta
     assert result["status"] == "success"
     assert result["scope"]["repo_url"] == REPO_A
-    assert result["scope"]["mode"] == "reproduce"
-    # 初始 repo 固定 revision（Reader 给出的 SHA）。
-    assert result["scope"]["repo_revision"] == "deadbeef1234"
+    assert result["scope"]["env_manifest"]["repo_source"] == "paper-page"
+
+
+async def test_arxiv_url_not_rejected_by_scheme():
+    """F4：arXiv URL 不再被 scheme 分支提前拒绝（进论文流）。"""
+
+    async def _searcher(query):
+        return {"repo_url": None}
+
+    flow = _Intake(searcher=_searcher)
+    result = await flow.prepare("https://arxiv.org/abs/2401.00001", "试跑")
+    # 无链接无命中 → need_input（问仓库），而不是 rejected。
+    assert result["status"] == "need_input"
+    assert "公开仓库" in str(result.get("questions", ""))
+
+
+async def test_attachment_ref_records_without_read():
+    """F4：附件引用只记录不冒充已读，并要仓库直链。"""
+    flow = _Intake()
+    result = await flow.prepare("attachment:att-123 做图像分类", "试跑")
+    assert result["status"] == "need_input"
+    assert "附件" in str(result.get("questions", ""))
 
 
 async def test_license_verified_and_unknown_marked():
@@ -255,3 +310,70 @@ def test_prepare_tool_is_research_only():
     assert "prepare_experiment" in {t.name for t in _tools_for_mode("research", "auto")}
     assert "prepare_experiment" in {t.name for t in _tools_for_mode("research", "ask")}
     assert "prepare_experiment" not in {t.name for t in _tools_for_mode("general", "auto")}
+
+
+def test_probe_link_ip_filter():
+    """F4：探测 SSRF 底线（内网/回环/非法 scheme 不发包）。"""
+    from nexus import experiment_intake as intake_module
+
+    assert intake_module._is_public_http_url("http://127.0.0.1/x") is False
+    assert intake_module._is_public_http_url("http://169.254.169.254/") is False
+    assert intake_module._is_public_http_url("http://10.1.2.3/y") is False
+    assert intake_module._is_public_http_url("ftp://example.com/x") is False
+    assert intake_module._is_public_http_url("not a url") is False
+
+
+def test_parse_paper_ref_shapes():
+    """F4：来源识别（arXiv URL/id、附件、标题）先于来源限制。"""
+    from nexus import experiment_intake as intake_module
+
+    ref = intake_module.parse_paper_ref("https://arxiv.org/abs/2401.00001")
+    assert (ref["kind"], ref["arxiv_id"]) == ("arxiv_url", "2401.00001")
+    ref = intake_module.parse_paper_ref("https://arxiv.org/pdf/2401.00001.pdf")
+    assert ref["kind"] == "arxiv_url"
+    ref = intake_module.parse_paper_ref("arxiv:2401.00001v2")
+    assert (ref["kind"], ref["arxiv_id"]) == ("arxiv_id", "2401.00001v2")
+    ref = intake_module.parse_paper_ref("2401.00001")
+    assert ref["kind"] == "arxiv_id"
+    ref = intake_module.parse_paper_ref("attachment:att-9 做分类")
+    assert ref["kind"] == "attachment" and ref["attachment_id"] == "att-9"
+    ref = intake_module.parse_paper_ref("Attention Is All You Need")
+    assert ref["kind"] == "title"
+
+
+def test_verify_repo_paper_link_levels():
+    """F4：关联信号分级（强/弱/无），确定性。"""
+    from nexus import experiment_intake as intake_module
+
+    paper = {"arxiv_id": "2401.00001", "title": "Fixture Paper For Images"}
+    assert intake_module.verify_repo_paper_link(
+        "see https://arxiv.org/abs/2401.00001", paper)["level"] == "strong"
+    assert intake_module.verify_repo_paper_link(
+        "Fixture paper for images official code", paper)["level"] == "weak"
+    assert intake_module.verify_repo_paper_link(
+        "some random toolkit", paper)["level"] == "none"
+
+
+def test_extract_data_links_classifies():
+    """F4：数据链接提取＋分类（只提取不下载）。"""
+    from nexus import experiment_intake as intake_module
+
+    links = intake_module._extract_data_links(
+        "data at https://huggingface.co/datasets/foo/bar and "
+        "https://github.com/o/r/releases/download/v1/data.zip plus "
+        "https://arxiv.org/abs/2401.1 and https://pypi.org/project/x")
+    kinds = {item["kind"] for item in links}
+    assert "huggingface" in kinds and "github-release" in kinds
+    assert not any("arxiv.org" in item["url"] for item in links)
+    assert not any("pypi.org" in item["url"] for item in links)
+
+
+async def test_scope_carries_env_manifest(intake):
+    """F4：scope 冻结环境清单（读位 SHA＋数据＋来源），过 scope 校验。"""
+    result = await intake.prepare(REPO_A, "配置环境并试跑")
+    assert result["status"] == "success"
+    manifest = result["scope"].get("env_manifest") or {}
+    assert manifest.get("read_at_sha") == "deadbeef1234"
+    assert "requirements.txt" in manifest.get("env_files_detected", [])
+    assert manifest.get("repo_source") == "direct"
+    assert result["scope"]["data_refs"] == []

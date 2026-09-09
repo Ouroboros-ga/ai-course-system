@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 import uuid
 from typing import Any
 
@@ -34,9 +35,16 @@ EXPERIMENT_PROVIDER = "nexus-experiment"
 
 # repo2docker 支持的仓库配置（检出即走构建路线；构建器未落地前该路线
 # fail-closed，见 select_environment_route）。
-REPO2DOCKER_MARKERS = frozenset({
-    "environment.yml", "environment.yaml", "apt.txt", "Dockerfile",
-    ".binder/environment.yml", ".binder/apt.txt", ".binder/Dockerfile",
+# F4：目录感知——`.binder`/`binder` 是目录（顶层 listing 只出现目录名），
+# 检出逻辑见 select_environment_route（纯函数，可单测）。
+REPO2DOCKER_DIR_MARKERS = frozenset({".binder", "binder"})
+REPO2DOCKER_FILE_MARKERS = frozenset({
+    "environment.yml", "environment.yaml", "apt.txt", "runtime.txt",
+    "Dockerfile",
+})
+# 基础容器可处理的声明（pip/conda 生态）：走 base_container，不占用构建器。
+BASE_CONTAINER_MARKERS = frozenset({
+    "requirements.txt", "setup.py", "setup.cfg", "pyproject.toml",
 })
 
 _EXIT_CODE_RE = re.compile(r"exit code (\d+)")
@@ -297,19 +305,98 @@ def _record_terminal_observation(
                        operation_id, type(error).__name__)
 
 
-def select_environment_route(workspace_files: list[str]) -> dict[str, str]:
-    """按工作区声明选择环境路线（只选择＋记录，不构建）。
+async def _prepare_pinned_repo(
+    backend: Any, run_id: str, repo_url: str, revision: str,
+    listing: list[str],
+) -> dict[str, Any]:
+    """F4：授权后准备固定版本仓库（克隆＋checkout＋rev-parse 核对）。
 
-    repo2docker 标记命中 → route=repo2docker（构建器未落地，执行核
-    fail-closed，T7-B 验收时翻转）；否则 route=base_container（预置 Python
-    基础容器内 pip/conda）。
+    - 空工作区 → 按序 clone/fetch/checkout/verify（失败即 failed，不推进）；
+    - 非空且 HEAD == revision → 跳过（不删用户态，resume 复用容器）；
+    - 非空但对不上 → failed（REPO_STATE_MISMATCH），绝不 rm -rf 重来；
+    - revision 为空 → 跳过（旧提案兼容；T7 门已保证新提案必固定）。
+    克隆落一条 environment attempt（授权范围内的准备动作，可审计）。
     """
-    names = {str(name).strip().lstrip("./") for name in workspace_files or []}
-    hit = sorted(names & REPO2DOCKER_MARKERS)
-    if hit:
-        return {"route": "repo2docker",
-                "reason": f"检出 repo2docker 配置：{', '.join(hit)}（构建器未落地，不等同基础镜像安装）"}
-    return {"route": "base_container",
+    from nexus import experiment_runs as runs_module
+
+    revision = (revision or "").strip()
+    repo_url = (repo_url or "").strip()
+    if not revision or not repo_url:
+        return {"status": "skipped", "detail": "未固定修订，跳过仓库准备。"}
+    names = [str(name).strip() for name in listing or []]
+    meaningful = [name for name in names if name not in (".", "..")]
+    if meaningful:
+        try:
+            head = await backend.aexecute("git -C /workspace rev-parse HEAD")
+        except Exception as error:  # noqa: BLE001 - 读不到即失配，不猜
+            return {"status": "failed", "code": "REPO_STATE_MISMATCH",
+                    "detail": f"工作区非空但无法核对修订（{type(error).__name__}），拒绝复用。"}
+        if (head.exit_code == 0 and head.output.strip().splitlines()
+                and head.output.strip().splitlines()[-1].strip() == revision):
+            return {"status": "skipped",
+                    "detail": f"工作区已是 {revision[:12]}，复用，不重克隆。"}
+        return {"status": "failed", "code": "REPO_STATE_MISMATCH",
+                "detail": "工作区已有内容但与固定修订不一致，拒绝复用（不删除）。"}
+    import shlex as _shlex
+
+    sequence = (
+        f"git init -q /workspace && "
+        f"git -C /workspace remote add origin {_shlex.quote(repo_url)} && "
+        f"(git -C /workspace fetch --depth 1 origin {_shlex.quote(revision)} "
+        f"|| git -C /workspace fetch origin) && "
+        f"git -C /workspace checkout {_shlex.quote(revision)}"
+    )
+    try:
+        result = await backend.aexecute(sequence, timeout=600)
+    except Exception as error:  # noqa: BLE001 - 提交失败即失败
+        return {"status": "failed", "code": "CLONE_FAILED",
+                "detail": f"仓库准备提交失败（{type(error).__name__}）。"}
+    runs_module.record_attempt(
+        run_id, actual_command=f"git clone+checkout {revision[:12]} ({repo_url[:80]})",
+        config_changes={"kind": "execute", "op_kind": "environment",
+                        "stage": "repo_prepare"},
+        operation_id=getattr(backend, "last_operation_id", ""),
+        exit_code=result.exit_code, log_ref=result.output[-2000:])
+    if result.exit_code != 0:
+        return {"status": "failed", "code": "CLONE_FAILED",
+                "detail": f"仓库克隆/checkout 失败（exit={result.exit_code}）。"}
+    try:
+        verify = await backend.aexecute("git -C /workspace rev-parse HEAD")
+    except Exception as error:  # noqa: BLE001
+        return {"status": "failed", "code": "CLONE_FAILED",
+                "detail": f"修订核对读失败（{type(error).__name__}）。"}
+    actual = (verify.output or "").strip().splitlines()
+    if verify.exit_code != 0 or not actual or actual[-1].strip() != revision:
+        return {"status": "failed", "code": "PIN_MISMATCH",
+                "detail": "checkout 后 rev-parse 与固定修订不一致，拒绝继续。"}
+    return {"status": "cloned", "detail": f"已固定到 {revision[:12]}。"}
+
+
+def select_environment_route(workspace_files: list[str]) -> dict[str, Any]:
+    """F4：按固定版本工作区声明选择环境路线（只选择＋记录，不构建）。
+
+    输入为克隆固定 SHA 后的顶层清单（纯函数，可单测）：
+    - Dockerfile → repo2docker（只有构建器能兑现 Dockerfile）；
+    - `.binder/`/`binder/` 目录 → repo2docker（目录内声明，旧逻辑因只比
+      文件名永远检不出，此处修复）；
+    - environment.yml/yaml、apt.txt、runtime.txt → repo2docker；
+    - 否则 base_container（requirements/setup.py/pyproject 走预置 Python
+      容器内 pip/conda）。
+    repo2docker 路线在构建器未落地前执行核 fail-closed（T7-B 口径）。
+    """
+    names = {str(name).strip().lstrip("./").rstrip("/") for name in workspace_files or []}
+    markers: list[str] = []
+    if "Dockerfile" in names:
+        markers.append("Dockerfile")
+    dir_hit = sorted(names & REPO2DOCKER_DIR_MARKERS)
+    markers.extend(f"{d}/" for d in dir_hit)
+    file_hit = sorted(names & REPO2DOCKER_FILE_MARKERS)
+    markers.extend(file_hit)
+    if markers:
+        return {"route": "repo2docker", "markers": markers,
+                "reason": f"检出 repo2docker 配置：{', '.join(markers)}（构建器未落地，不等同基础镜像安装）"}
+    base_hit = sorted(names & BASE_CONTAINER_MARKERS)
+    return {"route": "base_container", "markers": base_hit,
             "reason": "常规 requirements/脚本项目：预置 Python 基础容器内安装"}
 
 
@@ -455,6 +542,128 @@ def _backend_from_settings(run_id: str):
                               initial_seq=initial_seq)
 
 
+async def _run_repo2docker_build(
+    *, run_id: str, backend: Any, route: dict[str, Any],
+    repo_url: str, revision: str,
+) -> dict[str, Any]:
+    """F4：repo2docker 构建路线（构建→迁移→重准备，失败即停）。
+
+    - 构建器未配置 → ROUTE_NOT_DELIVERED（T7-B 口径：不等同基础镜像安装，
+      不偷偷换路线记成功）；
+    - 成功 → 记录双镜像身份 attempt → 迁移到执行镜像 → 新容器内重准备仓库
+      → 返回 {"status": "continue"} 由调用方进入图执行；
+    - 失败/超时/取消 → 终态 dict（attempt 已记，日志保留）。
+    构建日志、超时、取消、镜像引用全部接入本 run（F4-8）。
+    """
+    from nexus import experiment_runs as runs_module
+
+    markers = list(route.get("markers") or [])
+    try:
+        submitted = await backend.start_build(repo_url, revision)
+    except Exception as error:  # noqa: BLE001
+        code = getattr(error, "code", type(error).__name__)
+        if code == "BUILDER_NOT_CONFIGURED":
+            reason = (f"ROUTE_NOT_DELIVERED: 检出 {', '.join(markers) or 'repo2docker 配置'}，"
+                      "但构建器未交付（不等同基础镜像安装，不偷换路线）。")
+            runs_module.set_status(run_id, "failed", reason)
+            return {"status": "failed", "run_id": run_id,
+                    "code": "ROUTE_NOT_DELIVERED"}
+        runs_module.set_status(run_id, "failed", f"BUILD_SUBMIT_FAILED: {code}")
+        return {"status": "failed", "run_id": run_id, "code": "BUILD_SUBMIT_FAILED"}
+    build_id = str(submitted.get("build_id") or "")
+    if not build_id:
+        runs_module.set_status(run_id, "failed", "BUILD_SUBMIT_FAILED: 构建器未返回作业 id。")
+        return {"status": "failed", "run_id": run_id, "code": "BUILD_SUBMIT_FAILED"}
+    # 构建预算：wall_time 剩余与 1800 上限取小（调用方 run 锁外轮询）。
+    try:
+        wall_left: float | None = None
+        run = runs_module.get_run(run_id)
+        scope_resources: dict[str, Any] = {}
+        if run is not None:
+            from nexus import proposals as proposals_module
+
+            proposal = proposals_module.get_proposal(run.get("proposal_id", ""))
+            if proposal is not None:
+                scope_resources = (proposal.get("scope") or {}).get("resources") or {}
+        wall_total = float(scope_resources.get("wall_time_s") or 1800)
+        started = float((runs_module.get_run(run_id) or {}).get("created_at") or 0) or 0.0
+        wall_left = max(60.0, wall_total - (time.time() - started)) if started else wall_total
+    except Exception:  # noqa: BLE001 - 预算读失败即用上限
+        wall_left = 1800.0
+    deadline = time.monotonic() + min(1800.0, wall_left or 1800.0)
+    final: dict[str, Any] = {"build_id": build_id, "status": "running"}
+    while True:
+        if runs_module.is_cancel_requested(run_id):
+            set_terminal_status(run_id, "cancelled", "构建期间用户取消。")
+            return {"status": "cancelled", "run_id": run_id}
+        try:
+            final = await backend.query_build(build_id)
+        except Exception as error:  # noqa: BLE001 - 查询失败即构建失败
+            code = getattr(error, "code", type(error).__name__)
+            runs_module.record_attempt(
+                run_id, actual_command=f"repo2docker build {revision[:12]}",
+                config_changes={"kind": "execute", "op_kind": "environment",
+                                "route": "repo2docker", "markers": markers,
+                                "build_id": build_id},
+                exit_code=1, log_ref=f"构建查询失败：{code}"[:2000])
+            runs_module.set_status(run_id, "failed", f"BUILD_FAILED: 构建查询失败（{code}）。")
+            return {"status": "failed", "run_id": run_id, "code": "BUILD_FAILED"}
+        status = str(final.get("status") or "unknown")
+        if status in ("succeeded", "failed", "cancelled", "timed_out", "unknown"):
+            break
+        if time.monotonic() >= deadline:
+            final = dict(final)
+            final["status"] = "timed_out"
+            final["detail"] = "构建轮询超时（远端可能仍在继续；未采信任何镜像）。"
+            break
+        await asyncio.sleep(5.0)
+    status = str(final.get("status") or "unknown")
+    build_image = str(final.get("build_image") or "")
+    exec_image = str(final.get("exec_image") or "")
+    log_tail = str(final.get("log_tail") or "")[-2000:]
+    if status != "succeeded" or not exec_image:
+        runs_module.record_attempt(
+            run_id, actual_command=f"repo2docker build {revision[:12]}",
+            config_changes={"kind": "execute", "op_kind": "environment",
+                            "route": "repo2docker", "markers": markers,
+                            "build_id": build_id, "build_image": build_image,
+                            "exec_image": exec_image},
+            exit_code=1, log_ref=log_tail or str(final.get("detail") or "构建未成功"))
+        runs_module.set_status(
+            run_id, "failed",
+            f"BUILD_FAILED: 构建{status}（{str(final.get('detail') or '')[:200]}）；"
+            "未换路线，未记成功。")
+        return {"status": "failed", "run_id": run_id, "code": "BUILD_FAILED"}
+    runs_module.record_attempt(
+        run_id, actual_command=f"repo2docker build {revision[:12]}",
+        config_changes={"kind": "execute", "op_kind": "environment",
+                        "route": "repo2docker", "markers": markers,
+                        "build_id": build_id, "build_image": build_image,
+                        "exec_image": exec_image},
+        exit_code=0, log_ref=log_tail or f"构建镜像：{build_image[:120]}")
+    # 迁移到执行镜像（含运行时），新容器内重准备固定仓库。
+    try:
+        migrated = await backend.migrate_image(exec_image)
+    except Exception as error:  # noqa: BLE001
+        code = getattr(error, "code", type(error).__name__)
+        runs_module.set_status(run_id, "failed", f"MIGRATE_FAILED: {code}（构建产物已记录，不重建）。")
+        return {"status": "failed", "run_id": run_id, "code": "MIGRATE_FAILED"}
+    logger.info("run %s migrated to exec image: %s", run_id,
+                str((migrated or {}).get("image") or exec_image)[:80])
+    try:
+        listing = await _list_workspace(backend)
+    except Exception as error:  # noqa: BLE001
+        runs_module.set_status(run_id, "failed", f"沙箱不可达：{type(error).__name__}")
+        return {"status": "failed", "run_id": run_id, "code": "SANDBOX_UNAVAILABLE"}
+    prepared = await _prepare_pinned_repo(backend, run_id, repo_url, revision, listing)
+    if prepared["status"] == "failed":
+        runs_module.set_status(run_id, "failed",
+                               f"{prepared['code']}: {prepared['detail']}")
+        return {"status": "failed", "run_id": run_id, "code": prepared["code"]}
+    return {"status": "continue", "run_id": run_id,
+            "build_image": build_image, "exec_image": exec_image}
+
+
 async def execute_bound_run(
     *, run_id: str, owner: str, session_id: str,
     backend: Any = None, model: Any = None, checkpointer: Any = None,
@@ -575,23 +784,42 @@ async def _execute_under_lock(
                 f"{getattr(error, 'code', type(error).__name__)}: {error}")
             return {"status": "failed", "run_id": run_id,
                     "code": getattr(error, "code", "SANDBOX_NOT_CONFIGURED")}
-    # 路线选择：列工作区声明（一次真实 ls），记录为首个 attempt。
+    # F4：路线选择前先准备固定版本仓库（空工作区克隆，已对齐复用，
+    # 失配/失败即停；此前的空工作区选路已被证伪，不再使用）。
     try:
         listing = await _list_workspace(active_backend)
     except Exception as error:  # noqa: BLE001
         runs_module.set_status(run_id, "failed", f"沙箱不可达：{type(error).__name__}")
         return {"status": "failed", "run_id": run_id, "code": "SANDBOX_UNAVAILABLE"}
+    prepared = await _prepare_pinned_repo(
+        active_backend, run_id, _gate_repo_url, _gate_revision, listing)
+    if prepared["status"] == "failed":
+        runs_module.set_status(run_id, "failed",
+                               f"{prepared['code']}: {prepared['detail']}")
+        return {"status": "failed", "run_id": run_id, "code": prepared["code"]}
+    if prepared["status"] == "cloned":
+        try:
+            listing = await _list_workspace(active_backend)
+        except Exception as error:  # noqa: BLE001
+            runs_module.set_status(run_id, "failed", f"沙箱不可达：{type(error).__name__}")
+            return {"status": "failed", "run_id": run_id, "code": "SANDBOX_UNAVAILABLE"}
     route = select_environment_route(listing)
     runs_module.record_attempt(
         run_id, actual_command="ls /workspace",
         config_changes={"route": route["route"], "reason": route["reason"],
+                        "markers": route.get("markers", []),
+                        "repo_prepared": prepared["status"],
                         "kind": "execute", "op_kind": "probe"},
         exit_code=0, log_ref="; ".join(listing[:20]))
     if route["route"] == "repo2docker":
-        runs_module.set_status(
-            run_id, "failed",
-            f"ROUTE_NOT_DELIVERED: {route['reason']}（T7-B 验收时接入构建器）")
-        return {"status": "failed", "run_id": run_id, "code": "ROUTE_NOT_DELIVERED"}
+        built = await _run_repo2docker_build(
+            run_id=run_id, backend=active_backend, route=route,
+            repo_url=_gate_repo_url, revision=_gate_revision)
+        if built.get("status") != "continue":
+            return built
+        # 构建成功＋已迁移到执行镜像：落盘构建身份后进入图执行。
+        logger.info("run %s repo2docker built: %s", run_id,
+                    str(built.get("exec_image") or "")[:80])
     thread_id = f"exp-{run_id}"
     runs_module.set_graph_thread(run_id, thread_id)
     # F2：绑定本次租约令牌并轮换控制面 fencing（旧持有者的迟到提交自此

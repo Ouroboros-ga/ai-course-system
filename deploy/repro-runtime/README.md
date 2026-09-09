@@ -15,7 +15,9 @@
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `PUT /sandboxes/{run_id}` | ensure：体为 `{scope_hash, resources, network_profile?}`；同 run 同 scope 幂等，异 hash → 409 `SCOPE_HASH_MISMATCH`；未知网络档案 → 422；resources 超部署上限 → 422 |
+| `PUT /sandboxes/{run_id}` | ensure：体为 `{scope_hash, resources, network_profile?, image?}`；同 run 同 scope 幂等，异 hash → 409 `SCOPE_HASH_MISMATCH`；`image` 非空且与现镜像不同 → 迁移到执行镜像（须无在途操作，否则 409；终态拒绝）；未知网络档案 → 422；resources 超部署上限 → 422 |
+| `POST /sandboxes/{run_id}/builds` | F4 构建作业：`{repo_url, revision, timeout_s?, fencing?}`；构建器未配置 → 501 `BUILDER_NOT_CONFIGURED`（fail-closed）；同 run 不并行构建；run 级取消停止跟踪（远端可能继续，如实注记） |
+| `GET /sandboxes/{run_id}/builds/{build_id}` | F4 构建查询（未知 id 即 unknown；重启后在途即 unknown，不重建） |
 | `POST /sandboxes/{run_id}/operations` | `{operation_id, command, timeout_s, request_hash?, fencing?, session?}` 登记后执行；同 ID 同请求去重，不同请求 → 409 `OPERATION_ID_CONFLICT`；fencing 锁定后旧/空 token → 409 `FENCING_REJECTED`；`session=true` 进 run 会话（首窗 15s 内完成即终态，否则 running 即返，可中断＋增量日志）；超 run 时限 → 409 `WALL_TIME_EXCEEDED` |
 | `GET /sandboxes/{run_id}/operations/{operation_id}?cursor=&probe=` | 结果/状态查询（HTTP 超时≠进程停止）；`cursor` 取日志增量（`increment`/`offset`/`reset`）；`probe=1` 对运行中会话操作做 shell 空闲探针（空闲＋标记齐全即采信终态，防伪造成功） |
 | `POST /sandboxes/{run_id}/operations/{operation_id}/cancel` | F3 操作级取消（整体取消仍走 run 级 cancel）：会话运行中操作中断＋确认停止；one-shot 运行中 → 409 `OPERATION_NOT_INTERRUPTIBLE`；中断未确认 → `INTERRUPT_UNCONFIRMED`＋回收容器 |

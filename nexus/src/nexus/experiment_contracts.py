@@ -31,6 +31,9 @@ class ExperimentScope(BaseModel):
     resources: Resources  # 服务端给默认值并核对可用容量
     mode: Literal["setup", "smoke", "reproduce"]
     allow_environment_repair: bool = True
+    # F4：环境清单（intake 在固定 SHA 下识别的环境声明/数据源/构建提示；
+    # 冻结进 scope_hash，执行侧按此准备，不重新猜测）。
+    env_manifest: dict[str, Any] = Field(default_factory=dict)
 
 
 class SandboxResult(BaseModel):

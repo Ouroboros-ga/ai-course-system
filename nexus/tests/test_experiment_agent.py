@@ -46,9 +46,22 @@ class _ScriptedContainer:
         self.executions: list[str] = []
         self.uploads: list[str] = []
         self.operation_posts: list[dict] = []
+        # F4：固定仓库位（与 _ready_run 的 deadbeef… 对齐则复用跳过；
+        # None＋空工作区则走克隆，由 clone_files 落盘）。
+        self.repo_sha: str | None = "deadbeef1234567890"
+        self.clone_files: dict[str, str] = {}
+        self.builds: dict[str, dict] = {}
 
     def _run(self, command):
         self.executions.append(command)
+        if command.startswith("git -C /workspace rev-parse HEAD"):
+            if self.repo_sha:
+                return 0, self.repo_sha + "\n"
+            return 128, "fatal: not a git repository"
+        if command.startswith("git init"):
+            self.repo_sha = "deadbeef1234567890"
+            self.files.update(dict(self.clone_files))
+            return 0, ""
         if command.startswith("ls -a /workspace"):
             names = sorted(
                 path.rsplit("/", 1)[-1] for path in self.files
@@ -92,7 +105,15 @@ class _ScriptedContainer:
                 self.files[fpath] = ""
             return httpx.Response(200, json={"path": fpath,
                                              "bytes": len(request.content)})
-        if request.method == "PUT" and "/sandboxes/" in path:
+        if request.method == "PUT" and "/sandboxes/" in path and "/files/" not in path \
+                and "/builds" not in path:
+            body = _body()
+            if body.get("image"):
+                # F4：镜像迁移（新容器；旧工作区状态由调用方重准备）。
+                return httpx.Response(200, json={
+                    "sandbox_id": "sbx-migrated", "status": "ready",
+                    "image": body["image"],
+                    "image_digest": "sha256:migrated"})
             return httpx.Response(200, json={"sandbox_id": "sbx-t4",
                                              "status": "ready"})
         if request.method == "POST" and path.endswith("/operations"):
@@ -104,6 +125,23 @@ class _ScriptedContainer:
                 "operation_id": op_id, "status": "succeeded",
                 "exit_code": exit_code, "output_tail": output,
                 "output_truncated": False})
+        if request.method == "POST" and path.endswith("/builds"):
+            if not getattr(self, "builder_configured", True):
+                return httpx.Response(501, json={
+                    "detail": "BUILDER_NOT_CONFIGURED：构建器未配置。"})
+            body = _body()
+            build_id = f"bld-{len(self.builds) + 1:04d}"
+            self.builds[build_id] = dict(body)
+            return httpx.Response(200, json={"build_id": build_id,
+                                             "status": "running"})
+        if request.method == "GET" and "/builds/" in path:
+            build_id = path.rsplit("/", 1)[-1]
+            scripted = getattr(self, "build_result", None) or {
+                "status": "succeeded",
+                "build_image": "registry.local/proj:deadbeef",
+                "exec_image": "registry.local/proj-exec:deadbeef",
+                "log_tail": "Successfully built", "detail": ""}
+            return httpx.Response(200, json={"build_id": build_id, **scripted})
         if request.method == "GET" and "/operations/" in path:
             return httpx.Response(200, json={
                 "operation_id": path.rsplit("/", 1)[-1], "status": "succeeded",
@@ -610,7 +648,11 @@ async def test_bound_run_cancel_before_start_stays_cancelled():
 
 
 async def test_repo2docker_route_fails_closed_not_delivered():
-    """T4：命中 repo2docker 声明 → ROUTE_NOT_DELIVERED，不假装已集成。"""
+    """T4：命中 repo2docker 声明 → ROUTE_NOT_DELIVERED，不假装已集成。
+
+    F4：构建器未交付时控制面 501 BUILDER_NOT_CONFIGURED，执行核仍以
+    ROUTE_NOT_DELIVERED 失败（T7-B 口径不变），不偷换基础路线。
+    """
     import httpx
 
     from nexus import experiment_agent as agent_module
@@ -618,6 +660,7 @@ async def test_repo2docker_route_fails_closed_not_delivered():
 
     container = _ScriptedContainer()
     container.files["/workspace/environment.yml"] = "name: fixture\n"
+    container.builder_configured = False
     run = _ready_run("u-r2d")
     backend = HttpSandboxBackend(
         run_id=run["run_id"], base_url="http://control.test", token="t",
@@ -629,9 +672,10 @@ async def test_repo2docker_route_fails_closed_not_delivered():
     assert result["code"] == "ROUTE_NOT_DELIVERED"
     stored = runs_module.get_run(run["run_id"])
     assert stored["attempts"][0]["config_changes"]["route"] == "repo2docker"
-    assert all("ls -a /workspace" in p["command"]
+    allowed_prefixes = ("ls -a /workspace", "git -C /workspace rev-parse HEAD")
+    assert all(any(p["command"].startswith(prefix) for prefix in allowed_prefixes)
                for p in container.operation_posts), \
-        "构建器未交付：除路由探测外不得执行任何命令"
+        "构建器未交付：除路由探测与修订核对（只读）外不得执行任何命令"
 
 
 async def test_single_executor_lock_dedupes_concurrent_entry():
@@ -661,3 +705,138 @@ async def test_control_not_configured_fails_run_not_silent_running(monkeypatch):
     stored = runs_module.get_run(run["run_id"])
     assert stored["status"] == "failed"
     assert "SANDBOX_NOT_CONFIGURED" in stored["detail"]
+
+
+def test_select_environment_route_markers():
+    """F4：目录感知选路（.binder 目录可检出；Dockerfile 优先；pip 系走基础容器）。"""
+    from nexus import experiment_agent as agent_module
+
+    r2d = agent_module.select_environment_route(["README.md", ".binder", "train.py"])
+    assert r2d["route"] == "repo2docker"
+    assert "binder/" in r2d["markers"]
+    docker = agent_module.select_environment_route(["Dockerfile", "requirements.txt"])
+    assert docker["route"] == "repo2docker"
+    assert docker["markers"][0] == "Dockerfile"
+    base = agent_module.select_environment_route(["requirements.txt", "train.py"])
+    assert base["route"] == "base_container"
+    empty = agent_module.select_environment_route([])
+    assert empty["route"] == "base_container"
+
+
+async def test_pinned_repo_clone_then_route_and_run():
+    """F4：空工作区先克隆固定 SHA，再按真实文件选路并执行。"""
+    import httpx
+
+    from nexus import experiment_agent as agent_module
+    from nexus.experiment_sandbox import HttpSandboxBackend
+
+    container = _ScriptedContainer()
+    container.files = {}
+    container.repo_sha = None
+    container.clone_files = {
+        "/workspace/README.md": "# fixture\n",
+        "/workspace/requirements.txt": "fakepkg\n",
+        "/workspace/train.py": "import fakepkg\nprint('loss=0.5')\n",
+    }
+    run = _ready_run("u-clone")
+    backend = HttpSandboxBackend(
+        run_id=run["run_id"], base_url="http://control.test", token="t",
+        transport=httpx.MockTransport(container.responder))
+    result = await agent_module.execute_bound_run(
+        run_id=run["run_id"], owner="u-clone", session_id="s-u-clone",
+        backend=backend, model=_scripted_model())
+    assert result["status"] == "succeeded"
+    stored = runs_module.get_run(run["run_id"])
+    kinds = [str((a.get("config_changes") or {}).get("stage") or "")
+             for a in stored["attempts"]]
+    assert "repo_prepare" in kinds, "克隆落 environment attempt，可审计"
+    assert container.repo_sha == "deadbeef1234567890"
+
+
+async def test_pinned_repo_mismatch_fails_without_wipe():
+    """F4：工作区已有内容但修订对不上 → 失败，不删除。"""
+    import httpx
+
+    from nexus import experiment_agent as agent_module
+    from nexus.experiment_sandbox import HttpSandboxBackend
+
+    container = _ScriptedContainer()
+    container.repo_sha = "cafef00d" * 2
+    run = _ready_run("u-mismatch")
+    backend = HttpSandboxBackend(
+        run_id=run["run_id"], base_url="http://control.test", token="t",
+        transport=httpx.MockTransport(container.responder))
+    result = await agent_module.execute_bound_run(
+        run_id=run["run_id"], owner="u-mismatch", session_id="s-u-mismatch",
+        backend=backend, model=_scripted_model())
+    assert result["status"] == "failed"
+    assert result["code"] == "REPO_STATE_MISMATCH"
+    assert not any("rm -rf" in (p.get("command") or "") for p in container.operation_posts)
+
+
+async def test_repo2docker_build_success_migrates_and_runs():
+    """F4：构建成功 → 双镜像落盘 → 迁移执行镜像 → 重准备 → 图继续。"""
+    import httpx
+
+    from nexus import experiment_agent as agent_module
+    from nexus.experiment_sandbox import HttpSandboxBackend
+
+    container = _ScriptedContainer()
+    container.files = {}
+    container.repo_sha = None
+    container.clone_files = {
+        "/workspace/README.md": "# fixture\n",
+        "/workspace/environment.yml": "name: fixture\n",
+        "/workspace/requirements.txt": "fakepkg\n",
+        "/workspace/train.py": "import fakepkg\nprint('loss=0.5')\n",
+    }
+    run = _ready_run("u-r2dok")
+    backend = HttpSandboxBackend(
+        run_id=run["run_id"], base_url="http://control.test", token="t",
+        transport=httpx.MockTransport(container.responder))
+    result = await agent_module.execute_bound_run(
+        run_id=run["run_id"], owner="u-r2dok", session_id="s-u-r2dok",
+        backend=backend, model=_scripted_model())
+    assert result["status"] == "succeeded"
+    stored = runs_module.get_run(run["run_id"])
+    builds = [a for a in stored["attempts"]
+              if str(a.get("actual_command") or "").startswith("repo2docker build")]
+    assert builds and builds[0]["exit_code"] == 0
+    assert builds[0]["config_changes"]["exec_image"] == "registry.local/proj-exec:deadbeef"
+    from nexus import experiment_report as report_module
+
+    report = report_module.build_experiment_report(
+        run=stored, scope={"objective": "x", "repo_url": "https://github.com/example/r",
+                           "repo_revision": "deadbeef1234567890", "source_refs": [],
+                           "data_refs": [], "network_profile": "p", "resources": {},
+                           "mode": "smoke"})
+    assert report["recipe"]["exec_image"] == "registry.local/proj-exec:deadbeef"
+    assert report["recipe"]["build_image"] == "registry.local/proj:deadbeef"
+
+
+async def test_repo2docker_build_failure_no_silent_fallback():
+    """F4：构建失败 → BUILD_FAILED，不偷换基础路线记成功。"""
+    import httpx
+
+    from nexus import experiment_agent as agent_module
+    from nexus.experiment_sandbox import HttpSandboxBackend
+
+    container = _ScriptedContainer()
+    container.files = {}
+    container.repo_sha = None
+    container.clone_files = {"/workspace/environment.yml": "name: fixture\n"}
+    container.build_result = {"status": "failed", "build_image": "",
+                              "exec_image": "", "log_tail": "conda boom",
+                              "detail": "solve failed"}
+    run = _ready_run("u-r2dfail")
+    backend = HttpSandboxBackend(
+        run_id=run["run_id"], base_url="http://control.test", token="t",
+        transport=httpx.MockTransport(container.responder))
+    result = await agent_module.execute_bound_run(
+        run_id=run["run_id"], owner="u-r2dfail", session_id="s-u-r2dfail",
+        backend=backend, model=_scripted_model())
+    assert result["status"] == "failed"
+    assert result["code"] == "BUILD_FAILED"
+    posted = [str(p.get("command") or "") for p in container.operation_posts]
+    assert not any("pip install" in command for command in posted), \
+        "构建失败不得回退基础容器安装"

@@ -288,9 +288,13 @@ class HttpSandboxBackend(BaseSandbox):
             # F2：旧 token 新提交被拒 → 调用方先对账，由现持有者提交。
             if response.status_code == 409 and "FENCING_REJECTED" in detail:
                 raise ExperimentSandboxError("FENCING_REJECTED", detail[:300])
+            # F4：构建器未交付 → 调用方按构建路线 fail-closed（不等同基础镜像）。
+            if response.status_code == 501 and "BUILDER_NOT_CONFIGURED" in detail:
+                raise ExperimentSandboxError("BUILDER_NOT_CONFIGURED", detail[:300])
             raise ExperimentSandboxError(
                 "SANDBOX_REQUEST_REJECTED",
-                f"执行控制服务拒绝请求（HTTP {response.status_code} {path}）；未执行。",
+                f"执行控制服务拒绝请求（HTTP {response.status_code} {path}）；未执行。"
+                + (f"（{detail[:160]}）" if detail else ""),
             )
         try:
             data = response.json()
@@ -671,6 +675,51 @@ class HttpSandboxBackend(BaseSandbox):
         """取消运行操作并回收实例（run 级；重复返回同一终态由服务端保证）。"""
         return await self._apost(
             f"/sandboxes/{quote(self._run_id, safe='')}/cancel", {})
+
+    async def start_build(self, repo_url: str, revision: str,
+                          timeout_s: float | None = None) -> dict[str, Any]:
+        """F4：提交 repo2docker 构建作业（固定源码输入；先登记后执行）。
+
+        构建器未配置 → BUILDER_NOT_CONFIGURED（fail-closed）。调用方
+        （执行核）轮询 query_build；fencing 随带（旧 token 拒绝）。
+        """
+        repo_url = (repo_url or "").strip()[:500]
+        revision = (revision or "").strip()[:128]
+        if not repo_url or not revision:
+            raise ValueError("构建仓库地址/修订不能为空")
+        return await self._apost(
+            f"/sandboxes/{quote(self._run_id, safe='')}/builds",
+            {"repo_url": repo_url, "revision": revision,
+             "timeout_s": timeout_s, "fencing": self._fencing or ""})
+
+    async def query_build(self, build_id: str) -> dict[str, Any]:
+        """F4：查询构建作业（未知 id 即 unknown，不重建）。"""
+        build_id = (build_id or "").strip()[:128]
+        if not build_id:
+            raise ValueError("build_id 不能为空")
+        status, data = await self._aget(
+            f"/sandboxes/{quote(self._run_id, safe='')}/builds/{quote(build_id, safe='')}")
+        if status == 404 or not data:
+            return {"build_id": build_id, "status": "unknown"}
+        data.setdefault("build_id", build_id)
+        return data
+
+    async def migrate_image(self, image: str) -> dict[str, Any]:
+        """F4：同 run 迁移到执行镜像（构建成功后；scope_hash 不变）。
+
+        有在途操作即 409（调用方先取消/等待）；终态 run 拒绝。
+        成功刷新本地 sandbox 绑定（旧实例已回收，后续提交进新容器）。
+        """
+        image = (image or "").strip()[:256]
+        if not image:
+            raise ValueError("执行镜像不能为空")
+        data = await self._aput(
+            f"/sandboxes/{quote(self._run_id, safe='')}",
+            {"image": image})
+        if str(data.get("sandbox_id") or ""):
+            self._sandbox_id = str(data["sandbox_id"])
+            self._ensured = True
+        return data
 
     async def sandbox_status(self) -> dict[str, Any]:
         """生命周期/活跃 operation/资源与日志摘要（T5 对账用）。"""
