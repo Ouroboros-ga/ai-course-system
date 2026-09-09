@@ -669,6 +669,8 @@ async def _ensure_session(run: dict[str, Any], adapter: Any) -> str:
         await adapter.create_session(name)
     except DockerBackendUnavailableError as error:
         if error.code != "SESSION_EXISTS":
+            logger.warning("run %s session ensure failed: %s: %.300s",
+                           run["run_id"], error.code, error)
             raise
     run["session_name"] = name
     run["session_ready"] = True
@@ -872,6 +874,8 @@ async def _submit_session_operation(
             session, wrapper, timeout_s=window)
     except DockerBackendUnavailableError as error:
         if error.code != "SESSION_TIMEOUT":
+            logger.warning("run %s session submit failed: %s: %.300s",
+                           run["run_id"], error.code, error)
             op.update({"status": "failed", "finished_at": _now(),
                        "output_tail": f"会话执行失败（{error.code}）",
                        "note": f"会话执行失败：{error.code}"})
