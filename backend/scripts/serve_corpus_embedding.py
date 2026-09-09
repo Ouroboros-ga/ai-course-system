@@ -160,6 +160,8 @@ def load_model_config(path: Path) -> dict[str, Any]:
     if not isinstance(model, dict):
         raise SystemExit("SCHEMA_INVALID: 配置缺少 model 节")
     return {
+        # 族决定池化/前缀校验口径（缺省 e5 兼容旧配置）。
+        "family": model.get("family"),
         "model_id": model.get("id"),
         "revision": model.get("revision"),
         "files_hash": model.get("files_hash"),
