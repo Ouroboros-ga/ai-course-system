@@ -108,6 +108,39 @@ def _make_snippet(body: str, query: str, max_chars: int = 260) -> str:
     return prefix + window + suffix
 
 
+def _vector_topk_sql(session: Session, query_vector: list[float],
+                     model_fp: str, eids: list[str],
+                     k: int) -> Optional[list[tuple[str, float]]]:
+    """SQL 侧余弦 top-k（PG + ``embedding_vec`` 列）；不可用时返回 None。
+
+    - 只回传 k 行（不再全量拉取）；``embedding_id = ANY(:eids)`` 保证 release
+      成员与撤回过滤语义由调用方 ``live`` 决定，与 Python 路径一致；
+    - 列缺失/扩展未装/非 PG → savepoint 内失败并回退（不污染外层事务）；
+    - 精度：向量字面量 8 位有效数字（存量向量为 float32，足够排序）。
+    """
+    from sqlalchemy import text
+
+    bind = session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return None
+    literal = "[" + ",".join(f"{float(x):.8g}" for x in query_vector) + "]"
+    try:
+        with session.begin_nested():
+            rows = session.connection().execute(text(
+                "SELECT v.embedding_id, "
+                "1 - (v.embedding_vec <=> CAST(:q AS vector)) AS score "
+                "FROM discipline_corpus_vectors v "
+                "WHERE v.model_fingerprint = :fp "
+                "AND v.embedding_vec IS NOT NULL "
+                "AND v.embedding_id = ANY(:eids) "
+                "ORDER BY v.embedding_vec <=> CAST(:q AS vector) LIMIT :k"
+            ), {"q": literal, "fp": model_fp, "eids": list(eids),
+                "k": int(k)}).all()
+    except Exception:  # noqa: BLE001 - 列缺失/权限/扩展缺失 → 回退
+        return None
+    return [(str(row[0]), float(row[1])) for row in rows]
+
+
 def _rank_by_cosine(query_vector: list[float], vectors: list[list[float]],
                     keys: list[str], k: int) -> list[tuple[float, str]]:
     """按余弦取 top-k（numpy 矩阵化优先，缺 numpy/维度异常时逐行兜底）。
@@ -370,7 +403,20 @@ class CorpusSearchService:
             raise CorpusIndexError("COUNT_MISMATCH", "查询向量数量异常")
         query_vector = list(vectors[0])
         eids = [m.embedding_id for m in live.values() if m.embedding_id]
-        # 只取两列（不 hydrate ORM 行）；矩阵化打分在 _rank_by_cosine。
+        if not eids:
+            return []
+        # 首选 SQL 侧排序（PG + embedding_vec 列）：数据库只回传 top-k 行，
+        # 不再把全量向量拉到 Python（3899 块实测 2.0s → 毫秒级）。
+        sql_ranked = _vector_topk_sql(session, query_vector, model_fp, eids,
+                                      VECTOR_RECALL)
+        if sql_ranked is not None:
+            score_by_eid = dict(sql_ranked)
+            ranked = [(score_by_eid[m.embedding_id], chunk_id)
+                      for chunk_id, m in live.items()
+                      if m.embedding_id in score_by_eid]
+            ranked.sort(key=lambda kv: (-kv[0], kv[1]))
+            return [cid for score, cid in ranked if score > 0.0]
+        # 兜底：拉全量向量 + numpy 矩阵化（SQLite/旧库/列缺失）。
         rows = session.exec(
             select(DisciplineCorpusVector.embedding_id,
                    DisciplineCorpusVector.embedding).where(

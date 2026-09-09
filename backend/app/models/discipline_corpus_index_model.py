@@ -15,13 +15,63 @@
 
 from __future__ import annotations
 
+import json
+import math
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import Column, Index, JSON, UniqueConstraint
+from sqlalchemy.types import UserDefinedType
 from sqlmodel import Field, SQLModel
 
 from app.core.time_utils import utcnow_aware
+
+
+class CorpusVectorType(UserDefinedType):
+    """pgvector 列（``vector(N)``）；SQLite 降级存 ``[x,y,...]`` 文本。
+
+    与 ``research_workspace_model.PgVectorType`` 同构，但**带维度**——
+    HNSW 索引要求固定维度。依赖由迁移显式 ``CREATE EXTENSION`` 安装。
+    """
+
+    cache_ok = True
+
+    def __init__(self, dimension: int) -> None:
+        self.dimension = int(dimension)
+
+    def get_col_spec(self, **kw: Any) -> str:
+        return f"VECTOR({self.dimension})"
+
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, CorpusVectorType) \
+            and other.dimension == self.dimension
+
+    def __ne__(self, other: Any) -> bool:
+        return not self.__eq__(other)
+
+    def __hash__(self) -> int:
+        return hash(("CorpusVectorType", self.dimension))
+
+    def bind_processor(self, dialect):
+        def process(value):
+            if value is None:
+                return None
+            vector = [float(component) for component in value]
+            if not vector or any(not math.isfinite(c) for c in vector):
+                raise ValueError("corpus vector must be finite and non-empty")
+            return json.dumps(vector, ensure_ascii=True, separators=(",", ":"))
+
+        return process
+
+    def result_processor(self, dialect, coltype):
+        def process(value):
+            if value is None or isinstance(value, list):
+                return value
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            return [float(component) for component in json.loads(str(value))]
+
+        return process
 
 
 class DisciplineCorpusVector(SQLModel, table=True):
@@ -41,6 +91,11 @@ class DisciplineCorpusVector(SQLModel, table=True):
     input_hash: str = Field(index=True, max_length=64)
     dimension: int = Field(default=0)
     embedding: list = Field(default_factory=list, sa_column=Column(JSON))
+    # pgvector 列（dk20260909v5）：SQL 侧 `<=>` 排序只取 top-k 行，
+    # 替代"拉全量 JSON 向量到 Python"（实测 2.0s/查询）。SQLite 存文本。
+    embedding_vec: Optional[list] = Field(
+        default=None,
+        sa_column=Column("embedding_vec", CorpusVectorType(512), nullable=True))
     token_count: int = Field(default=0)
     created_at: datetime = Field(default_factory=utcnow_aware)
 

@@ -442,6 +442,8 @@ class VectorCache:
             input_hash=input_hash,
             dimension=dimension,
             embedding=list(vector),
+            # pgvector 列（SQL 侧 <=> 排序用）；SQLite 降级存文本。
+            embedding_vec=list(vector),
             token_count=token_count,
         )
         self._session.add(row)
@@ -472,6 +474,7 @@ class VectorCache:
                 input_hash=item["input_hash"],
                 dimension=item["dimension"],
                 embedding=list(item["vector"]),
+                embedding_vec=list(item["vector"]),
                 token_count=int(item.get("token_count") or 0),
             )
             self._session.add(row)
