@@ -168,7 +168,7 @@ function onStepClick(step) {
 
     <div class="build-grid" :class="{ 'rail-collapsed': railCollapsed }">
       <aside v-if="canEditBuild" class="build-rail">
-        <div class="rail-scroll">
+        <div class="rail-scroll" v-nav-slider="{ axis: 'y', variant: 'pill', activeClass: 'active' }">
         <p class="rail-title">课程建设</p>
         <div
           v-for="(step, index) in visibleSteps"
@@ -299,8 +299,8 @@ function onStepClick(step) {
 .rail-title{margin:0;padding:0 var(--space-3) var(--space-3);font-size:var(--caption-size);font-weight:650;letter-spacing:.08em;color:var(--text-muted)}
 .build-link{position:relative;display:grid;grid-template-columns:30px 18px minmax(0,1fr);gap:var(--space-2);align-items:center;min-height:52px;padding:var(--space-2) var(--space-3);color:var(--text-secondary);text-decoration:none;border-radius:var(--radius-md)}
 .build-link:hover{background:var(--surface-panel);color:var(--ink-900)}
-.build-link.active{background:var(--ink-100);color:var(--ink-900)}
-.build-link.active::before{position:absolute;left:0;top:var(--space-2);bottom:var(--space-2);width:3px;background:var(--ink-900);content:"";border-radius:var(--radius-full)}
+/* 选中态背景与左侧状态线改为 v-nav-slider 的滑动胶囊（ink-100），文字置顶显示 */
+.build-link.active{color:var(--ink-900);z-index:1}
 .step-index{font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:var(--caption-size);color:var(--text-muted)}
 .step-copy{display:grid;gap:2px}
 .step-copy strong{font-size:var(--ui-md-size);font-weight:600}
@@ -353,6 +353,5 @@ h1{margin:0;color:var(--text-primary);font-size:var(--title-2-size);line-height:
 .build-grid.rail-collapsed .rail-toggle{left:calc(var(--rail-width-collapsed) - 13px)}
 .build-grid.rail-collapsed .rail-title,.build-grid.rail-collapsed .rail-note,.build-grid.rail-collapsed .step-index,.build-grid.rail-collapsed .step-copy{display:none}
 .build-grid.rail-collapsed .build-link{display:flex;justify-content:center;align-items:center;min-height:44px;padding:var(--space-2)}
-.build-grid.rail-collapsed .build-link.active::before{left:0;top:4px;bottom:4px}
-@media(max-width:760px){.build-workspace{overflow:visible}.build-grid{flex:none;flex-direction:column;overflow:visible}/* 触屏横向 rail 不提供子菜单展开，点击直接进入知识工作区 */.build-sub,.build-sub-toggle{display:none}.build-rail{min-height:0;height:auto;width:100%;border:0;border-bottom:1px solid var(--border-default);transition:none}.rail-scroll{display:flex;gap:2px;overflow-x:auto;overflow-y:hidden;padding:var(--space-2)}.rail-toggle{display:none}.rail-title,.rail-note,.step-index,.step-copy small{display:none}.build-link{display:flex;min-height:40px;white-space:nowrap;padding:0 var(--space-2)}.build-link.active::before{left:8px;right:8px;top:auto;bottom:0;width:auto;height:2px}.build-stage{padding:var(--space-4) var(--space-3);height:auto;overflow:visible}.stage-body{flex:none;overflow:visible}.stage-context{margin-bottom:var(--space-3);padding-right:52px}.mobile-workbench-tabs{display:flex;gap:var(--space-1);padding:var(--space-2) var(--space-3);background:var(--surface-panel);border-bottom:1px solid var(--border-default)}.mobile-workbench-tabs button{height:32px;padding:0 var(--space-3);border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);font:inherit;font-size:var(--ui-sm-size);cursor:pointer}.mobile-workbench-tabs button.active{background:var(--ink-100);color:var(--ink-900)}/* 移动端 dock 全宽出现在舞台下方（高度过渡），面板高度自适应 */.agent-dock{width:100%;height:0;transition:height var(--duration-normal) var(--ease-out)}.agent-dock.open{height:min(70vh,640px)}.agent-dock :deep(.course-build-agent){width:100%;min-width:0;height:100%}}
+@media(max-width:760px){.build-workspace{overflow:visible}.build-grid{flex:none;flex-direction:column;overflow:visible}/* 触屏横向 rail 不提供子菜单展开，点击直接进入知识工作区 */.build-sub,.build-sub-toggle{display:none}.build-rail{min-height:0;height:auto;width:100%;border:0;border-bottom:1px solid var(--border-default);transition:none}.rail-scroll{display:flex;gap:2px;overflow-x:auto;overflow-y:hidden;padding:var(--space-2)}.rail-toggle{display:none}.rail-title,.rail-note,.step-index,.step-copy small{display:none}.build-link{display:flex;min-height:40px;white-space:nowrap;padding:0 var(--space-2)}.build-stage{padding:var(--space-4) var(--space-3);height:auto;overflow:visible}.stage-body{flex:none;overflow:visible}.stage-context{margin-bottom:var(--space-3);padding-right:52px}.mobile-workbench-tabs{display:flex;gap:var(--space-1);padding:var(--space-2) var(--space-3);background:var(--surface-panel);border-bottom:1px solid var(--border-default)}.mobile-workbench-tabs button{height:32px;padding:0 var(--space-3);border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);font:inherit;font-size:var(--ui-sm-size);cursor:pointer}.mobile-workbench-tabs button.active{background:var(--ink-100);color:var(--ink-900)}/* 移动端 dock 全宽出现在舞台下方（高度过渡），面板高度自适应 */.agent-dock{width:100%;height:0;transition:height var(--duration-normal) var(--ease-out)}.agent-dock.open{height:min(70vh,640px)}.agent-dock :deep(.course-build-agent){width:100%;min-width:0;height:100%}}
 </style>

@@ -41,7 +41,7 @@ provide('coursesContext', { openJoin, joinRefreshTick })
     <div class="sfx-courses-layout">
         <div class="sfx-l2nav">
             <div class="sfx-l2nav-inner">
-                <nav class="sfx-l2nav-links" aria-label="我的课程导航">
+                <nav class="sfx-l2nav-links" aria-label="我的课程导航" v-nav-slider="{ inset: 'padding' }">
                     <RouterLink v-for="tab in tabs" :key="tab.key" :to="tab.to" class="sfx-l2nav-link"
                         :class="{ 'is-active': activeKey === tab.key }">{{ tab.label }}</RouterLink>
                 </nav>
@@ -130,15 +130,7 @@ provide('coursesContext', { openJoin, joinRefreshTick })
     color: var(--ink-900);
 }
 
-.sfx-l2nav-link.is-active::after {
-    content: '';
-    position: absolute;
-    left: var(--space-4);
-    right: var(--space-4);
-    bottom: -1px;
-    height: 2px;
-    background: var(--ink-900);
-}
+/* 底部 2px 指示线由 v-nav-slider 指令生成并滑动（原 is-active::after 已移除） */
 
 .sfx-l2nav-join {
     display: inline-flex;
@@ -189,10 +181,6 @@ provide('coursesContext', { openJoin, joinRefreshTick })
         font-size: var(--ui-sm-size);
     }
 
-    .sfx-l2nav-link.is-active::after {
-        left: var(--space-2);
-        right: var(--space-2);
-    }
 
     .sfx-l2nav-join {
         padding: 0 var(--space-3);
