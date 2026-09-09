@@ -193,14 +193,71 @@ async def test_operation_submit_query_dedupe(api):
             terminal = query.json()
             break
     assert terminal is not None and terminal["exit_code"] == 0
-    again = await api.post("/sandboxes/run-2/operations",
-                           json={"operation_id": "op-1", "command": "echo evil",
-                                 "timeout_s": 30})
-    assert again.json()["deduped"] is True
-    assert again.json()["status"] == "succeeded"
+    # F2：同 id 同请求仍去重（不运行两次）。
+    same = await api.post("/sandboxes/run-2/operations",
+                          json={"operation_id": "op-1", "command": "echo hi",
+                                "timeout_s": 30})
+    assert same.json()["deduped"] is True
+    assert same.json()["status"] == "succeeded"
+    # F2：同 id 不同请求 → 409 OPERATION_ID_CONFLICT（旧进程无退出证明
+    # 不得重跑；此前“echo evil 被吞”属缺口，本断言锁定新语义）。
+    evil = await api.post("/sandboxes/run-2/operations",
+                          json={"operation_id": "op-1", "command": "echo evil",
+                                "timeout_s": 30})
+    assert evil.status_code == 409
+    assert "OPERATION_ID_CONFLICT" in evil.json()["detail"]
     assert _FakeAdapter.instances[0].executed == ["echo hi"], "同 id 不运行两次"
     missing = await api.get("/sandboxes/run-2/operations/nope")
     assert missing.json()["status"] == "unknown"
+
+
+async def test_operation_id_conflict_by_request_hash(api):
+    """F2：双方都带哈希即比哈希（命令文本相同但哈希不同同样冲突）。"""
+    await api.put("/sandboxes/run-7")
+    first = await api.post("/sandboxes/run-7/operations",
+                           json={"operation_id": "op-1", "command": "echo hi",
+                                 "timeout_s": 30, "request_hash": "a" * 32})
+    assert first.status_code == 200
+    conflict = await api.post("/sandboxes/run-7/operations",
+                              json={"operation_id": "op-1", "command": "echo hi",
+                                    "timeout_s": 30, "request_hash": "b" * 32})
+    assert conflict.status_code == 409
+    assert "OPERATION_ID_CONFLICT" in conflict.json()["detail"]
+    same_hash = await api.post("/sandboxes/run-7/operations",
+                               json={"operation_id": "op-1", "command": "echo hi",
+                                     "timeout_s": 30, "request_hash": "a" * 32})
+    assert same_hash.json()["deduped"] is True
+
+
+async def test_fencing_rejects_stale_holder(api):
+    """F2：首次提交锁定 fencing；旧 token 新提交 409；轮换后新 token 可提交。"""
+    await api.put("/sandboxes/run-8")
+    first = await api.post("/sandboxes/run-8/operations",
+                           json={"operation_id": "op-1", "command": "echo one",
+                                 "fencing": "token-A"})
+    assert first.status_code == 200
+    stale = await api.post("/sandboxes/run-8/operations",
+                           json={"operation_id": "op-2", "command": "echo two",
+                                 "fencing": "token-OLD"})
+    assert stale.status_code == 409
+    assert "FENCING_REJECTED" in stale.json()["detail"]
+    # 锁定后空 token 同样拒绝（fencing 随本批引入，无旧客户端包袱）。
+    legacy = await api.post("/sandboxes/run-8/operations",
+                            json={"operation_id": "op-2", "command": "echo two"})
+    assert legacy.status_code == 409
+    assert "FENCING_REJECTED" in legacy.json()["detail"]
+    rotated = await api.put("/sandboxes/run-8/fencing",
+                            json={"fencing": "token-B"})
+    assert rotated.status_code == 200
+    assert rotated.json()["fencing"] == "token-B"
+    now_stale = await api.post("/sandboxes/run-8/operations",
+                               json={"operation_id": "op-3", "command": "echo 3",
+                                     "fencing": "token-A"})
+    assert now_stale.status_code == 409
+    fresh = await api.post("/sandboxes/run-8/operations",
+                           json={"operation_id": "op-3", "command": "echo 3",
+                                 "fencing": "token-B"})
+    assert fresh.status_code == 200
 
 
 async def test_files_round_trip_and_missing(api):

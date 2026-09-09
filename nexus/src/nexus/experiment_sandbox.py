@@ -111,6 +111,8 @@ class HttpSandboxBackend(BaseSandbox):
         resources: dict[str, Any] | None = None,
         workspace_root: str = _WORKSPACE_ROOT,
         transport: Any = None,
+        initial_seq: int = 0,
+        fencing: str = "",
     ) -> None:
         self._run_id = (run_id or "").strip()[:64]
         self._base_url = (base_url or "").rstrip("/")
@@ -124,7 +126,11 @@ class HttpSandboxBackend(BaseSandbox):
         self._resources = dict(resources or {})
         self._workspace_root = "/" + (workspace_root or _WORKSPACE_ROOT).strip("/")
         self._transport = transport
-        self._op_seq = 0
+        # F2：序号由持久意图派生（调用方传 run 现 attempt_no），Backend 重建
+        # 不归零——否则新命令复用旧 operation_id，控制面返回旧记录吞掉新命令。
+        self._op_seq = max(0, int(initial_seq or 0))
+        # F2：执行 fencing（租约持有者的单调令牌；控制面拒绝旧 token 新提交）。
+        self._fencing = (fencing or "").strip()[:128]
         self._sandbox_id = ""
         self._ensured = False
         # T4 图层续跑用：最近一次 execute 提交/查询的 operation_id。
@@ -249,6 +255,19 @@ class HttpSandboxBackend(BaseSandbox):
     @staticmethod
     def _read_json(response: Any, path: str) -> dict[str, Any]:
         if response.status_code >= 400:
+            detail = ""
+            try:
+                body = response.json()
+                if isinstance(body, dict):
+                    detail = str(body.get("detail") or "")
+            except ValueError:
+                detail = ""
+            # F2：同 id 不同请求 → 调用方必须先对账（query），不得重跑。
+            if response.status_code == 409 and "OPERATION_ID_CONFLICT" in detail:
+                raise ExperimentSandboxError("OPERATION_ID_CONFLICT", detail[:300])
+            # F2：旧 token 新提交被拒 → 调用方先对账，由现持有者提交。
+            if response.status_code == 409 and "FENCING_REJECTED" in detail:
+                raise ExperimentSandboxError("FENCING_REJECTED", detail[:300])
             raise ExperimentSandboxError(
                 "SANDBOX_REQUEST_REJECTED",
                 f"执行控制服务拒绝请求（HTTP {response.status_code} {path}）；未执行。",
@@ -309,6 +328,101 @@ class HttpSandboxBackend(BaseSandbox):
         self._op_seq += 1
         return f"{self._run_id}-op-{self._op_seq:04d}"
 
+    def reset_seq(self, seq: int) -> int:
+        """F2：恢复后把序号对齐到已落盘 attempt（只增不减，不复用旧 id）。"""
+        try:
+            target = max(0, int(seq or 0))
+        except (TypeError, ValueError):
+            return self._op_seq
+        if target > self._op_seq:
+            self._op_seq = target
+        return self._op_seq
+
+    def set_fencing(self, fencing: str) -> str:
+        """F2：设置本次执行的 fencing（租约令牌；随提交携带）。"""
+        self._fencing = (fencing or "").strip()[:128]
+        return self._fencing
+
+    async def rotate_fencing(self) -> dict[str, Any]:
+        """F2：把控制面 run fencing 轮换为本次令牌（恢复接管后新持有者调用）。
+
+        终态/未知 run → 控制面 404/409，调用方如实处理，不伪装接管。
+        旧控制面无此端点（404）→ FENCING_UNSUPPORTED，调用方可降级为
+        无 fencing 旧语义（控制面忽略未知字段），并记日志留痕。
+        """
+        if not self._fencing:
+            raise ExperimentSandboxError(
+                "FENCING_EMPTY", "本次无 fencing 令牌，不得轮换控制面。")
+        try:
+            data = await self._apost(
+                f"/sandboxes/{quote(self._run_id, safe='')}/fencing",
+                {"fencing": self._fencing})
+        except ExperimentSandboxError as error:
+            if "HTTP 404" in str(error):
+                raise ExperimentSandboxError(
+                    "FENCING_UNSUPPORTED",
+                    "控制面无 fencing 端点（旧版本），按无 fencing 语义执行。") from error
+            raise
+        if str(data.get("fencing") or "") != self._fencing:
+            raise ExperimentSandboxError(
+                "FENCING_ROTATE_MISMATCH", "控制面返回的 fencing 与提交不一致。")
+        return data
+
+    def _prepare_submit(
+        self, command: str, timeout: int | None,
+    ) -> tuple[str, dict[str, Any], Any | None]:
+        """F2：提交前意图登记，返回 (operation_id, payload, 终态缓存)。
+
+        - 新意图 → prepared 落盘后才允许 submit（登记失败即抛，不执行）；
+        - 同 id 同请求且意图已终态 → 返回缓存响应，不再 submit（不重复执行）；
+        - 同 id 不同请求 → OPERATION_ID_CONFLICT（旧进程无退出证明不得重跑，
+          调用方先 query 对账）。
+        """
+        from nexus import experiment_operations as operations_module
+
+        # 多态 id（含重放 nonce 后缀）：先取 id 再登记，意图键与提交 id 一致。
+        operation_id = self._new_operation_id()
+        try:
+            prepared = operations_module.prepare_intent(
+                run_id=self._run_id, seq=int(self._op_seq), command=command,
+                timeout_s=timeout, operation_id=operation_id)
+        except Exception as error:
+            code = getattr(error, "code", type(error).__name__)
+            raise ExperimentSandboxError(
+                code, f"操作意图登记失败，未提交执行：{error}") from error
+        payload = {
+            "operation_id": operation_id, "command": command,
+            "timeout_s": timeout,
+            "request_hash": operations_module.request_hash(command, timeout),
+        }
+        if self._fencing:
+            payload["fencing"] = self._fencing
+        if prepared.get("deduped") and str(
+                prepared["intent"].get("status") or "") in (
+                    "succeeded", "failed", "cancelled", "timed_out"):
+            cached = _operation_to_response({
+                "status": prepared["intent"]["status"],
+                "exit_code": prepared["intent"].get("exit_code"),
+                "output_tail": prepared["intent"].get("output_tail") or "",
+                "output_truncated": True,
+            })
+            return operation_id, payload, cached
+        return operation_id, payload, None
+
+    @staticmethod
+    def _track_intent(run_id: str, operation_id: str, status: str, *,
+                      exit_code: int | None = None, output_tail: str = "") -> None:
+        """意图状态推进（best-effort：失败只记日志，不推翻执行结果）。"""
+        try:
+            from nexus import experiment_operations as operations_module
+
+            operations_module.set_intent_status(
+                run_id, operation_id, status,
+                exit_code=exit_code, output_tail=output_tail)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("intent track failed for %s: %s",
+                           operation_id, type(error).__name__)
+
     # -- 命令执行 ----------------------------------------------------------
 
     def execute(
@@ -325,13 +439,17 @@ class HttpSandboxBackend(BaseSandbox):
         if not isinstance(command, str) or not command.strip():
             raise ValueError("command 不能为空")
         self._ensure_sandbox()
-        operation_id = self._new_operation_id()
+        operation_id, payload, cached = self._prepare_submit(command, timeout)
+        if cached is not None:
+            self.last_operation_id = operation_id
+            self.submitted_ops.append((operation_id, command))
+            return cached
         self.last_operation_id = operation_id
         self.submitted_ops.append((operation_id, command))
+        self._track_intent(self._run_id, operation_id, "submitted")
         data = self._post(
             f"/sandboxes/{quote(self._run_id, safe='')}/operations",
-            {"operation_id": operation_id, "command": command,
-             "timeout_s": timeout},
+            payload,
         )
         operation = data.get("operation") if isinstance(data.get("operation"), dict) else data
         if str(operation.get("operation_id") or "") != operation_id:
@@ -340,7 +458,11 @@ class HttpSandboxBackend(BaseSandbox):
                 "控制服务返回的 operation_id 与提交不一致；结果不可信，未重试。",
             )
         if str(operation.get("status") or "") in TERMINAL_OPERATION_STATUSES:
-            return _operation_to_response(operation)
+            response = _operation_to_response(operation)
+            self._track_intent(
+                self._run_id, operation_id, str(operation.get("status") or ""),
+                exit_code=response.exit_code, output_tail=response.output)
+            return response
         deadline = timeout if timeout and timeout > 0 else self._default_deadline_s
         end = time.monotonic() + max(deadline, self._poll_interval_s)
         last: dict[str, Any] = operation
@@ -350,7 +472,11 @@ class HttpSandboxBackend(BaseSandbox):
             if current:
                 last = current
             if str(last.get("status") or "") in TERMINAL_OPERATION_STATUSES:
-                return _operation_to_response(last)
+                response = _operation_to_response(last)
+                self._track_intent(
+                    self._run_id, operation_id, str(last.get("status") or ""),
+                    exit_code=response.exit_code, output_tail=response.output)
+                return response
             if time.monotonic() >= end:
                 # 超时≠停止：返回当前尾部，调用方用同一 id 续查/取消。
                 tail = _operation_to_response(last)
@@ -367,13 +493,17 @@ class HttpSandboxBackend(BaseSandbox):
         if not isinstance(command, str) or not command.strip():
             raise ValueError("command 不能为空")
         await self._aensure_sandbox()
-        operation_id = self._new_operation_id()
+        operation_id, payload, cached = self._prepare_submit(command, timeout)
+        if cached is not None:
+            self.last_operation_id = operation_id
+            self.submitted_ops.append((operation_id, command))
+            return cached
         self.last_operation_id = operation_id
         self.submitted_ops.append((operation_id, command))
+        self._track_intent(self._run_id, operation_id, "submitted")
         data = await self._apost(
             f"/sandboxes/{quote(self._run_id, safe='')}/operations",
-            {"operation_id": operation_id, "command": command,
-             "timeout_s": timeout},
+            payload,
         )
         operation = data.get("operation") if isinstance(data.get("operation"), dict) else data
         if str(operation.get("operation_id") or "") != operation_id:
@@ -382,7 +512,11 @@ class HttpSandboxBackend(BaseSandbox):
                 "控制服务返回的 operation_id 与提交不一致；结果不可信，未重试。",
             )
         if str(operation.get("status") or "") in TERMINAL_OPERATION_STATUSES:
-            return _operation_to_response(operation)
+            response = _operation_to_response(operation)
+            self._track_intent(
+                self._run_id, operation_id, str(operation.get("status") or ""),
+                exit_code=response.exit_code, output_tail=response.output)
+            return response
         deadline = timeout if timeout and timeout > 0 else self._default_deadline_s
         end = time.monotonic() + max(deadline, self._poll_interval_s)
         last: dict[str, Any] = operation
@@ -392,7 +526,11 @@ class HttpSandboxBackend(BaseSandbox):
             if current:
                 last = current
             if str(last.get("status") or "") in TERMINAL_OPERATION_STATUSES:
-                return _operation_to_response(last)
+                response = _operation_to_response(last)
+                self._track_intent(
+                    self._run_id, operation_id, str(last.get("status") or ""),
+                    exit_code=response.exit_code, output_tail=response.output)
+                return response
             if time.monotonic() >= end:
                 tail = _operation_to_response(last)
                 return ExecuteResponse(output=tail.output, exit_code=None, truncated=True)

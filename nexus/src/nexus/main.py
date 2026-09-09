@@ -166,6 +166,44 @@ def get_agent(
     return agent
 
 
+def experiment_checkpointer() -> Any:
+    """F2：实验图 checkpointer（PG 就绪即持久 saver，否则内存降级）。
+
+    稳定 thread_id（exp-{run_id}）＋本 saver 共同构成恢复基础；调用方
+    （tools/reproduction 调度器）经此注入，不再让实验图静默内存。
+    """
+    return _pg_saver if _pg_saver is not None else _fallback_saver
+
+
+def experiment_persistence() -> str:
+    """F2：实验持久化形态（"postgres" 可恢复 / "memory" 重启即失）。"""
+    dsn = ""
+    try:
+        dsn = get_settings().postgres_dsn.strip()
+    except Exception:  # noqa: BLE001 - 配置不可读按内存处理
+        dsn = ""
+    return "postgres" if (dsn and _pg_saver is not None) else "memory"
+
+
+def require_experiment_persistence() -> None:
+    """F2：持久层门——DSN 已配但 saver 未就绪时禁止启动新长实验。
+
+    本地 DSN 为空（开发机）→ 内存模式放行（不承诺恢复）；服务器 DSN 已配
+    却降级 → 抛 503（承诺可恢复的新实验不得悄悄退回内存）。
+    """
+    dsn = ""
+    try:
+        dsn = get_settings().postgres_dsn.strip()
+    except Exception:  # noqa: BLE001
+        dsn = ""
+    if dsn and _pg_saver is None:
+        raise HTTPException(
+            status_code=503,
+            detail="PERSISTENCE_UNAVAILABLE: 持久层未就绪（已降级内存），"
+            "新长实验暂不可启动，恢复持久连接后重试。",
+        )
+
+
 async def require_api_key(authorization: str | None = Header(default=None)) -> None:
     api_key = get_settings().api_key
     if api_key and authorization != f"Bearer {api_key}":
@@ -1661,6 +1699,70 @@ async def repro_run_clean_verify(
         raise HTTPException(
             status_code=status_map.get(error.code, 409), detail=error.code
         ) from error
+
+
+@app.post(
+    "/api/v1/nexus/repro/runs/{run_id}/resume",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_run_resume(
+    run_id: str,
+    body: CleanVerifyRequest,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F2：认领 running run 并对账在途意图后继续（恢复入口）。
+
+    只查不交地对账（终态证据回写 attempt，running 接管，unknown 进
+    reconciling）；需继续时后台调度图执行（同 thread 续跑），即返对账
+    结论。继续执行调用沙箱——执行门强制 Auto（未知 400，非 auto 403）。
+    跨用户/不存在一律 404；执行权被他人持有仅观察（deduped）。
+    """
+    import asyncio as _asyncio
+
+    from nexus import experiment_agent as agent_module
+    from nexus import experiment_runs as runs_module
+
+    mode = (body.research_execution_mode or "ask").strip().lower()
+    if mode not in ("ask", "auto"):
+        raise HTTPException(status_code=400, detail="INVALID_RESEARCH_EXECUTION_MODE")
+    if mode != "auto":
+        raise HTTPException(status_code=403, detail="RESUME_EXECUTION_DISABLED")
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    run = runs_module.get_run(sanitize_session_id(run_id))
+    if run is None or (user_id or "") != run["owner"]:
+        raise HTTPException(status_code=404, detail="RUN_NOT_FOUND")
+    result = await agent_module.resume_bound_run(
+        run_id=run["run_id"], owner=user_id,
+        session_id=run["session_id"], backend=_console_backend(run["run_id"]))
+    if result.get("status") == "error":
+        status_map = {
+            "RUN_NOT_FOUND": 404,
+            "RUN_FORBIDDEN": 403,
+            "RUN_SESSION_MISMATCH": 403,
+        }
+        raise HTTPException(
+            status_code=status_map.get(str(result.get("code") or ""), 409),
+            detail=str(result.get("code") or "RESUME_FAILED"))
+    if result.get("needs_continue"):
+        # 后台继续图执行（HTTP 即返，断开不杀；执行权由图侧租约保证）。
+        async def _continued() -> None:
+            try:
+                await agent_module.execute_bound_run(
+                    run_id=run["run_id"], owner=user_id,
+                    session_id=run["session_id"],
+                    checkpointer=experiment_checkpointer())
+            except Exception as error:  # noqa: BLE001 - 后台绝不裸抛
+                logger.warning("resume continuation failed for %s: %s",
+                               run["run_id"], type(error).__name__)
+
+        try:
+            _asyncio.get_running_loop().create_task(_continued())
+        except RuntimeError:
+            result = dict(result)
+            result["needs_continue"] = False
+            result["detail"] = (str(result.get("detail") or "")
+                                + "（无运行循环调度继续执行，可重试认领）")
+    return result
 
 
 # ---------------------------------------------------------------------------

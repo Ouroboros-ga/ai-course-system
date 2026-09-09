@@ -1222,7 +1222,8 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // T5：+runs/{id}/cancel 用户直接取消 → 35 个。
   // T6：+runs/{id}/report 自主报告 → 36 个。
   // SR6：+runs/{id}/formats 正式格式＋runs/{id}/clean-verify 干净验证 → 38 个。
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 38)
+  // F2：+runs/{id}/resume 恢复认领 → 39 个。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 39)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })
@@ -1351,4 +1352,24 @@ test('SR6 正式输出：Word/LaTeX 导出＋干净验证（Auto 门，Ask 禁�
   assert.match(page, /requestCleanVerify/)
   assert.match(page, /@formats="requestRunFormats"/)
   assert.match(page, /@clean-verify="requestCleanVerify"/)
+})
+
+test('F2 恢复认领：对账在途意图后继续（Auto 门，Ask 禁用）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  // 客户端：恢复函数＋allowFlatResponse，与干净验证链同形状。
+  assert.match(client, /export function requestNexusRunResume\(runId, executionMode\)/)
+  assert.match(client, /\/nexus\/runs\/.*\/resume/)
+  // 后端：反代路由（D10 门数 39 另行锁定）。
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/resume"\)/)
+  // 工作台：运行中自主 run 继续执行按钮（Ask 禁用＋原因），恢复状态只读展示。
+  assert.match(ws, /继续执行/)
+  assert.match(ws, /@click="emit\('resume', active\.id\)"/)
+  assert.match(ws, /recoveryStatus/)
+  // 父组件：处理函数＋事件绑定＋详情透传（与报告链同模式）。
+  assert.match(page, /requestResumeRun/)
+  assert.match(page, /@resume="requestResumeRun"/)
+  assert.match(page, /run\.recoveryStatus = /)
 })

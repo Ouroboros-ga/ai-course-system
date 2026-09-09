@@ -55,7 +55,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['switch', 'cancel', 'ask', 'analyze', 'rerun', 'rename', 'add-note',
-  'report', 'formats', 'clean-verify'])
+  'report', 'formats', 'clean-verify', 'resume'])
 
 const tab = ref('logs')
 
@@ -258,6 +258,8 @@ function durationLabel(step) {
 
 const hasReport = computed(() => !!run.value?.verdict)
 const reportErr = computed(() => run.value?.reportError || '')
+/** F1：自主 run 四分量报告（服务端 report 原样展示，不合成单一成功）。 */
+const hasAutoReport = computed(() => !!run.value?.autoReport)
 
 /** T6：自主 run 终态（succeeded/failed）且尚未生成报告 → 可生成。 */
 const isReportable = computed(() => {
@@ -329,6 +331,19 @@ const isReportable = computed(() => {
         <template #icon><Square :size="12" /></template>
         取消
       </SfxButton>
+      <!-- F2：运行中自主 run 可认领恢复（对账在途意图后继续；Ask 禁用，服务端 403）。 -->
+      <SfxButton
+        v-if="isAutonomous && ['running', 'cancelling'].includes(run?.status)"
+        variant="tertiary"
+        size="sm"
+        :loading="!!run?.resuming"
+        :disabled="isAsk || !!run?.resuming"
+        :title="isAsk ? '恢复认领后可能继续执行，Ask 模式不可用，切换到 Auto 后可用' : '对账在途操作，需继续时后台续跑同一实验'"
+        @click="emit('resume', active.id)"
+      >
+        <template #icon><RotateCw :size="12" /></template>
+        继续执行
+      </SfxButton>
       <template v-else-if="hasReport">
         <SfxButton variant="primary" size="sm" @click="emit('analyze', active.id)">
           <template #icon><FlaskConical :size="13" /></template>
@@ -365,6 +380,10 @@ const isReportable = computed(() => {
       <!-- T5：执行器失联但运行未终止（reconciling），如实标注，不冒称失败。 -->
       <span v-if="run?.reconciling" class="nxw-note" title="执行器不可达，显示登记快照；运行未终止，恢复后继续">
         对账中
+      </span>
+      <!-- F2：恢复状态只读展示（UI 不分支新枚举）。 -->
+      <span v-if="run?.recoveryStatus" class="nxw-note" :title="run?.completionReason || ''">
+        恢复：{{ run.recoveryStatus === 'recovering' ? '认领中' : run.recoveryStatus === 'recovered' ? '已接续' : run.recoveryStatus === 'unrecoverable' ? '不可自动恢复' : run.recoveryStatus }}
       </span>
     </header>
 
@@ -459,6 +478,17 @@ const isReportable = computed(() => {
 
         <!-- 指标：只渲染服务端 report，绝不自行计算 -->
         <div v-else-if="tab === 'metrics'" class="nxw-pane">
+          <!-- F1：自主 run 四分量分别展示（环境/目标/指标/干净各自成立）。 -->
+          <div v-if="hasAutoReport && isAutonomous" class="nxw-autoreport">
+            <div class="nxw-cap">自主实验结论 · 四分量（源：POST /nexus/repro/runs/{id}/report）</div>
+            <div class="nxw-kv"><span>环境就绪</span><b>{{ run.autoReport.environment_ready == null ? '未评估' : (run.autoReport.environment_ready ? '是' : '否') }}</b></div>
+            <div class="nxw-kv"><span>目标完成</span><b>{{ run.autoReport.execution_succeeded == null ? '未评估' : (run.autoReport.execution_succeeded ? '是' : '否') }}</b></div>
+            <div class="nxw-kv"><span>指标</span><b>{{ run.autoReport.metric_verdict || '未评估' }}</b></div>
+            <div class="nxw-kv"><span>干净验证</span><b>{{ run.autoReport.clean_verification || '未验证' }}</b></div>
+            <p v-if="run.autoReport.legacy_target" class="nxw-note">目标证据为历史兼容口径，不得当作新规则目标证据。</p>
+            <p v-if="run.autoReport.metric_note" class="nxw-note">{{ run.autoReport.metric_note }}</p>
+            <p v-if="run.autoReport.clean_note" class="nxw-note">{{ run.autoReport.clean_note }}</p>
+          </div>
           <div v-if="hasReport" class="nxw-verdict" :class="run.verdict === 'PASS' ? 'is-pass' : 'is-fail'">
             <span class="nxw-verdict-label">指标判定</span>
             <b>{{ run.verdict }}</b>

@@ -327,6 +327,18 @@ export function requestNexusRunCleanVerify(runId, executionMode) {
 }
 
 /**
+ * 自主运行恢复认领（F2）：对账在途意图，需继续时后台续跑同一实验。
+ * 继续执行调用沙箱——只在 Auto 下可用（Ask 服务端 403）。
+ */
+export function requestNexusRunResume(runId, executionMode) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/resume`, {
+    research_execution_mode: executionMode,
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
  * 追加运行备注（NX-LB5）：requestId 幂等；content ≤4000 字符。
  */
 export function createNexusRunNote(runId, content, requestId = '') {

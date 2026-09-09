@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import uuid
 from typing import Any
 
 from langchain_openai import ChatOpenAI
@@ -244,6 +245,7 @@ def set_terminal_status(run_id: str, status: str, detail: str = "") -> dict[str,
     已终态的行直接返回现态。调用方（执行者/取消者）据此返回一致结论。
     注意取消旗与 status 分离存储：取消者置旗时行仍为 running，图的后到
     failed 同样不得覆盖（线上实证的竞态）。
+    F2：进入终态即强制释放执行租约（完成/取消/失败均释放；清理动作同样记录）。
     """
     from nexus import experiment_runs as runs_module
 
@@ -255,8 +257,16 @@ def set_terminal_status(run_id: str, status: str, detail: str = "") -> dict[str,
     if status != "cancelled" and bool(run.get("cancel_requested")):
         # 取消旗已置位而行仍为 running：收敛到 cancelled（完成用户意图），
         # 不悬空 running，更不写成 failed。
-        return runs_module.set_status(run_id, "cancelled", detail or "用户已取消。")
-    return runs_module.set_status(run_id, status, detail)
+        result = runs_module.set_status(run_id, "cancelled", detail or "用户已取消。")
+    else:
+        result = runs_module.set_status(run_id, status, detail)
+    try:
+        from nexus import experiment_operations as operations_module
+
+        operations_module.force_release_run(run_id)
+    except Exception:  # noqa: BLE001 - 租约释放失败不推翻终态
+        logger.warning("lease force-release failed for %s", run_id)
+    return result
 
 
 # 单 run 单执行者（进程内锁；跨进程/重启的执行者唯一性由 run 状态机保证：
@@ -294,9 +304,15 @@ def _backend_from_settings(run_id: str):
         )
     scope_hash = ""
     resources: dict[str, Any] = {}
+    initial_seq = 0
     run = runs_module.get_run(run_id)
     if run is not None:
         scope_hash = str(run.get("scope_hash") or "")
+        # F2：序号由持久意图派生（现 attempt 数），Backend 重建不归零。
+        try:
+            initial_seq = max(0, int(run.get("attempt_no") or 0))
+        except (TypeError, ValueError):
+            initial_seq = 0
         try:
             from nexus import proposals as proposals_module
 
@@ -306,7 +322,8 @@ def _backend_from_settings(run_id: str):
         except Exception:  # noqa: BLE001 - 提案不可读不阻断（资源走部署默认）
             resources = {}
     return HttpSandboxBackend(run_id=run_id, base_url=base_url, token=token,
-                              scope_hash=scope_hash, resources=resources)
+                              scope_hash=scope_hash, resources=resources,
+                              initial_seq=initial_seq)
 
 
 async def execute_bound_run(
@@ -326,21 +343,55 @@ async def execute_bound_run(
     """
     from nexus import experiment_runs as runs_module
 
+    # F2：跨进程执行权（拿不到租约只观察，不执行；内存锁只防同进程）。
+    holder = f"exec-{uuid.uuid4().hex[:8]}"
+    fencing = ""
+    try:
+        from nexus import experiment_operations as operations_module
+
+        lease = operations_module.acquire_lease(run_id, holder)
+        if not lease.get("acquired"):
+            current = runs_module.get_run(run_id)
+            return {"status": (current or {}).get("status", "running"),
+                    "deduped": True, "run_id": run_id,
+                    "detail": f"执行权正由 {lease.get('holder', '')} 持有，仅观察，不重复启动。"}
+        fencing = str(lease.get("fencing") or "")
+    except Exception as error:  # noqa: BLE001 - 租约故障 fail-closed（不启动）
+        logger.warning("lease acquire failed for %s: %s", run_id, type(error).__name__)
+        current = runs_module.get_run(run_id)
+        return {"status": (current or {}).get("status", "running"),
+                "deduped": True, "run_id": run_id,
+                "detail": "执行权账本不可用，未启动（可重试认领）。"}
     lock = await _lock_for(run_id)
     if lock.locked():
         current = runs_module.get_run(run_id)
+        try:
+            from nexus import experiment_operations as operations_module
+
+            operations_module.release_lease(run_id, holder, fencing)
+        except Exception:  # noqa: BLE001
+            pass
         return {"status": (current or {}).get("status", "running"),
                 "deduped": True, "run_id": run_id,
                 "detail": "该运行已有执行者，不重复启动。"}
     async with lock:
-        return await _execute_under_lock(
-            run_id=run_id, owner=owner, session_id=session_id,
-            backend=backend, model=model, checkpointer=checkpointer)
+        try:
+            return await _execute_under_lock(
+                run_id=run_id, owner=owner, session_id=session_id,
+                backend=backend, model=model, checkpointer=checkpointer,
+                fencing=fencing)
+        finally:
+            try:
+                from nexus import experiment_operations as operations_module
+
+                operations_module.release_lease(run_id, holder, fencing)
+            except Exception:  # noqa: BLE001
+                pass
 
 
 async def _execute_under_lock(
     *, run_id: str, owner: str, session_id: str,
-    backend: Any, model: Any, checkpointer: Any,
+    backend: Any, model: Any, checkpointer: Any, fencing: str = "",
 ) -> dict[str, Any]:
     from langchain_core.messages import AIMessage
 
@@ -404,7 +455,8 @@ async def _execute_under_lock(
     route = select_environment_route(listing)
     runs_module.record_attempt(
         run_id, actual_command="ls /workspace",
-        config_changes={"route": route["route"], "reason": route["reason"]},
+        config_changes={"route": route["route"], "reason": route["reason"],
+                        "kind": "execute", "op_kind": "probe"},
         exit_code=0, log_ref="; ".join(listing[:20]))
     if route["route"] == "repo2docker":
         runs_module.set_status(
@@ -413,6 +465,27 @@ async def _execute_under_lock(
         return {"status": "failed", "run_id": run_id, "code": "ROUTE_NOT_DELIVERED"}
     thread_id = f"exp-{run_id}"
     runs_module.set_graph_thread(run_id, thread_id)
+    # F2：绑定本次租约令牌并轮换控制面 fencing（旧持有者的迟到提交自此
+    # 被拒；旧控制面无端点则降级旧语义＋日志留痕；其余轮换失败 fail-closed）。
+    if fencing and hasattr(active_backend, "set_fencing"):
+        try:
+            active_backend.set_fencing(fencing)
+            if hasattr(active_backend, "rotate_fencing"):
+                await active_backend.rotate_fencing()
+        except Exception as error:  # noqa: BLE001
+            code = getattr(error, "code", type(error).__name__)
+            if code == "FENCING_UNSUPPORTED":
+                logger.warning("control plane without fencing for %s: %s",
+                               run_id, code)
+                try:
+                    active_backend.set_fencing("")
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                runs_module.set_status(
+                    run_id, "failed", f"FENCING_ROTATE_FAILED: {code}（可重试认领）")
+                return {"status": "failed", "run_id": run_id,
+                        "code": "FENCING_ROTATE_FAILED"}
     try:
         agent = build_experiment_agent(active_backend, checkpointer, model)
     except Exception as error:  # noqa: BLE001
@@ -496,9 +569,18 @@ async def _execute_under_lock(
                     # 对账 id 经提交日志精确归因（并行批量下不冒充）。
                     operation_id = attribute_operation(
                         active_backend, command or f"[{name}]", used_operation_ids)
+                    # F1：服务端保存操作分类（启发式确定性；模型不可改写）。
+                    # kind 保留旧值兼容（execute/file_tool）；op_kind 新增
+                    # probe/environment/diagnostic/target/verification/file_tool。
+                    from nexus import experiment_contracts as contracts_module
+
+                    _op_kind = contracts_module.classify_operation(
+                        command or f"[{name}]",
+                        "file_tool" if attempt_kind == "file_tool" else "")
                     runs_module.record_attempt(
                         run_id, actual_command=command or f"[{name}]",
-                        config_changes={"kind": attempt_kind},
+                        config_changes={"kind": attempt_kind,
+                                        "op_kind": _op_kind},
                         operation_id=operation_id,
                         exit_code=attempt_exit, log_ref=content[-2000:])
     except Exception as error:  # noqa: BLE001 - 图异常 fail-closed 落盘
@@ -575,3 +657,160 @@ async def cancel_bound_run(
                 "already_terminal": False}
     return {"status": "error", "code": "CANCEL_UNCONFIRMED", "run_id": run_id,
             "detail": f"取消未确认（{result})；取消旗已置位。"}
+
+
+async def resume_bound_run(
+    *, run_id: str, owner: str, session_id: str,
+    backend: Any = None,
+) -> dict[str, Any]:
+    """F2：认领 running run 并对账在途意图（恢复入口第一步：只查不交）。
+
+    - 归属/终态校验（终态直接返回，不碰控制面）；
+    - 拿不到租约只观察（返回现态＋持有者，不执行）；
+    - 逐条非终态意图 query 对账：终态证据→回写 attempt 并继续计数；
+      running→接管计数；unknown/不可达→reconciling（禁重交）；
+    - prepared 意图（已知未提交）留给图继续时提交；
+    - 对账后序号对齐（backend.reset_seq），调用方据 returned
+      `needs_continue` 决定是否后台继续图执行。
+    返回 {"status", "recovery_status", "adopted_terminal", "adopted_running",
+           "unknown", "pending_prepared", "needs_continue", ...}。
+    """
+    from nexus import experiment_runs as runs_module
+
+    run = runs_module.get_run(run_id)
+    if run is None:
+        return {"status": "error", "code": "RUN_NOT_FOUND", "run_id": run_id}
+    if (owner or "") != run["owner"]:
+        return {"status": "error", "code": "RUN_FORBIDDEN", "run_id": run_id}
+    if (session_id or "") != run["session_id"]:
+        return {"status": "error", "code": "RUN_SESSION_MISMATCH",
+                "run_id": run_id}
+    if run["status"] != "running":
+        return {"status": run["status"], "run_id": run_id,
+                "already_terminal": True, "needs_continue": False}
+    from nexus import experiment_operations as operations_module
+
+    holder = f"resume-{uuid.uuid4().hex[:8]}"
+    lease = operations_module.acquire_lease(run_id, holder)
+    if not lease.get("acquired"):
+        return {"status": "running", "run_id": run_id,
+                "recovery_status": run.get("recovery_status") or "",
+                "needs_continue": False,
+                "detail": f"执行权正由 {lease.get('holder', '')} 持有，仅观察。"}
+    try:
+        runs_module.set_recovery(run_id, "recovering", "认领恢复中：先对账在途意图。")
+        active_backend = backend
+        if active_backend is None:
+            try:
+                active_backend = _backend_from_settings(run_id)
+            except Exception:  # noqa: BLE001 - 控制面未配置：如实不可恢复
+                active_backend = None
+        intents = operations_module.list_run_intents(run_id)
+        adopted_terminal = 0
+        adopted_running = 0
+        unknown = 0
+        pending_prepared = 0
+        for intent in intents:
+            istatus = str(intent.get("status") or "")
+            if istatus in ("succeeded", "failed", "cancelled", "timed_out"):
+                continue
+            if istatus == "prepared":
+                pending_prepared += 1
+                continue
+            operation_id = str(intent.get("operation_id") or "")
+            if active_backend is None:
+                operations_module.set_intent_status(
+                    run_id, operation_id, "reconciling")
+                unknown += 1
+                continue
+            try:
+                remote = await active_backend.query_operation(operation_id)
+            except Exception:  # noqa: BLE001 - 查询失败按未知处理，不重交
+                operations_module.set_intent_status(
+                    run_id, operation_id, "reconciling")
+                unknown += 1
+                continue
+            decision = operations_module.reconcile_decision(intent, remote)
+            if decision == "adopt_terminal":
+                rstatus = str(remote.get("status") or "")
+                exit_code = remote.get("exit_code")
+                tail = str(remote.get("output_tail") or "")
+                operations_module.set_intent_status(
+                    run_id, operation_id, rstatus
+                    if rstatus in ("succeeded", "failed", "cancelled")
+                    else "failed",
+                    exit_code=exit_code if isinstance(exit_code, int) else None,
+                    output_tail=tail)
+                try:
+                    from nexus import experiment_contracts as contracts_module
+
+                    op_kind = contracts_module.classify_operation(
+                        str(intent.get("command") or ""))
+                except Exception:  # noqa: BLE001
+                    op_kind = "target"
+                try:
+                    runs_module.record_attempt(
+                        run_id, actual_command=str(intent.get("command") or ""),
+                        config_changes={"kind": "execute", "op_kind": op_kind,
+                                        "resumed": True},
+                        operation_id=operation_id,
+                        exit_code=exit_code if isinstance(exit_code, int) else None,
+                        log_ref=tail)
+                except Exception:  # noqa: BLE001 - 补记失败不推翻对账结论
+                    logger.warning("resume attempt backfill failed for %s", operation_id)
+                adopted_terminal += 1
+            elif decision == "adopt_running":
+                operations_module.set_intent_status(
+                    run_id, operation_id, "running")
+                adopted_running += 1
+            else:
+                operations_module.set_intent_status(
+                    run_id, operation_id, "reconciling")
+                unknown += 1
+        # 序号对齐：补记的 attempt 已占号，后续新命令不得复用旧 id。
+        try:
+            fresh = runs_module.get_run(run_id)
+            if active_backend is not None and hasattr(active_backend, "reset_seq"):
+                active_backend.reset_seq(int((fresh or {}).get("attempt_no") or 0))
+        except Exception:  # noqa: BLE001
+            pass
+        if active_backend is None and (
+                adopted_running or unknown or pending_prepared):
+            reason = ("控制面不可达，在途意图无法对账；已保存材料："
+                      f"终态接管 {adopted_terminal} 条。不可自动恢复。")
+            runs_module.set_recovery(run_id, "unrecoverable", reason)
+            return {"status": "running", "run_id": run_id,
+                    "recovery_status": "unrecoverable",
+                    "adopted_terminal": adopted_terminal,
+                    "adopted_running": adopted_running, "unknown": unknown,
+                    "pending_prepared": pending_prepared,
+                    "needs_continue": False, "detail": reason}
+        if unknown and not adopted_running and not adopted_terminal \
+                and not pending_prepared:
+            reason = ("在途意图状态未知（控制面无记录/不可达），未重复执行；"
+                      "可重试认领。")
+            runs_module.set_recovery(run_id, "", reason)
+            return {"status": "running", "run_id": run_id,
+                    "recovery_status": "",
+                    "adopted_terminal": adopted_terminal,
+                    "adopted_running": adopted_running, "unknown": unknown,
+                    "pending_prepared": pending_prepared,
+                    "needs_continue": False, "detail": reason}
+        needs = bool(adopted_running or pending_prepared or adopted_terminal)
+        reason = (f"对账完成：终态接管 {adopted_terminal} 条、接管运行中 "
+                  f"{adopted_running} 条、待提交 {pending_prepared} 条、"
+                  f"未知 {unknown} 条；"
+                  + ("继续图执行。" if needs else "无待办，不启动新图。"))
+        runs_module.set_recovery(run_id, "recovering", reason)
+        return {"status": "running", "run_id": run_id,
+                "recovery_status": "recovering",
+                "adopted_terminal": adopted_terminal,
+                "adopted_running": adopted_running, "unknown": unknown,
+                "pending_prepared": pending_prepared,
+                "needs_continue": needs, "detail": reason}
+    finally:
+        try:
+            operations_module.release_lease(run_id, holder,
+                                            str(lease.get("fencing") or ""))
+        except Exception:  # noqa: BLE001
+            pass

@@ -71,9 +71,25 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "clean_note": row.get("clean_note", "") or "",
         "clean_checked_at": row.get("clean_checked_at", 0) or 0,
         "clean_rule": row.get("clean_rule", "") or "",
+        # F2 恢复状态（独立于 status；""=未恢复过；recovering/recovered/
+        # unrecoverable；完成原因见 completion_reason）。
+        "recovery_status": row.get("recovery_status", "") or "",
+        "completion_reason": row.get("completion_reason", "") or "",
         "created_at": row.get("created_at", 0),
         "updated_at": row.get("updated_at", 0),
     }
+
+
+# F2：PG 列清单（_row_from_pg 解包用；此前缺失导致 PG 读必回退内存，现补齐）。
+_RUN_KEYS = (
+    "run_id", "owner", "session_id", "proposal_id", "proposal_version",
+    "scope_hash", "approval_id", "status", "attempt_no", "attempts",
+    "graph_thread_id", "cancel_requested", "detail",
+    "clean_status", "clean_note", "clean_checked_at", "clean_rule",
+    "recovery_status", "completion_reason",
+    "created_at", "updated_at",
+)
+_RUN_SELECT = ", ".join(_RUN_KEYS)
 
 
 def _row_from_pg(found: Any) -> dict[str, Any]:
@@ -96,8 +112,9 @@ def _insert_row(row: dict[str, Any]) -> None:
                         "scope_hash, approval_id, status, attempt_no, attempts, "
                         "graph_thread_id, cancel_requested, detail, "
                         "clean_status, clean_note, clean_checked_at, "
-                        "clean_rule, created_at, updated_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "clean_rule, recovery_status, completion_reason, "
+                        "created_at, updated_at) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                         "ON CONFLICT (run_id) DO NOTHING",
                         (
                             row["run_id"], row["owner"], row["session_id"],
@@ -112,6 +129,8 @@ def _insert_row(row: dict[str, Any]) -> None:
                             row.get("clean_note", ""),
                             row.get("clean_checked_at", 0) or 0,
                             row.get("clean_rule", ""),
+                            row.get("recovery_status", ""),
+                            row.get("completion_reason", ""),
                             row["created_at"], row["updated_at"],
                         ),
                     )
@@ -135,7 +154,7 @@ def _update_row(row: dict[str, Any]) -> None:
                         f"attempt_no=%s, attempts=%s, graph_thread_id=%s, "
                         f"cancel_requested=%s, detail=%s, updated_at=%s, "
                         f"clean_status=%s, clean_note=%s, clean_checked_at=%s, "
-                        f"clean_rule=%s "
+                        f"clean_rule=%s, recovery_status=%s, completion_reason=%s "
                         f"WHERE run_id=%s",
                         (
                             row["status"], row["attempt_no"],
@@ -148,6 +167,8 @@ def _update_row(row: dict[str, Any]) -> None:
                             row.get("clean_note", ""),
                             row.get("clean_checked_at", 0) or 0,
                             row.get("clean_rule", ""),
+                            row.get("recovery_status", ""),
+                            row.get("completion_reason", ""),
                             row["run_id"],
                         ),
                     )
@@ -217,6 +238,8 @@ def create_or_get_run(
         "clean_note": "",
         "clean_checked_at": 0,
         "clean_rule": "",
+        "recovery_status": "",
+        "completion_reason": "",
         "created_at": now,
         "updated_at": now,
     }
@@ -370,6 +393,26 @@ def set_graph_thread(run_id: str, thread_id: str) -> None:
     _memory_runs[run_id] = dict(updated)
 
 
+def set_recovery(run_id: str, status: str, reason: str = "") -> dict[str, Any] | None:
+    """F2：登记恢复状态（独立于 status 的完成原因说明）。
+
+    status：""（未恢复过）/ recovering / recovered / unrecoverable。
+    完成、取消、失败落盘时调用方应同步清理租约（见 experiment_operations）。
+    """
+    if status not in ("", "recovering", "recovered", "unrecoverable"):
+        raise RunError("RECOVERY_STATUS_UNKNOWN", f"未知恢复状态：{status}")
+    run = get_run(run_id)
+    if run is None:
+        return None
+    updated = dict(run)
+    updated.update({"recovery_status": status,
+                    "completion_reason": (reason or "")[:2000],
+                    "updated_at": _now()})
+    _update_row(updated)
+    _memory_runs[run_id] = dict(updated)
+    return _row_to_dict(updated)
+
+
 def request_cancel(run_id: str, user_id: str) -> dict[str, Any]:
     """用户取消 run（置旗；执行者在下一个检查点诚实化为 cancelled）。
 
@@ -414,14 +457,23 @@ def reap_stale_runs(*, max_idle_s: float = 3600.0) -> int:
 
             with psycopg.connect(dsn, autocommit=True) as conn:
                 with conn.cursor() as cur:
+                    # F2：RETURNING 只回收被收敛行的租约，不碰正常运行 run。
                     cur.execute(
                         f"UPDATE {schema}.nexus_experiment_runs "
                         f"SET status='failed', detail=%s, updated_at=%s "
                         f"WHERE status='running' AND attempt_no=0 "
-                        f"AND updated_at < %s",
+                        f"AND updated_at < %s RETURNING run_id",
                         (detail, _now(), cutoff),
                     )
-                    return int(cur.rowcount or 0)
+                    reaped_ids = [str(row[0]) for row in cur.fetchall()]
+            for reaped_id in reaped_ids:
+                try:
+                    from nexus import experiment_operations as operations_module
+
+                    operations_module.force_release_run(reaped_id)
+                except Exception:  # noqa: BLE001 - 租约释放失败不推翻收敛
+                    pass
+            return len(reaped_ids)
         except Exception as error:  # noqa: BLE001
             logger.warning("reap stale runs pg failed: %s", error)
     count = 0
@@ -433,6 +485,12 @@ def reap_stale_runs(*, max_idle_s: float = 3600.0) -> int:
             updated.update({"status": "failed", "detail": detail,
                             "updated_at": _now()})
             _memory_runs[run_id] = updated
+            try:
+                from nexus import experiment_operations as operations_module
+
+                operations_module.force_release_run(run_id)
+            except Exception:  # noqa: BLE001
+                pass
             count += 1
     return count
 

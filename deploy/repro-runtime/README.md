@@ -16,7 +16,8 @@
 | 方法与路径 | 说明 |
 | --- | --- |
 | `PUT /sandboxes/{run_id}` | ensure：体为 `{scope_hash, resources}`；同 run 同 scope 幂等，异 hash → 409 `SCOPE_HASH_MISMATCH`；resources 超部署上限 → 422 |
-| `POST /sandboxes/{run_id}/operations` | `{operation_id, command, timeout_s}` 登记后执行；同 ID 不运行两次；超 run 时限 → 409 `WALL_TIME_EXCEEDED` |
+| `POST /sandboxes/{run_id}/operations` | `{operation_id, command, timeout_s, request_hash?, fencing?}` 登记后执行；同 ID 同请求去重，不同请求 → 409 `OPERATION_ID_CONFLICT`；fencing 锁定后旧/空 token → 409 `FENCING_REJECTED`；超 run 时限 → 409 `WALL_TIME_EXCEEDED` |
+| `PUT /sandboxes/{run_id}/fencing` | F2：轮换执行 fencing（恢复认领后新持有者接管；终态 409） |
 | `GET /sandboxes/{run_id}/operations/{operation_id}` | 结果/状态查询（HTTP 超时≠进程停止） |
 | `PUT /sandboxes/{run_id}/files/{path:path}` | 受限大小文件上传；路径限定 `REPRO_WORKSPACE_ROOT`（默认 `/workspace`），`..`/symlink 逃逸 → 422 |
 | `GET /sandboxes/{run_id}/files/{path:path}` | 下载（截断/过大如实报错；上限 5MB） |

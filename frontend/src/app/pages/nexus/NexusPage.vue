@@ -60,7 +60,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, requestNexusRunFormats, requestNexusRunCleanVerify, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, requestNexusRunFormats, requestNexusRunCleanVerify, requestNexusRunResume, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -541,6 +541,18 @@ async function requestAutoReport(id) {
         item.turn.artifacts = [...(item.turn.artifacts || []), a]
       }
     }
+    // F1：四分量分别存 run（环境/目标/指标/干净各自成立，不合成单一绿色成功）。
+    run.autoReport = {
+      environment_ready: res?.environment_ready ?? null,
+      execution_succeeded: res?.execution_succeeded ?? null,
+      metric_verdict: res?.metric_verdict ?? null,
+      clean_verification: res?.clean_verification ?? null,
+      clean_note: res?.clean_note ?? '',
+      goal: res?.goal ?? null,
+      operation_summary: res?.operation_summary ?? null,
+      legacy_target: !!res?.legacy_target,
+      metric_note: res?.metric_note ?? '',
+    }
     persistSessions()
     showToast(`报告已生成：执行${res?.execution_succeeded ? '成功' : '失败'} · 指标${res?.metric_verdict || '—'} · ${res?.artifacts?.length || 0} 个产物`, 'success')
   } catch (err) {
@@ -591,6 +603,33 @@ async function requestCleanVerify(id) {
     }
   } catch (err) {
     showToast(err?.message || '干净验证失败', 'error')
+  }
+}
+
+// ── F2 恢复认领：对账在途意图，需继续时后台续跑同一实验 ──
+// 即返对账结论（终态接管/接管运行中/未知）；已有执行者仅观察，不重复启动。
+async function requestResumeRun(id) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const run = item?.run
+  const runId = item?.runId
+  if (!run || !runId || run.resuming) return
+  run.resuming = true
+  try {
+    const res = await requestNexusRunResume(runId, execMode.value || 'ask')
+    if (typeof res?.recovery_status === 'string') run.recoveryStatus = res.recovery_status
+    if (res?.detail) run.completionReason = res.detail
+    persistSessions()
+    if (res?.needs_continue) {
+      showToast('已认领并继续执行（后台续跑，详情轮询可见）', 'success')
+    } else if (res?.recovery_status === 'unrecoverable') {
+      showToast(`不可自动恢复：${res?.detail || '见详情'}`, 'warning')
+    } else {
+      showToast(`对账完成：${res?.detail || '无待办'}`, 'success')
+    }
+  } catch (err) {
+    showToast(err?.message || '恢复认领失败', 'error')
+  } finally {
+    run.resuming = false
   }
 }
 
@@ -1639,6 +1678,9 @@ function applyRunDetail(turn, detail) {
   run.reconciling = (detail.live?.status === 'reconciling')
   // SR6：干净B结论随详情直通（""=未验证/verifying=运行中/passed/failed）。
   if (typeof detail.clean_status === 'string') run.cleanStatus = detail.clean_status
+  // F2：恢复状态随详情直通（UI 不做新枚举分支，只读展示）。
+  if (typeof detail.live?.recovery_status === 'string') run.recoveryStatus = detail.live.recovery_status
+  if (typeof detail.live?.completion_reason === 'string') run.completionReason = detail.live.completion_reason
   run.detail = detail.live?.detail || detail.live?.note || run.detail || null
   // 自主运行中增量日志：取最后一条有日志尾的 attempt（只读呈现）。
   if (run.status === 'running' && Array.isArray(run.attempts)) {
@@ -3127,6 +3169,7 @@ const emptySuggestions = computed(() =>
         @report="requestAutoReport"
         @formats="requestRunFormats"
         @clean-verify="requestCleanVerify"
+        @resume="requestResumeRun"
         @rerun="rerunFromWorkspace"
         @rename="renameRunFromWorkspace"
         @add-note="addRunNote"

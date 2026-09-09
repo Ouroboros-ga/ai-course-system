@@ -158,6 +158,18 @@ class OperationCreate(BaseModel):
     operation_id: str = Field(min_length=1, max_length=128)
     command: str = Field(min_length=1)
     timeout_s: float | None = None
+    # F2：请求哈希（Nexus 意图登记的稳定摘要；同 id 不同请求即冲突）。
+    # 旧客户端不带时只比 command 文本；都缺失无法比对时沿旧语义返回原记录。
+    request_hash: str = Field(default="", max_length=128)
+    # F2：执行 fencing token（Nexus 租约持有者的单调令牌）。
+    # run 首次提交即锁定；旧 token 的新提交 → 409 FENCING_REJECTED。
+    fencing: str = Field(default="", max_length=128)
+
+
+class FencingRotate(BaseModel):
+    """F2：轮换 run 的 fencing（恢复认领后新持有者接管执行权）。"""
+
+    fencing: str = Field(min_length=1, max_length=128)
 
 
 class ResourcesSpec(BaseModel):
@@ -231,6 +243,7 @@ class _Store:
                     "deadline_at": float(run.get("deadline_at") or 0),
                     "docker_args": list(run.get("docker_args") or []),
                     "status": run.get("status", "unknown"),
+                    "fencing": str(run.get("fencing") or ""),
                     "created_at": run.get("created_at", 0),
                     "updated_at": run.get("updated_at", 0),
                     "operations": kept,
@@ -273,6 +286,7 @@ class _Store:
                 "deadline_at": float(row.get("deadline_at") or 0),
                 "docker_args": list(row.get("docker_args") or []),
                 "status": "unknown",
+                "fencing": str(row.get("fencing") or ""),
                 "note": "服务重启，执行状态未知（不重放、不自动恢复）",
                 "created_at": float(row.get("created_at", 0) or 0),
                 "updated_at": now,
@@ -296,6 +310,8 @@ def _public_run(run: dict[str, Any]) -> dict[str, Any]:
         "wall_time_s": int(run.get("wall_time_s") or 0),
         "deadline_at": float(run.get("deadline_at") or 0),
         "container_name": run.get("container_name", ""),
+        # F2：现 fencing（对账可见；非密钥，轮换经专用端点）。
+        "fencing": str(run.get("fencing") or ""),
         "created_at": run.get("created_at", 0),
         "updated_at": run.get("updated_at", 0),
         "active_operation_id": run.get("active_operation_id", ""),
@@ -446,6 +462,8 @@ async def ensure_sandbox(run_id: str, body: EnsureRequest | None = None,
             "docker_args": list(adapter.docker_args),
             "status": "ready",
             "note": note,
+            # F2：执行 fencing（首次提交锁定；轮换经专用端点）。
+            "fencing": "",
             "created_at": _now(),
             "updated_at": _now(),
             "operations": {},
@@ -491,6 +509,16 @@ async def submit_operation(run_id: str, body: OperationCreate,
                 status_code=409,
                 detail=f"RUN_TERMINAL:{run.get('status')}：终态 run 不再接受新操作",
             )
+        # F2：fencing 校验（首次提交锁定，旧 token/空 token 新提交拒绝）。
+        # 无历史包袱：fencing 随本批引入，不存在发空 token 的旧客户端。
+        fencing = (body.fencing or "").strip()[:128]
+        locked = str(run.get("fencing") or "")
+        if locked and fencing != locked:
+            raise HTTPException(
+                status_code=409,
+                detail="FENCING_REJECTED:提交 token 已过期（执行权已转移）；"
+                "旧持有者的新提交被拒绝，先对账再由现持有者提交。",
+            )
         deadline = float(run.get("deadline_at") or 0)
         if deadline and _now() > deadline:
             # 已确认的 wall_time 到期：不再接受新操作，已有结果保留（不静默杀）。
@@ -500,11 +528,32 @@ async def submit_operation(run_id: str, body: OperationCreate,
             )
         operations = run.setdefault("operations", {})
         if operation_id in operations:
-            return {**_public_operation(run_id, operations[operation_id]),
+            existing = operations[operation_id]
+            # F2：同 ID 同请求返回原记录（不运行两次）；同 ID 不同请求即
+            # 409 OPERATION_ID_CONFLICT（旧进程无退出证明不得重跑，先对账）。
+            # 比对顺序：双方都带哈希即比哈希；否则比 command 文本；旧记录/
+            # 旧快照缺命令时无法判定，沿旧语义返回原记录（不误杀）。
+            new_hash = (body.request_hash or "").strip()
+            old_hash = str(existing.get("request_hash") or "")
+            new_command = body.command.strip()
+            old_command = str(existing.get("command") or "")
+            conflict = False
+            if new_hash and old_hash:
+                conflict = new_hash != old_hash
+            elif old_command:
+                conflict = new_command != old_command.strip()
+            if conflict:
+                raise HTTPException(
+                    status_code=409,
+                    detail="OPERATION_ID_CONFLICT:该 operation_id 已登记不同请求；"
+                    "旧进程无退出证明不得重跑，先查询对账。",
+                )
+            return {**_public_operation(run_id, existing),
                     "deduped": True}
         op = {
             "operation_id": operation_id,
             "command": body.command,
+            "request_hash": (body.request_hash or "").strip(),
             "timeout_s": timeout_s,
             "status": "running",
             "exit_code": None,
@@ -514,6 +563,8 @@ async def submit_operation(run_id: str, body: OperationCreate,
             "finished_at": 0,
         }
         operations[operation_id] = op
+        if fencing and not str(run.get("fencing") or ""):
+            run["fencing"] = fencing
         run["status"] = "running"
         run["active_operation_id"] = operation_id
         run["updated_at"] = _now()
@@ -538,6 +589,33 @@ async def query_operation(run_id: str, operation_id: str,
                 "output_tail": "", "output_truncated": False,
                 "note": "控制服务无此操作记录（可能重启丢失，不重放）"}
     return _public_operation(run_id, op)
+
+
+@app.put("/sandboxes/{run_id}/fencing")
+async def rotate_fencing(run_id: str, body: FencingRotate,
+                         _: None = Depends(require_token)):
+    """F2：轮换 run 的执行 fencing（恢复认领后新持有者接管）。
+
+    终态 run 拒绝轮换（RUN_TERMINAL）；未知 run 404。旧 token 的新提交
+    自此被拒（FENCING_REJECTED），调用方须先对账再轮换。
+    """
+    run_id = _check_run_id(run_id)
+    fencing = (body.fencing or "").strip()[:128]
+    if not fencing:
+        raise HTTPException(status_code=422, detail="INVALID_FENCING")
+    async with store.lock_for(run_id):
+        run = store.runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="UNKNOWN_RUN")
+        if run.get("status") in TERMINAL_RUN:
+            raise HTTPException(
+                status_code=409,
+                detail=f"RUN_TERMINAL:{run.get('status')}：终态 run 不再轮换 fencing",
+            )
+        run["fencing"] = fencing
+        run["updated_at"] = _now()
+        store.save_snapshot()
+        return {"run_id": run_id, "fencing": fencing}
 
 
 @app.post("/sandboxes/{run_id}/cancel")

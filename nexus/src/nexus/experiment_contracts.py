@@ -41,6 +41,90 @@ class SandboxResult(BaseModel):
     output_truncated: bool = False
 
 
+# F1：操作类型（分类本身不是完成证据；判定看目标完成证据）。
+# probe=目录/声明探测，environment=依赖安装/导入检查，diagnostic=诊断排错，
+# target=目标执行，verification=验证/测试，file_tool=文件工具摘要。
+OperationKind = Literal[
+    "probe", "environment", "diagnostic", "target", "verification", "file_tool",
+]
+
+# F1：三种模式的目标差异（setup 不要求指标；smoke 要求目标程序/最小产物；
+# reproduce 要求可比较指标政策）。
+_GOAL_REQUIREMENTS: dict[str, dict[str, bool]] = {
+    "setup": {"requires_env": True, "requires_target": False,
+              "requires_metrics": False},
+    "smoke": {"requires_env": True, "requires_target": True,
+              "requires_metrics": False},
+    "reproduce": {"requires_env": True, "requires_target": True,
+                  "requires_metrics": True},
+}
+
+
+def derive_goal(scope: dict[str, Any] | None) -> dict[str, Any]:
+    """由批准 scope 推导 ExperimentGoal（纯函数，可单测）。
+
+    模型可以建议修复方式，但完成标准只来自本函数（服务端保存），
+    禁止通过改写目标检查/指标阈值让结果通过。
+    """
+    scope = scope or {}
+    mode = str(scope.get("mode") or "smoke")
+    if mode not in _GOAL_REQUIREMENTS:
+        mode = "smoke"
+    req = _GOAL_REQUIREMENTS[mode]
+    return {
+        "mode": mode,
+        "objective": str(scope.get("objective") or ""),
+        "requires_env": req["requires_env"],
+        "requires_target": req["requires_target"],
+        "requires_metrics": req["requires_metrics"],
+        "metric_policy": scope.get("metric_policy"),
+        "env_checks": list(scope.get("env_checks") or []),
+        "target_commands": list(scope.get("target_commands") or []),
+    }
+
+
+def classify_operation(command: str, kind_hint: str = "") -> str:
+    """操作分类（启发式，确定性；存盘后作为判定输入，模型不可改写）。
+
+    kind_hint=file_tool 直接归 file_tool；路由探针 `ls /workspace` 归 probe。
+    其余按命令形状：环境安装/导入检查→environment；版本/资源诊断→diagnostic；
+    测试/验证→verification；目录/仓库探测→probe；其余 execute→target。
+    """
+    import re as _re
+
+    if str(kind_hint or "") == "file_tool":
+        return "file_tool"
+    text = (command or "").strip()
+    if not text:
+        return "diagnostic"
+    if text.startswith("ls /workspace"):
+        return "probe"
+    low = text.lower()
+    if _re.match(
+        r"^(ls|pwd|cat|head|tail|find|git\s+(rev-parse|status|log)|"
+        r"grep\s+\S+\s*$|ls\s+-a\s+/workspace)", text):
+        # glob/grep 单 token 摘要已在 clean 侧另行处理；此处 probe 仅收
+        # 目录/声明探测类命令。
+        if low.startswith(("pip ", "conda ", "apt-get ", "npm ")):
+            return "environment"
+        return "probe"
+    if low.startswith(
+        ("pip ", "conda ", "apt-get ", "npm ", "poetry ",
+         "pip install", "conda install", "python -m pip")):
+        return "environment"
+    if _re.match(
+        r"^python\s+-c\s+[\"']import\s+", text, _re.IGNORECASE):
+        return "environment"
+    if low.startswith(
+        ("python --version", "nvidia-smi", "df ", "free ",
+         "which ", "env", "echo $")):
+        return "diagnostic"
+    if low.startswith(("pytest", "python -m pytest", "python -m unittest",
+                       "flake8", "mypy")) or "eval_metric" in low:
+        return "verification"
+    return "target"
+
+
 class RunRecord(TypedDict, total=False):
     """run 记录字段集合（非 DB 设计）：run_id、owner、session_id、scope_hash、
     approval_id、sandbox_id、graph_thread_id、status、attempt_no、

@@ -1574,6 +1574,9 @@ def _merge_run_console(
         "detail": console.get("detail", ""),
         "note": ("执行器不可达，显示登记快照；运行未终止，恢复后继续"
                  if console_status == "reconciling" else ""),
+        # F2：恢复状态直通（""=未恢复过；UI 只读展示，不分支新枚举）。
+        "recovery_status": console.get("recovery_status", ""),
+        "completion_reason": console.get("completion_reason", ""),
     }
     merged["status_source"] = "live"
     merged["stale"] = False
@@ -1944,6 +1947,48 @@ async def nexus_run_clean_verify(
     return await _proxy_json(
         request, current_user, "POST",
         f"/api/v1/nexus/repro/runs/{run['run_id']}/clean-verify",
+        body={"research_execution_mode": payload.research_execution_mode},
+    )
+
+
+class NexusRunResume(BaseModel):
+    """F2 恢复认领代理体：只透传执行模式（未知值 400，由门裁决）。
+
+    extra=allow：容忍签名键 time/enc；未声明字段由 _reject_unknown_fields
+    422；转发上游时只带声明字段（Runtime 侧 extra=forbid 仍兜底）。
+    """
+
+    research_execution_mode: str | None = Field(default=None, max_length=16)
+
+    model_config = {"extra": "allow"}
+
+
+@router.post("/runs/{run_id}/resume")
+async def nexus_run_resume(
+    run_id: str,
+    payload: NexusRunResume,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F2：认领 running run 并对账在途意图后继续（恢复入口代理）。
+
+    只查不交地对账，需继续时 Runtime 后台调度图执行；未知模式 400，
+    非 Auto 403（Ask 禁止，门在 Runtime 再验）。归属校验先行（非本人
+    404），判定语义由 Runtime 原样返回。
+    """
+    from app.services import nexus_run_service
+
+    _require_valid_execution_mode(payload.research_execution_mode)
+    _reject_unknown_fields(NexusRunResume, payload.model_dump())
+    run = nexus_run_service.get_owned_run(
+        session, user_id=_artifact_user_id(current_user), run_id=run_id.strip()[:64]
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
+    return await _proxy_json(
+        request, current_user, "POST",
+        f"/api/v1/nexus/repro/runs/{run['run_id']}/resume",
         body={"research_execution_mode": payload.research_execution_mode},
     )
 

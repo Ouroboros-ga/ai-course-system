@@ -64,6 +64,9 @@ NEXUS_TABLES = (
     "nexus_approvals",
     "nexus_experiment_runs",
     "nexus_session_prefs",
+    # F2：操作意图＋执行租约（持久执行账本，见 0002 迁移）。
+    "nexus_operation_intents",
+    "nexus_execution_leases",
 )
 
 

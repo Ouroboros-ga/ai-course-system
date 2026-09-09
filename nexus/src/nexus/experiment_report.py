@@ -39,6 +39,28 @@ def _is_sha(value: str) -> bool:
         c in "0123456789abcdefABCDEF" for c in cleaned)
 
 
+def _attempt_op_kind(attempt: dict[str, Any]) -> str:
+    """attempt 操作类型：优先存盘值，旧行按命令启发式回填（纯函数）。"""
+    from nexus import experiment_contracts as contracts_module
+
+    stored = str((attempt.get("config_changes") or {}).get("op_kind") or "")
+    if stored in ("probe", "environment", "diagnostic", "target",
+                  "verification", "file_tool"):
+        return stored
+    if str((attempt.get("config_changes") or {}).get("kind") or "") == "file_tool":
+        return "file_tool"
+    return contracts_module.classify_operation(
+        str(attempt.get("actual_command") or ""))
+
+
+def _operation_summary(attempts: list[dict[str, Any]]) -> dict[str, int]:
+    summary: dict[str, int] = {}
+    for attempt in attempts:
+        kind = _attempt_op_kind(attempt)
+        summary[kind] = summary.get(kind, 0) + 1
+    return summary
+
+
 def build_experiment_report(
     *, run: dict[str, Any], scope: dict[str, Any],
     license_info: dict[str, Any] | None = None,
@@ -48,9 +70,20 @@ def build_experiment_report(
 ) -> dict[str, Any]:
     """由 run 行＋scope 构建确定性报告（纯函数，可单测）。
 
+    F1 口径（计划 §6）：
+    - 目标差异：setup 不要求指标/目标执行；smoke 要求目标程序跑通；
+      reproduce 要求可比较指标政策（无政策/无实测即 not_evaluated）。
+    - 环境就绪：来自声明依赖/导入/入口检查的成功（environment 类 attempt
+      exit 0），不来自“选了基础镜像路线”；仅有探测（probe）不算就绪。
+    - 目标完成：来自目标类（target）命令及要求产物；目标失败后 `pwd`
+      等探测/诊断成功不能覆盖结论；无 target 记录即未完成。
+    - 指标：只有受控采集与比较依据齐全才给 PASS/FAIL；setup 模式即使给了
+      metrics 也不评估（目标本就不含指标）；冻结 metric_policy 存在时，
+      调用方 expected 与政策不一致即 not_evaluated（禁改阈值凑 PASS）。
+    - clean：None → not_run；{"status": passed|failed, ...} → 原样透出
+      （调用方负责规则版本；持久化路径见 build_stored_report 的版本门）。
     metrics：None → not_evaluated；{"observed", "expected"} → 确定性比较
     （容差只来自调用方给定的 expected，不编造）。
-    clean：None → not_run；{"status": passed|failed, ...} → 原样透出。
     """
     from nexus import repro_report
 
@@ -63,36 +96,83 @@ def build_experiment_report(
          "operation_id": str(a.get("operation_id") or "")}
         for a in attempts if (a.get("exit_code") not in (None, 0))
     ]
-    # 终态口径只认 execute：文件工具（kind=file_tool）只作对账记录，
-    # 不参与判定——否则"命令失败后读一次文件"会被误报为执行成功。
-    last_exit: int | None = None
-    for attempt in reversed(attempts):
-        if str((attempt.get("config_changes") or {}).get("kind") or "") == "file_tool":
-            continue
-        if attempt.get("exit_code") is not None:
-            last_exit = int(attempt["exit_code"])
-            break
-    execute_attempts = sum(
-        1 for a in attempts
-        if str((a.get("config_changes") or {}).get("kind") or "") != "file_tool")
-    execution_succeeded = execute_attempts > 0 and last_exit == 0
-    environment_ready = bool(attempts) and any(
-        str((a.get("config_changes") or {}).get("route") or "") in
-        ("base_container", "repo2docker") for a in attempts)
-    if metrics is None:
-        metric_verdict: str = "not_evaluated"
-        comparison: list[dict[str, Any]] = []
+    from nexus import experiment_contracts as contracts_module
+
+    # F1：终态口径按操作类型判定。文件工具只作对账记录，不参与判定；
+    # 目标失败后探测/诊断成功（如 pwd）不得覆盖结论。
+    kinds = [_attempt_op_kind(a) for a in attempts]
+    target_exits = [a.get("exit_code") for a, k in zip(attempts, kinds)
+                    if k == "target" and a.get("exit_code") is not None]
+    last_target_exit: int | None = (
+        int(target_exits[-1]) if target_exits else None)
+    # 旧行无 target 记录：如实判未完成（无目标证据），并标记 legacy_target
+    # （历史口径曾按末次 execute 判定，此处不再沿用；调用方/UI 不得当作
+    # 新规则目标证据）。
+    legacy_target = not any(k == "target" for k in kinds)
+    if last_target_exit is not None:
+        execution_succeeded = last_target_exit == 0
+    else:
+        execution_succeeded = False
+    # F1：环境就绪来自依赖/导入/入口检查成功，不来自镜像路线。
+    # environment 类 exit 0 即就绪；仅 probe/diagnostic 不算就绪。
+    env_success = any(
+        k == "environment" and a.get("exit_code") == 0
+        for a, k in zip(attempts, kinds))
+    environment_ready = env_success
+    goal = contracts_module.derive_goal(scope)
+    operation_summary = _operation_summary(attempts)
+    target_evidence = next(
+        ({"attempt_no": a.get("attempt_no", 0),
+          "command": str(a.get("actual_command") or "")[:200],
+          "exit_code": a.get("exit_code")}
+         for a, k in zip(reversed(attempts), reversed(kinds)) if k == "target"),
+        None)
+    # F1：指标门。setup 模式本就不含指标→强制 not_evaluated；
+    # 冻结 metric_policy 存在且调用方 expected 与之不一致→拒绝评估
+    # （禁改阈值凑 PASS）；无依据一律 not_evaluated。
+    metric_note = ""
+    metric_basis = "none"
+    if goal.get("mode") == "setup":
+        metric_verdict = "not_evaluated"
+        comparison = []
+        if metrics is not None:
+            metric_note = "setup 模式不评估指标（已忽略调用方传入的 metrics）。"
+            metric_basis = "setup_ignored"
+    elif metrics is None:
+        metric_verdict = "not_evaluated"
+        comparison = []
     else:
         observed = (metrics.get("observed") or {})
         expected = (metrics.get("expected") or {})
-        comparison = repro_report.compare_metrics(observed, expected)
-        metric_verdict = ("PASS" if comparison and all(c["pass"] for c in comparison)
-                          else "FAIL") if comparison else "not_evaluated"
-        if metric_verdict == "not_evaluated":
-            comparison = []
+        policy = goal.get("metric_policy")
+        if isinstance(policy, dict) and policy:
+            if dict(expected or {}) != dict(policy or {}):
+                metric_verdict = "not_evaluated"
+                comparison = []
+                metric_note = ("指标期望与冻结政策不一致，已拒绝评估"
+                               "（禁改阈值凑 PASS；以批准 scope 的 metric_policy 为准）。")
+                metric_basis = "policy_mismatch"
+            else:
+                comparison = repro_report.compare_metrics(observed, expected)
+                metric_verdict = ("PASS" if comparison and all(c["pass"] for c in comparison)
+                                  else "FAIL") if comparison else "not_evaluated"
+                if metric_verdict == "not_evaluated":
+                    comparison = []
+                metric_basis = "frozen_policy" if metric_verdict != "not_evaluated" else "none"
+        else:
+            comparison = repro_report.compare_metrics(observed, expected)
+            metric_verdict = ("PASS" if comparison and all(c["pass"] for c in comparison)
+                              else "FAIL") if comparison else "not_evaluated"
+            if metric_verdict == "not_evaluated":
+                comparison = []
+            metric_basis = "ad-hoc" if metric_verdict != "not_evaluated" else "none"
+    # clean：调用方显式传入原样透出（纯函数兼容旧单测）；规则版本门在
+    # build_stored_report 的持久化路径执行（旧规则→历史记录，不算新通过）。
     clean_verdict = str((clean or {}).get("status") or "not_run")
     if clean_verdict not in ("passed", "failed"):
         clean_verdict = "not_run"
+    clean_note = str((clean or {}).get("note") or "")
+    clean_rule = str((clean or {}).get("rule") or "")
     resources = scope.get("resources") or {}
     revision = str(scope.get("repo_revision") or "")
     recipe = {
@@ -136,7 +216,14 @@ def build_experiment_report(
         "metric_verdict": metric_verdict,
         "comparison": comparison,
         "clean_verification": clean_verdict,
-        "clean_note": str((clean or {}).get("note") or ""),
+        "clean_note": clean_note,
+        "clean_rule": clean_rule,
+        "goal": goal,
+        "operation_summary": operation_summary,
+        "target_evidence": target_evidence,
+        "legacy_target": legacy_target,
+        "metric_note": metric_note,
+        "metric_basis": metric_basis,
         "failures": failures,
         "attempt_no": run.get("attempt_no", 0),
         "duration_s": duration_s,
@@ -197,9 +284,17 @@ def render_recipe_markdown(report: dict[str, Any]) -> str:
 
 
 def render_report_markdown(report: dict[str, Any]) -> str:
-    """报告 Markdown：做了什么/修了什么/跑出什么/如何再跑。"""
+    """报告 Markdown：做了什么/修了什么/跑出什么/如何再跑。
+
+    F1：四分量分别成立，不用一个绿色成功覆盖整个实验；缺什么明确写缺什么。
+    """
     recipe = report.get("recipe") or {}
     run_status = str(report.get("status") or "")
+    goal = report.get("goal") or {}
+    mode = str(goal.get("mode") or recipe.get("mode") or "")
+    op_summary = report.get("operation_summary") or {}
+    summary_text = ("、".join(f"{k}×{v}" for k, v in sorted(op_summary.items()))
+                    if op_summary else "无已分类操作")
     verdict_line = (
         f"执行{'成功' if report.get('execution_succeeded') else '失败'} · "
         f"指标 {report.get('metric_verdict')} · 干净验证 {report.get('clean_verification')}"
@@ -212,11 +307,19 @@ def render_report_markdown(report: dict[str, Any]) -> str:
         "exit 0 只表示命令跑通，不等于论文复现成功）",
         "",
         f"- 运行状态：{run_status or '未知'}"
-        + ("（与上方“执行成功”口径不同：后者只看末次命令退出码，"
+        + ("（与下方“目标完成”口径不同：后者只看目标类命令退出码，"
            "前者含图/服务层失败）" if run_status == "failed"
            and report.get("execution_succeeded") else ""),
         "",
-        f"- 目标：{recipe.get('objective', '')}",
+        f"- 目标：{recipe.get('objective', '')}"
+        + (f"（模式 {mode}）" if mode else ""),
+        f"- 操作分类：{summary_text}（分类本身不是完成证据）",
+        f"- 环境就绪：{'是' if report.get('environment_ready') else '否'}"
+        "（来自依赖/导入/入口检查成功，不来自镜像路线选择）",
+        f"- 目标完成：{'是' if report.get('execution_succeeded') else '否'}"
+        "（来自目标类命令退出码；目标失败后探测/诊断成功不覆盖）",
+        *((["- 目标证据为历史兼容口径（旧行无操作分类回填），"
+            "不得当作新规则目标证据。"] if report.get("legacy_target") else [])),
         f"- 仓库：{recipe.get('repo_url', '')}@{recipe.get('repo_revision', '')}",
         f"- 镜像：{recipe.get('base_image', '')}"
         + (f"@{recipe.get('image_digest', '')}" if recipe.get("image_digest") else ""),
@@ -253,8 +356,12 @@ def render_report_markdown(report: dict[str, Any]) -> str:
     lines += ["", "## 跑出什么", ""]
     if report.get("metric_verdict") == "not_evaluated":
         lines.append("指标：未评估（没有可比对的指标依据；运行成功只表示命令跑通）。")
+        if report.get("metric_note"):
+            lines.append(str(report["metric_note"]))
     else:
-        lines.append(f"指标判定：{report['metric_verdict']}")
+        lines.append(f"指标判定：{report['metric_verdict']}"
+                     + (f"（依据：{report['metric_basis']}）"
+                        if report.get("metric_basis") else ""))
         for item in report.get("comparison") or []:
             lines.append(
                 f"- {item['metric']}：期望 {item['target']}±{item['tolerance']}，"
@@ -305,10 +412,25 @@ async def build_stored_report(
         persisted_license = {"spdx": "", "status": "unknown",
                       "note": "提案未持久化 License 结论；复现引用前需核验允许复现用途"}
     # SR6：clean 取 run 持久化干净B结论（无→not_run）。
+    # F1：旧规则结论仅作“历史命令一致性记录”，不得当作新规则干净通过。
     persisted_clean: dict[str, Any] | None = None
     if str(run.get("clean_status") or "") in ("passed", "failed"):
-        persisted_clean = {"status": str(run["clean_status"]),
-                           "note": str(run.get("clean_note") or "")}
+        from nexus import experiment_clean as clean_module
+
+        current_rule = str(getattr(clean_module, "CLEAN_RULE_VERSION", ""))
+        stored_rule = str(run.get("clean_rule") or "")
+        if current_rule and stored_rule and stored_rule != current_rule:
+            persisted_clean = {
+                "status": "not_run",
+                "note": (f"历史命令一致性记录（旧规则 {stored_rule}）："
+                         f"{run.get('clean_status')}；"
+                         f"非新规则 {current_rule} 下的干净复现成功，需重验。"),
+                "rule": stored_rule,
+            }
+        else:
+            persisted_clean = {"status": str(run["clean_status"]),
+                               "note": str(run.get("clean_note") or ""),
+                               "rule": stored_rule}
     # 镜像来源取自控制面 lifecycle（tag 可被重指，digest 才是真实身份）；
     # 控制面不可达/未配置时如实留空＋备注，绝不编造。
     image = ""
@@ -371,6 +493,13 @@ async def generate_run_report(
         "metric_verdict": report["metric_verdict"],
         "comparison": report["comparison"],
         "clean_verification": report["clean_verification"],
+        "clean_note": report.get("clean_note", ""),
+        "goal": report.get("goal", {}),
+        "operation_summary": report.get("operation_summary", {}),
+        "target_evidence": report.get("target_evidence"),
+        "legacy_target": bool(report.get("legacy_target", False)),
+        "metric_note": report.get("metric_note", ""),
+        "metric_basis": report.get("metric_basis", "none"),
         "artifacts": artifacts,
     }
 

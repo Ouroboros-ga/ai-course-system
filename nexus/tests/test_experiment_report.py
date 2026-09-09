@@ -340,3 +340,129 @@ async def test_report_http_endpoint(monkeypatch):
         fail = await client.post(
             f"/api/v1/nexus/repro/runs/{run['run_id']}/report", headers=user)
         assert fail.status_code == 502
+
+
+# ── F1：按目标判定结果（计划 §6） ──
+
+def _f1_run_with(attempt_specs, scope=None):
+    from nexus import experiment_report as report_module
+
+    run, _proposal = _make_run(scope=scope)
+    for index, (command, exit_code) in enumerate(attempt_specs, start=2):
+        runs_module.record_attempt(
+            run["run_id"], actual_command=command,
+            operation_id=f"{run['run_id']}-op-{index:04d}", exit_code=exit_code,
+            log_ref="log")
+    runs_module.set_status(run["run_id"], "succeeded", "")
+    return report_module.build_experiment_report(
+        run=runs_module.get_run(run["run_id"]), scope=scope or _scope(),
+        license_info={"spdx": "MIT", "status": "verified"})
+
+
+def test_f1_target_failure_not_covered_by_probe():
+    """目标失败后 pwd 成功不得覆盖结论；环境来自安装成功."""
+    report = _f1_run_with([
+        ("pip install -r requirements.txt", 0),
+        ("python train.py", 1),
+        ("pwd", 0),
+    ])
+    assert report["environment_ready"] is True
+    assert report["execution_succeeded"] is False
+    assert report["operation_summary"].get("target") == 1
+    assert report["operation_summary"].get("probe", 0) >= 1
+
+
+def test_f1_environment_not_from_image_route():
+    """仅有探测（无 environment 类成功）即环境未就绪；无 target 即未完成."""
+    report = _f1_run_with([("ls /workspace", 0)])
+    assert report["environment_ready"] is False
+    assert report["execution_succeeded"] is False
+    assert report["legacy_target"] is True
+
+
+def test_f1_setup_mode_ignores_metrics():
+    report = _f1_run_with(
+        [("pip install -r requirements.txt", 0),
+         ("python train.py", 0)],
+        scope={**_scope(), "mode": "setup"},
+        )
+    # setup 目标本就不含指标：即使传入 metrics 也不评估。
+    from nexus import experiment_report as report_module
+
+    run, _proposal = _make_run(scope={**_scope(), "mode": "setup"})
+    runs_module.record_attempt(
+        run["run_id"], actual_command="pip install -r requirements.txt",
+        operation_id=f"{run['run_id']}-op-0002", exit_code=0, log_ref="ok")
+    runs_module.set_status(run["run_id"], "succeeded", "")
+    with_metrics = report_module.build_experiment_report(
+        run=runs_module.get_run(run["run_id"]),
+        scope={**_scope(), "mode": "setup"},
+        metrics={"observed": {"a": 1.0},
+                 "expected": {"a": {"target": 1.0, "tolerance": 0.1}}})
+    assert with_metrics["metric_verdict"] == "not_evaluated"
+    assert "setup" in (with_metrics.get("metric_note") or "")
+    assert report["goal"]["mode"] == "setup"
+    assert report["goal"]["requires_metrics"] is False
+
+
+def test_f1_metric_policy_mismatch_rejected():
+    """冻结政策与调用方期望不一致→拒绝评估（禁改阈值凑 PASS）."""
+    from nexus import experiment_report as report_module
+
+    scope = {**_scope(), "mode": "reproduce",
+             "metric_policy": {"val_loss": {"target": 1.88, "tolerance": 0.06}}}
+    run, _proposal = _make_run(scope=scope)
+    runs_module.record_attempt(
+        run["run_id"], actual_command="pip install -r requirements.txt",
+        operation_id=f"{run['run_id']}-op-0002", exit_code=0, log_ref="ok")
+    runs_module.record_attempt(
+        run["run_id"], actual_command="python train.py",
+        operation_id=f"{run['run_id']}-op-0003", exit_code=0, log_ref="ok")
+    runs_module.set_status(run["run_id"], "succeeded", "")
+    tampered = report_module.build_experiment_report(
+        run=runs_module.get_run(run["run_id"]), scope=scope,
+        metrics={"observed": {"val_loss": 1.88},
+                 "expected": {"val_loss": {"target": 9.99, "tolerance": 5.0}}})
+    assert tampered["metric_verdict"] == "not_evaluated"
+    assert "冻结" in (tampered.get("metric_note") or "")
+    honest = report_module.build_experiment_report(
+        run=runs_module.get_run(run["run_id"]), scope=scope,
+        metrics={"observed": {"val_loss": 1.89},
+                 "expected": {"val_loss": {"target": 1.88, "tolerance": 0.06}}})
+    assert honest["metric_verdict"] == "PASS"
+    assert honest["metric_basis"] == "frozen_policy"
+
+
+async def test_f1_stored_report_marks_legacy_clean():
+    """旧规则干净结论仅作历史记录，不得当作新规则通过."""
+    from nexus import experiment_clean as clean_module
+    from nexus import experiment_report as report_module
+
+    run, _proposal = _make_run()
+    runs_module.record_attempt(
+        run["run_id"], actual_command="pip install -r requirements.txt",
+        operation_id=f"{run['run_id']}-op-0002", exit_code=0, log_ref="ok")
+    runs_module.record_attempt(
+        run["run_id"], actual_command="python train.py",
+        operation_id=f"{run['run_id']}-op-0003", exit_code=0, log_ref="ok")
+    runs_module.set_status(run["run_id"], "succeeded", "")
+    runs_module.set_clean_verdict(run["run_id"], "passed", "旧结论", rule="sr6-clean/1")
+    assert clean_module.CLEAN_RULE_VERSION != "sr6-clean/1"
+    report, markdown, _recipe = await report_module.build_stored_report(
+        run_id=run["run_id"], user_id="u-t6", backend=None)
+    assert report["clean_verification"] == "not_run"
+    assert "历史命令一致性记录" in (report.get("clean_note") or "")
+    assert "历史命令一致性记录" in markdown
+
+
+def test_f1_contracts_classify_and_goal():
+    from nexus import experiment_contracts as contracts_module
+
+    assert contracts_module.classify_operation("pip install -r requirements.txt") == "environment"
+    assert contracts_module.classify_operation("python train.py") == "target"
+    assert contracts_module.classify_operation("pwd") == "probe"
+    assert contracts_module.classify_operation("ls /workspace") == "probe"
+    assert contracts_module.classify_operation("write_file x", "file_tool") == "file_tool"
+    assert contracts_module.derive_goal({"mode": "setup"})["requires_target"] is False
+    assert contracts_module.derive_goal({"mode": "smoke"})["requires_target"] is True
+    assert contracts_module.derive_goal({"mode": "reproduce"})["requires_metrics"] is True

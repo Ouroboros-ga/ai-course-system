@@ -155,17 +155,23 @@ def test_run_failure_rolls_back(mig_dir):
 
 
 def test_baseline_covers_all_expected_tables():
-    """基线必须覆盖 persistence.NEXUS_TABLES，且全部语句幂等。"""
+    """迁移集合必须覆盖 persistence.NEXUS_TABLES，且全部语句幂等。
+
+    F2 起新表经编号迁移增量交付（禁止改历史基线）：覆盖检查扫全部迁移
+    文件；幂等检查同样覆盖全部文件。
+    """
     sys.path.insert(0, str(REPO_ROOT / "nexus" / "src"))
     from nexus.persistence import NEXUS_TABLES
 
-    text = (MIGRATIONS_DIR / "0001_nexus_baseline.sql").read_text(encoding="utf-8")
+    combined = ""
+    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        combined += path.read_text(encoding="utf-8") + "\n"
     for table in NEXUS_TABLES:
-        assert f"nexus_checkpoints" not in text or True  # 占位符形式，下面查表名
-        assert f".{table} (" in text or f".{table}\n" in text, f"基线缺表 {table}"
-    statements = [s.strip() for s in text.split(";") if s.strip()
+        assert f"nexus_checkpoints" not in combined or True  # 占位符形式，下面查表名
+        assert f".{table} (" in combined or f".{table}\n" in combined, f"迁移缺表 {table}"
+    statements = [s.strip() for s in combined.split(";") if s.strip()
                   and not s.strip().startswith("--")]
-    assert statements, "基线不应为空"
+    assert statements, "迁移不应为空"
     for statement in statements:
         head = statement.lstrip().upper()
         if head.startswith("--"):

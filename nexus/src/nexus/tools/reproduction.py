@@ -949,6 +949,9 @@ async def execute_autonomous_experiment(    *, approval_id: str, user_id: str, s
             "approval_id": approval_id,
             "is_supplementary": True,
         }
+    # F2 持久层门（核销前）：DSN 已配但 saver 未就绪 → 拒绝新长实验，不核销
+    # （承诺可恢复的实验不得悄悄退回内存；本地无 DSN 即内存模式放行）。
+    _require_experiment_persistence()
     approval = approvals.consume_approval(
         approval_id, user_id=user_id, session_id=session_id, preset={}
     )
@@ -1058,16 +1061,62 @@ async def _record_autonomous_linkage(
         return False
 
 
+def _require_experiment_persistence() -> None:
+    """F2 持久层门（核销前调用；失败即不得执行，票据不消费）。
+
+    - 本地无 DSN → 内存模式放行（不承诺恢复，注释见 main.lifespan）；
+    - DSN 已配但 PG saver 未就绪（降级）→ ApprovalError(PERSISTENCE_UNAVAILABLE)。
+    """
+    from nexus.config import get_settings
+
+    dsn = ""
+    try:
+        dsn = get_settings().postgres_dsn.strip()
+    except Exception:  # noqa: BLE001 - 配置不可读按内存处理
+        return
+    if not dsn:
+        return
+    saver = None
+    try:
+        from nexus import main as main_module
+
+        saver = getattr(main_module, "_pg_saver", None)
+    except Exception:  # noqa: BLE001 - 主模块不可用即视为未就绪
+        saver = None
+    if saver is None:
+        from nexus import approvals as approvals_module
+
+        raise approvals_module.ApprovalError(
+            "PERSISTENCE_UNAVAILABLE",
+            "持久层未就绪（已降级内存）；新长实验暂不可启动，恢复持久连接后重试。")
+
+
+def _experiment_checkpointer() -> Any:
+    """F2：取实验图 checkpointer（PG 就绪即持久 saver，否则内存；尽力而为）。"""
+    try:
+        from nexus import main as main_module
+
+        getter = getattr(main_module, "experiment_checkpointer", None)
+        if callable(getter):
+            return getter()
+        return getattr(main_module, "_pg_saver", None)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _schedule_bound_run(*, run_id: str, owner: str, session_id: str) -> None:
     """调度 run 绑定实验图到后台（fire-and-forget，内部全捕获）。"""
     import asyncio
 
     from nexus import experiment_agent as agent_module
 
+    checkpointer = _experiment_checkpointer()
+
     async def _guarded() -> None:
         try:
             await agent_module.execute_bound_run(
-                run_id=run_id, owner=owner, session_id=session_id)
+                run_id=run_id, owner=owner, session_id=session_id,
+                checkpointer=checkpointer)
         except Exception as error:  # noqa: BLE001 - 后台任务绝不裸抛
             logger.warning("bound run launcher failed for %s: %s",
                            run_id, type(error).__name__)

@@ -28,6 +28,16 @@ from nexus.experiment_sandbox import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _clean_operation_intents():
+    """F2：意图账本全局共享（跨 Backend 实例），单测间必须隔离。"""
+    from nexus import experiment_operations as operations_module
+
+    operations_module.clear_memory_store()
+    yield
+    operations_module.clear_memory_store()
+
+
 class _FakeControlService:
     """最小控制服务替身：ensure/operations/files 端点＋内存文件存根。
 
