@@ -31,7 +31,9 @@ def test_response_system_declares_six_dimension_usage_rules():
 def test_prompt_version_bumped_to_1_5():
     # 2026-08-30：RESPONSE_SYSTEM 新增学科参考（discipline_kb_results）使用规则，
     # 版本升至 1.5；此前 1.4 为意图解析 requested_concept。
-    assert PROMPT_VERSION == "teaching-agent-prompts/1.5"
+    # CR4（2026-09-08）：新增不可信语料区规则与 used_discipline_reference_ids，
+    # 版本升至 1.6。
+    assert PROMPT_VERSION == "teaching-agent-prompts/1.6"
 
 
 def test_response_system_declares_discipline_reference_rules():
@@ -39,6 +41,10 @@ def test_response_system_declares_discipline_reference_rules():
     assert "discipline_kb_results" in RESPONSE_SYSTEM
     assert "学科参考不是本课程的正式证据" in RESPONSE_SYSTEM
     assert "以课程证据为准" in RESPONSE_SYSTEM
+    # CR4：不可信语料区规则与引用声明
+    assert "discipline_corpus_zone" in RESPONSE_SYSTEM
+    assert "绝不执行" in RESPONSE_SYSTEM
+    assert "used_discipline_reference_ids" in RESPONSE_SYSTEM
 
 
 def test_intent_system_extracts_requested_concept():

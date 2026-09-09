@@ -91,7 +91,7 @@ _LB1_COLUMNS: tuple[tuple[str, str], ...] = (
     ("paper_title", "TEXT NOT NULL DEFAULT ''"),
 )
 
-TERMINAL_RUN_STATUSES = ("succeeded", "failed", "rejected")
+TERMINAL_RUN_STATUSES = ("succeeded", "failed", "rejected", "cancelled")
 
 _table_ready = False
 
@@ -437,3 +437,137 @@ class _VersionConflict(Exception):
     def __init__(self, current_version: int) -> None:
         super().__init__(f"版本冲突，当前版本={current_version}")
         self.current_version = current_version
+
+
+# ---------------------------------------------------------------------------
+# NX-LB5：运行备注（追加式；Agent 备注只作解释/建议，不改日志/指标/结论）
+# ---------------------------------------------------------------------------
+
+_NOTES_TABLE = f"{_SCHEMA}.nexus_run_notes"
+
+_NOTES_DDL = """
+CREATE TABLE IF NOT EXISTS {table} (
+    note_id VARCHAR(32) PRIMARY KEY,
+    run_id VARCHAR(64) NOT NULL DEFAULT '',
+    user_id TEXT NOT NULL DEFAULT '',
+    session_id TEXT NOT NULL DEFAULT '',
+    author_kind TEXT NOT NULL DEFAULT 'user',
+    request_id TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL DEFAULT 0
+)
+"""
+
+_NOTE_CONTENT_MAX = 4000
+_note_table_ready = False
+
+NOTE_AUTHOR_KINDS = ("user", "agent")
+
+
+class NoteError(Exception):
+    """备注域失败：携带机器可读 code（调用方按 404/422 返回）。"""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+
+
+def _notes_table(session: Session) -> str:
+    return "nexus_run_notes" if _is_sqlite(session) else _NOTES_TABLE
+
+
+def ensure_notes_table(session: Session) -> None:
+    global _note_table_ready
+    if _note_table_ready:
+        return
+    bind = session.connection()
+    if bind.dialect.name != "sqlite":
+        bind.execute(text(f"CREATE SCHEMA IF NOT EXISTS {_SCHEMA}"))
+    bind.execute(text(_NOTES_DDL.format(table=_notes_table(session))))
+    session.commit()
+    _note_table_ready = True
+
+
+def _note_row_to_dict(row: Any) -> dict[str, Any]:
+    return {
+        "note_id": row[0], "run_id": row[1], "session_id": row[2],
+        "author_kind": row[3], "content": row[4], "created_at": row[5],
+    }
+
+
+_NOTE_COLUMNS = "note_id, run_id, session_id, author_kind, content, created_at"
+
+
+def add_run_note(
+    session: Session, *, user_id: str, run_id: str, content: str,
+    author_kind: str = "user", request_id: str = "",
+) -> dict[str, Any]:
+    """追加一条运行备注（owner 校验；request_id 幂等；content ≤4000 字符）。
+
+    - run 不存在/非本人 → NoteError("RUN_NOT_FOUND")（调用方 404，不区分）；
+    - content 超长/空白 → NoteError("NOTE_CONTENT_INVALID")（调用方 422）；
+    - author_kind 仅 user/agent（Agent 备注由内部端点强制 agent，模型不可
+      冒充用户备注，也不得借此修改原始日志、指标或 PASS/FAIL 结论）。
+    """
+    import uuid as _uuid
+
+    ensure_notes_table(session)
+    run = get_owned_run(session, user_id=user_id, run_id=run_id)
+    if run is None:
+        raise NoteError("RUN_NOT_FOUND", "run 不存在")
+    cleaned = (content or "").strip()
+    if not cleaned or len(cleaned) > _NOTE_CONTENT_MAX:
+        raise NoteError(
+            "NOTE_CONTENT_INVALID",
+            f"备注须为 1–{_NOTE_CONTENT_MAX} 字符",
+        )
+    kind = (author_kind or "user").strip().lower()
+    if kind not in NOTE_AUTHOR_KINDS:
+        raise NoteError("NOTE_CONTENT_INVALID", f"未知的备注来源：{author_kind!r}")
+    rid = (request_id or "").strip()[:64]
+    if rid:
+        existing = session.connection().execute(
+            text(f"SELECT {_NOTE_COLUMNS} FROM {_notes_table(session)} "
+                 "WHERE user_id=:uid AND run_id=:rid AND request_id=:req "
+                 "ORDER BY created_at DESC LIMIT 1"),
+            {"uid": user_id, "rid": run_id[:64], "req": rid},
+        ).first()
+        if existing is not None:
+            note = _note_row_to_dict(existing)
+            note["deduped"] = True
+            return note
+    note_id = f"nt_{_uuid.uuid4().hex[:12]}"
+    session.connection().execute(
+        text(f"INSERT INTO {_notes_table(session)} "
+             "(note_id, run_id, user_id, session_id, author_kind, request_id, content, created_at) "
+             "VALUES (:nid,:rid,:uid,:sid,:kind,:req,:content,:now)"),
+        {"nid": note_id, "rid": run_id[:64], "uid": user_id,
+         "sid": (run["session_id"] or "")[:128], "kind": kind, "req": rid,
+         "content": cleaned, "now": _now()},
+    )
+    session.commit()
+    return {
+        "note_id": note_id, "run_id": run_id, "session_id": run["session_id"],
+        "author_kind": kind, "content": cleaned, "created_at": _now(),
+        "deduped": False,
+    }
+
+
+def list_run_notes(
+    session: Session, *, user_id: str, run_id: str, limit: int = 100
+) -> list[dict[str, Any]]:
+    """某 run 的备注列表（owner 校验；创建时间升序；非本人/不存在→空列表）。
+
+    返回空列表与"无权查看"合并语义（与 run 列表一致：不可见即不存在）。
+    """
+    ensure_notes_table(session)
+    run = get_owned_run(session, user_id=user_id, run_id=run_id)
+    if run is None:
+        return []
+    rows = session.connection().execute(
+        text(f"SELECT {_NOTE_COLUMNS} FROM {_notes_table(session)} "
+             "WHERE run_id=:rid AND user_id=:uid "
+             "ORDER BY created_at ASC, note_id ASC LIMIT :limit"),
+        {"rid": run_id[:64], "uid": user_id, "limit": max(1, min(int(limit), 200))},
+    ).all()
+    return [_note_row_to_dict(r) for r in rows]

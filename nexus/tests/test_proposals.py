@@ -382,7 +382,8 @@ async def test_report_exploratory_verdict_and_no_writeback(monkeypatch):
         writebacks.append((job_id, verdict))
 
     async def fake_linkage(job_id, user_id):
-        return dict(linkage)
+        # NX-N0/P1-B：linkage 读取改为 (linkage, status) 二元组；ok 保持原语义。
+        return dict(linkage), "ok"
 
     monkeypatch.setattr(main_module, "_writeback_metric_verdict", fake_writeback)
     monkeypatch.setattr(main_module, "_fetch_run_linkage", fake_linkage)

@@ -74,6 +74,9 @@ def test_write_artifact_rejects_bad_input(client, internal_configured):
         {"artifact_type": "markdown", "title": "", "content": "# hi"},
         {"artifact_type": "markdown", "title": "t", "content": ""},
         {"artifact_type": "markdown", "title": "t", "content": "x" * (512 * 1024 + 1)},
+        # SR6：word 不接受文本形态（字节必须经 content_b64）。
+        {"artifact_type": "word", "title": "t", "content": "# hi"},
+        {"artifact_type": "word", "title": "t", "content": "", "content_b64": "!!!"},
     ):
         response = client.post(
             "/api/v1/nexus-internal/artifacts",
@@ -81,6 +84,51 @@ def test_write_artifact_rejects_bad_input(client, internal_configured):
             headers=_write_headers(),
         )
         assert response.status_code == 422, payload
+
+
+def test_word_binary_validation_pure():
+    """SR6：二进制校验纯函数（无 DB，SQLite 照跑）：类型/标题/空字节/超限。"""
+    assert nexus_artifact_service.validate_binary_input("word", "t", b"PK\x03\x04") is None
+    assert nexus_artifact_service.validate_binary_input(
+        "word", "", b"PK") == "ARTIFACT_TITLE_INVALID"
+    assert nexus_artifact_service.validate_binary_input(
+        "word", "t", b"") == "ARTIFACT_CONTENT_EMPTY"
+    assert nexus_artifact_service.validate_binary_input(
+        "markdown", "t", b"PK") == "ARTIFACT_TYPE_UNSUPPORTED"
+    assert nexus_artifact_service.validate_binary_input(
+        "word", "t", b"x" * (512 * 1024 + 1)) == "ARTIFACT_CONTENT_TOO_LARGE"
+
+
+def test_write_word_binary_roundtrip(client, session, internal_configured, monkeypatch):
+    """SR6：word 二进制经 content_b64 入库（.docx 后缀＋正确 mime）；空字节拒绝。"""
+    import base64
+
+    _skip_if_sqlite(session)
+    stored: dict = {}
+
+    class _FakeStorage:
+        def put(self, object_key, content, *, mime_type=""):
+            stored["key"] = object_key
+            stored["data"] = bytes(content)
+            stored["mime"] = mime_type
+            return "word" * 16
+
+    monkeypatch.setattr(nexus_artifact_service, "get_object_storage", lambda: _FakeStorage())
+    raw = b"PK\x03\x04fake-docx-bytes"
+    response = client.post(
+        "/api/v1/nexus-internal/artifacts",
+        json={"artifact_type": "word", "title": "正式报告",
+              "content_b64": base64.b64encode(raw).decode("ascii")},
+        headers=_write_headers(),
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["object_key"].endswith(".docx")
+    assert stored["data"] == raw
+    assert stored["mime"] == (
+        "application/vnd.openxmlformats-officedocument"
+        ".wordprocessingml.document")
+    assert data["size_bytes"] == len(raw)
 
 
 def test_write_artifact_success_writes_storage_and_metadata(client, session, internal_configured, monkeypatch):

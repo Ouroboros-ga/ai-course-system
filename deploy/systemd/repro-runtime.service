@@ -1,0 +1,30 @@
+# repro-runtime：自主实验执行控制服务（内网专用，常驻）
+#
+# CodeNexus T1-b 验证通过后转常驻（T5/打通批次，用户授权生产部署）。
+# - 只监听 127.0.0.1:8401，外网不得暴露；调用方仅 Nexus Runtime（内网 HTTP）。
+# - 容器管理面：本服务持有 Docker 访问；任务容器不挂 Docker socket、
+#   不读宿主业务卷（见 deploy/repro-runtime/README.md 职责边界）。
+# - 配置来源：/opt/smartcarb/shared/env/repro-runtime.env（root:600，
+#   REPRO_RUNTIME_TOKEN 不进仓库/日志）。
+# - 代码目录：/opt/smartcarb/repro-runtime（独立于 releases/，与 nexus-runtime
+#   同模式；部署时从仓库 deploy/repro-runtime/ 同步，.venv/data/.token 除外）。
+# - 快照：/opt/smartcarb/repro-runtime/data/sandboxes.json（root:600）。
+[Unit]
+Description=Repro Runtime Control Service (autonomous experiments)
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/smartcarb/repro-runtime
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/opt/smartcarb/shared/env/repro-runtime.env
+ExecStart=/opt/smartcarb/repro-runtime/.venv/bin/python -m uvicorn service:app --host 127.0.0.1 --port 8401
+Restart=always
+RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

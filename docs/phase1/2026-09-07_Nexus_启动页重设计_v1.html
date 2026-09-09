@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nexus 启动页重设计 · 编辑部方向 v1 · 2026-09-07</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=JetBrains+Mono:wght@400;600&display=swap"
+  rel="stylesheet"
+/>
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   Nexus 启动页（空态）重设计 —— 方向：杂志编辑 Editorial
+   令牌沿用 frontend/src/app/styles/tokens.css（.sfx scope），
+   本文件为独立设计板，色值与令牌一一对应。
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  /* 色彩 —— 沿用 tokens.css */
+  --paper: #f7f5ef;          /* --surface-page 暖纸底 */
+  --canvas: #fbfaf7;         /* --surface-canvas */
+  --panel: #ffffff;          /* --surface-panel */
+  --soft: #f0ede6;           /* --surface-soft */
+  --ink: #14213d;            /* --ink-900 */
+  --text: #172033;           /* --text-primary */
+  --text-2: #4e5969;         /* --text-secondary */
+  --muted: #5e6776;          /* --text-muted（仅装饰性注记用） */
+  --faint: #a7afbc;          /* --text-disabled */
+  --line: #dde2e8;           /* --border-default */
+  --line-strong: #c9cfd8;    /* --border-strong */
+  --line-subtle: #edf0f3;    /* --border-subtle */
+  --accent: #007af4;         /* --nexus-accent */
+  --accent-deep: #0563c4;    /* --nexus-accent-strong */
+  --accent-soft: #e8f2fe;    /* --nexus-accent-soft */
+  --accent-line: #a1d0ff;    /* --nexus-accent-line */
+
+  /* 字体 */
+  --serif: "Noto Serif SC", "Songti SC", "SimSun", serif;   /* 展示字 */
+  --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif; /* 正文 */
+  --mono: "JetBrains Mono", "Fira Code", Consolas, monospace; /* 注记 */
+
+  /* 间距梯度 */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px;
+  --s6: 24px; --s8: 32px; --s10: 40px; --s12: 48px;
+
+  /* 动效 */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --fast: 160ms;
+  --base: 320ms;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #e9e6df;
+  font-family: var(--sans);
+  color: var(--text);
+  padding: 40px 0 72px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── 展台 ─────────────────────────────────────────── */
+.stage { width: 1224px; margin: 0 auto; }
+
+.slabel {
+  display: flex; align-items: baseline; gap: 12px;
+  margin: 0 0 10px 2px;
+}
+.slabel .n {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+  color: #8a8577; text-transform: uppercase;
+}
+.slabel b { font-size: 13px; color: #3d3a32; }
+.slabel .hint { font-size: 11.5px; color: #8a8577; }
+
+/* ═══════════════════════════════════════════════════
+   BOARD A · 启动页整体
+   ═══════════════════════════════════════════════════ */
+.app {
+  position: relative;
+  height: 780px;
+  background: var(--paper);
+  border: 1px solid #d6d2c6;
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 64px rgba(20, 33, 61, 0.10);
+}
+
+/* 纸纹颗粒：4% 叠加，全页氛围层 */
+.app::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none; z-index: 9;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ── 能力 chips 行（真实页面既有，保持不动） ── */
+.chips {
+  flex: 0 0 42px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 var(--s6);
+  background: var(--canvas);
+  border-bottom: 1px solid var(--line-subtle);
+}
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 22px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel);
+  font-size: 11px; color: var(--text-2);
+}
+.chip .dot { width: 5px; height: 5px; border-radius: 50%; background: #3f6b52; }
+.chip.pend { color: var(--muted); border-style: dashed; background: transparent; }
+.chips .sp { flex: 1; }
+.chips .engine {
+  font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+}
+
+/* arXiv 式双细线：2px 墨蓝 + 1px 灰（全站头部惯例，启动页保留） */
+.doublerule {
+  flex: 0 0 0;
+  border-top: 2px solid var(--ink);
+  border-bottom: 1px solid var(--line);
+}
+
+/* ── 主区：左英雄 + 右模式索引 ── */
+.start {
+  flex: 1; min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 396px;
+}
+
+.hero {
+  position: relative;
+  padding: 52px 48px 0 56px;
+  border-right: 1px solid var(--line);          /* 编辑部栏间规则线 */
+  display: flex; flex-direction: column;
+}
+
+/* 栏眉：mono 小字 + 墨点 */
+.eyebrow {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em;
+  color: var(--text-2); text-transform: uppercase;
+}
+.eyebrow::before {
+  content: ""; width: 7px; height: 7px; background: var(--ink);
+}
+.eyebrow .em { color: var(--accent-deep); }
+
+/* 展示标题：衬线，46px，压在暖纸上 */
+.hero h1 {
+  margin-top: var(--s5);
+  font-family: var(--serif);
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1.12;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+  max-width: 13em;
+}
+.hero h1 em {
+  font-style: normal;
+  /* 记忆点之一：问题一词的墨色双下划线（编辑=tf 侧重标记） */
+  background-image: linear-gradient(var(--ink), var(--ink));
+  background-size: 100% 3px;
+  background-position: 0 96%;
+  background-repeat: no-repeat;
+  padding-bottom: 2px;
+}
+
+.hero .sub {
+  margin-top: var(--s5);
+  font-size: 14.5px; line-height: 1.85; color: var(--text-2);
+  max-width: 34em;
+  letter-spacing: 0.02em;
+}
+
+/* 脚注标记：accent 只用在这里（10% 纪律） */
+.fn {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--accent-deep);
+  cursor: pointer;
+  border-bottom: 1px solid var(--accent-line);
+  padding: 0 1px;
+}
+
+/* 英雄区脚部：mono 索引行，压低视觉重心 */
+.hero-index {
+  margin-top: auto;
+  padding: var(--s4) 0 var(--s5);
+  border-top: 1px solid var(--line);
+  display: flex; gap: var(--s8);
+  font-family: var(--mono); font-size: 10.5px;
+  color: var(--muted); letter-spacing: 0.06em;
+}
+.hero-index b { color: var(--text-2); font-weight: 600; }
+
+/* 巨型幽灵字：1px 描边衬线「问」，7% 墨色，破格元素 */
+.ghost {
+  position: absolute; right: -18px; bottom: -66px;
+  font-family: var(--serif); font-weight: 700;
+  font-size: 300px; line-height: 1;
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(20, 33, 61, 0.07);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ── 右栏：模式索引（替代两张圆角白卡） ── */
+.modes {
+  display: flex; flex-direction: column;
+  padding: 40px 40px 0 36px;
+  background: var(--canvas);
+}
+.modes-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding-bottom: var(--s3);
+  border-bottom: 2px solid var(--ink);           /* 目录页头部粗规则线 */
+}
+.modes-head span:first-child {
+  font-size: 13px; font-weight: 600; color: var(--ink); letter-spacing: 0.04em;
+}
+.modes-head .mono {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.12em;
+  color: var(--muted); text-transform: uppercase;
+}
+
+/* 目录条目：规则线分行，无卡片壳 */
+.mode {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 2px 12px;
+  width: 100%;
+  padding: 18px 10px 16px 6px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+  font-family: var(--sans);
+  cursor: pointer;
+  position: relative;
+  transition: background var(--fast) ease-out;
+}
+/* 左侧墨条：当前模式的主标记（accent 不参与，保持墨色主角地位） */
+.mode::before {
+  content: "";
+  position: absolute; left: -14px; top: 18px; bottom: 16px;
+  width: 3px; background: transparent;
+  transition: background var(--fast) ease-out;
+}
+.mode .no {
+  font-family: var(--mono); font-size: 11px; color: var(--faint);
+  padding-top: 3px;
+  transition: color var(--fast) ease-out;
+}
+.mode .nm {
+  font-size: 15px; font-weight: 600; color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+}
+.mode .ds {
+  font-size: 12px; line-height: 1.7; color: var(--text-2); margin-top: 3px;
+}
+.mode .tls {
+  grid-column: 2;
+  margin-top: 9px;
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.9;
+  color: var(--muted); letter-spacing: 0.01em;
+}
+.mode .tls i { font-style: normal; color: var(--line-strong); padding: 0 4px; }
+.mode .tls .more { color: var(--faint); }
+
+/* 当前态：墨条 + 序号转墨 + 当前小标 */
+.mode.is-on { background: var(--panel); }
+.mode.is-on::before { background: var(--ink); }
+.mode.is-on .no { color: var(--ink); font-weight: 600; }
+.tag {
+  font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--paper); background: var(--ink);
+  padding: 2px 7px; border-radius: 2px;
+}
+/* 悬停态 */
+.mode:not(.is-on):hover { background: rgba(255, 255, 255, 0.72); }
+.mode:not(.is-on):hover .no { color: var(--text-2); }
+.mode:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: -2px;
+}
+.modes-foot {
+  margin-top: auto;
+  padding: var(--s4) 0 var(--s5);
+  font-family: var(--mono); font-size: 10px; line-height: 1.8;
+  color: var(--muted);
+  border-top: 1px solid var(--line-subtle);
+}
+
+/* ── 起点清单：编号行 + 竖向发丝线（替代三张特性卡） ── */
+.starters {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+  display: grid; grid-template-columns: 168px repeat(3, 1fr);
+}
+.starters .head {
+  padding: 18px 0 18px 56px;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em;
+  color: var(--muted); text-transform: uppercase;
+  display: flex; align-items: center;
+}
+.starter {
+  position: relative;
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 18px var(--s5) 20px;
+  border-left: 1px solid var(--line);
+  background: transparent; border-top: 0; border-right: 0; border-bottom: 0;
+  text-align: left; font-family: var(--sans); cursor: pointer;
+  transition: background var(--fast) ease-out;
+}
+.starter:hover { background: var(--panel); }
+.starter:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.starter .no {
+  font-family: var(--mono); font-size: 10px; color: var(--faint);
+  letter-spacing: 0.1em;
+  transition: color var(--fast) ease-out;
+}
+.starter:hover .no { color: var(--accent-deep); }
+.starter b {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  width: fit-content;
+  background-image: linear-gradient(var(--ink), var(--ink));
+  background-size: 0% 1.5px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  transition: background-size var(--base) var(--ease);
+}
+.starter:hover b { background-size: 100% 1.5px; }
+.starter span { font-size: 11.5px; line-height: 1.65; color: var(--text-2); }
+
+/* ── 页脚注：课程绑定（替代淡蓝引导条） ── */
+.fnotebar {
+  flex: 0 0 44px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 56px;
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+}
+.fnotebar .txt { font-size: 12px; color: var(--text-2); }
+.fnotebar .txt .fn { margin-right: 2px; }
+.fnotebar .sp { flex: 1; }
+.bindbtn {
+  height: 28px; padding: 0 14px;
+  border: 1px solid var(--ink); border-radius: 3px;
+  background: transparent; color: var(--ink);
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background var(--fast) ease-out, color var(--fast) ease-out;
+}
+.bindbtn:hover { background: var(--ink); color: var(--paper); }
+.bindbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── Composer（既有组件，微调留此处占位） ── */
+.composer {
+  flex: 0 0 86px;
+  margin: 0 var(--s6) var(--s5);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(20, 33, 61, 0.05);
+  display: flex; flex-direction: column;
+  padding: 12px 14px;
+  gap: 8px;
+}
+.composer .ph { font-size: 13px; color: var(--faint); }
+.composer .row { display: flex; align-items: center; gap: 10px; margin-top: auto; }
+.composer .mini {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; color: var(--muted);
+}
+.composer .sp { flex: 1; }
+.composer .model {
+  font-size: 11px; color: var(--text-2);
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px;
+}
+.sendbtn {
+  height: 26px; padding: 0 12px;
+  border: 0; border-radius: 6px;
+  background: var(--soft); color: var(--faint);   /* 空态禁用：不可点 */
+  font-size: 11.5px; font-weight: 600; cursor: default;
+}
+
+/* 右缘竖排 slug：编辑部刊号感（装饰性，不加内容含义） */
+.slug {
+  position: absolute; top: 58px; right: 12px; z-index: 8;
+  writing-mode: vertical-rl;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.32em;
+  color: var(--faint); text-transform: uppercase;
+}
+
+/* ── 入场编排：4 组，80ms 错峰 ── */
+.reveal { opacity: 0; transform: translateY(16px); animation: rise 560ms var(--ease) forwards; }
+.reveal.d1 { animation-delay: 60ms; }
+.reveal.d2 { animation-delay: 140ms; }
+.reveal.d3 { animation-delay: 220ms; }
+.reveal.d4 { animation-delay: 300ms; }
+@keyframes rise { to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .reveal { animation: none; opacity: 1; transform: none; }
+  * { transition: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════
+   BOARD B · Research 变体 + 反 AI 味对照表
+   ═══════════════════════════════════════════════════ */
+.notes {
+  margin-top: 40px;
+  background: var(--panel);
+  border: 1px solid #d6d2c6; border-radius: 10px;
+  overflow: hidden;
+}
+.notes table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.notes th, .notes td {
+  text-align: left; padding: 9px 14px;
+  border-bottom: 1px solid var(--line-subtle);
+  vertical-align: top; line-height: 1.6;
+}
+.notes th {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em;
+  color: var(--muted); text-transform: uppercase;
+  background: var(--soft);
+  border-bottom: 1px solid var(--line);
+}
+.notes td:first-child { font-family: var(--mono); font-size: 11px; color: var(--text-2); white-space: nowrap; }
+.notes .hit { color: #8b3a3a; }
+.notes .ok { color: #3f6b52; }
+.notes .cap {
+  padding: 12px 14px; font-size: 12.5px; color: var(--text-2);
+  border-bottom: 1px solid var(--line);
+  background: var(--canvas);
+}
+.notes .cap b { color: var(--ink); }
+
+.variant {
+  margin-top: 40px;
+}
+.variant .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.vcard {
+  background: var(--panel); border: 1px solid #d6d2c6; border-radius: 10px;
+  padding: 26px 30px;
+}
+.vcard .eyebrow { font-size: 10px; }
+.vcard h3 {
+  margin-top: 14px;
+  font-family: var(--serif); font-size: 30px; font-weight: 700;
+  line-height: 1.2; color: var(--ink); letter-spacing: 0.01em;
+}
+.vcard h3 em {
+  font-style: normal;
+  background-image: linear-gradient(var(--ink), var(--ink));
+  background-size: 100% 2.5px; background-position: 0 96%;
+  background-repeat: no-repeat; padding-bottom: 2px;
+}
+.vcard p {
+  margin-top: 12px; font-size: 12.5px; line-height: 1.8; color: var(--text-2);
+}
+.vcard .kicker {
+  margin-top: 16px; padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+  color: var(--muted);
+}
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- ═══════ BOARD A ═══════ -->
+  <div class="slabel">
+    <span class="n">Board A</span>
+    <b>Nexus 启动页 · 编辑部方向</b>
+    <span class="hint">左英雄 + 右目录索引；课程绑定降为页脚注；起点清单去卡片化</span>
+  </div>
+
+  <div class="app">
+    <!-- 能力 chips：真实页面既有组件，本轮不动 -->
+    <header class="chips">
+      <span class="chip"><span class="dot"></span>课程资料</span>
+      <span class="chip"><span class="dot"></span>CS 知识库</span>
+      <span class="chip"><span class="dot"></span>Web 检索 · 自动</span>
+      <span class="chip"><span class="dot"></span>文件上传</span>
+      <span class="chip pend">3 项待接入</span>
+      <span class="sp"></span>
+      <span class="engine">deepseek-chat</span>
+    </header>
+    <div class="doublerule"></div>
+
+    <!-- 主区：左英雄 · 右模式索引 -->
+    <main class="start">
+      <section class="hero">
+        <p class="eyebrow reveal d1">Nexus <span class="em">/</span> 新会话 <span class="em">/</span> General</p>
+        <h1 class="reveal d2">从一个<em>问题</em>开始</h1>
+        <p class="sub reveal d3">
+          Nexus 会拆解复杂任务，检索课程资料与 Web，
+          给出可核对的过程与答案。<a class="fn" title="见页脚注">※1</a>
+        </p>
+
+        <div class="hero-index reveal d4">
+          <span>工具白名单 <b>5</b></span>
+          <span>上下文 <b>Web + 通用知识</b></span>
+          <span>会话 <b>仅保存在本机</b></span>
+        </div>
+        <span class="ghost" aria-hidden="true">问</span>
+      </section>
+
+      <aside class="modes">
+        <div class="modes-head reveal d1">
+          <span>工作模式</span>
+          <span class="mono">Mode / 即工具白名单</span>
+        </div>
+
+        <button class="mode is-on reveal d2" aria-pressed="true">
+          <span class="no">01</span>
+          <span class="nm">Nexus <span class="tag">当前</span></span>
+          <span class="ds">通用任务：资料检索、知识问答与文档生成。</span>
+          <span class="tls">网页检索<i>·</i>CS 知识库<i>·</i>资料检索<i>·</i>写文件<i>·</i>读附件</span>
+        </button>
+
+        <button class="mode reveal d3" aria-pressed="false">
+          <span class="no">02</span>
+          <span class="nm">Nexus Research</span>
+          <span class="ds">论文调研、学术检索、大纲比较与 NexusLab 复现。</span>
+          <span class="tls">arXiv 论文检索<i>·</i>复现规划<i>·</i>复现执行<i>·</i>读附件<i>·</i>证据链<i class="more">+1</i></span>
+        </button>
+
+        <p class="modes-foot reveal d4">
+          切换模式即切换本轮可用的工具集。<br />
+          对话进行中不可切换；历史轮次的工具产出原样保留。
+        </p>
+      </aside>
+    </main>
+
+    <!-- 起点清单：编号行，无卡片壳 -->
+    <section class="starters reveal d3" aria-label="起点建议">
+      <span class="head">Starters / 起点建议</span>
+      <button class="starter">
+        <span class="no">01</span>
+        <b>结合课程深入剖析</b>
+        <span>关联课程资料与学科知识，解释算法异同</span>
+      </button>
+      <button class="starter">
+        <span class="no">02</span>
+        <b>Web 文献综合调研</b>
+        <span>检索 Web 资源并生成 Markdown 综述</span>
+      </button>
+      <button class="starter">
+        <span class="no">03</span>
+        <b>多步任务拆解</b>
+        <span>把大问题拆成可执行的步骤清单</span>
+      </button>
+    </section>
+
+    <!-- 页脚注：课程绑定（原淡蓝引导条降级为脚注） -->
+    <footer class="fnotebar reveal d4">
+      <p class="txt"><a class="fn">※1</a> 未绑定课程 —— 回答只会用到 Web 与通用知识。</p>
+      <span class="sp"></span>
+      <button class="bindbtn">绑定课程</button>
+    </footer>
+
+    <!-- Composer：既有组件，形态不动 -->
+    <div class="composer">
+      <span class="ph">输入你的问题…</span>
+      <div class="row">
+        <span class="mini">⌁ 附件</span>
+        <span class="sp"></span>
+        <span class="model">deepseek-chat（默认）</span>
+        <span class="sendbtn">发送</span>
+      </div>
+    </div>
+
+    <span class="slug" aria-hidden="true">Nexus · Start Page · 2026</span>
+  </div>
+
+  <!-- ═══════ 变体 ═══════ -->
+  <div class="variant">
+    <div class="slabel">
+      <span class="n">Board B</span>
+      <b>两种模式的首屏文案</b>
+      <span class="hint">结构不变，只换文案与工具白名单 —— 模式差异在打字前就可见</span>
+    </div>
+    <div class="pair">
+      <div class="vcard">
+        <p class="eyebrow">Nexus / General</p>
+        <h3>从一个<em>问题</em>开始</h3>
+        <p>Nexus 会拆解复杂任务，检索课程资料与 Web，给出可核对的过程与答案。<span class="fn">※1</span></p>
+        <p class="kicker">工具 5 项 · 课程资料 / CS 知识库 / Web 检索</p>
+      </div>
+      <div class="vcard">
+        <p class="eyebrow">Nexus / Research</p>
+        <h3>从一个<em>研究问题</em>开始</h3>
+        <p>搜索论文、整理证据、比较方法；需要验证时进入实验复现。</p>
+        <p class="kicker">工具 10 项 · arXiv / 复现规划 / 复现执行 / 证据链</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ 对照表 ═══════ -->
+  <div class="notes">
+    <div class="cap">
+      <b>反 AI 味清单对照</b> —— 现状（截图）逐条命中与处置；「落地映射」列对应
+      <span style="font-family:var(--mono);font-size:11px">NexusPage.vue</span> 现有 class，只动视觉壳，不动功能组件类型。
+    </div>
+    <table>
+      <tr><th style="width:64px">检查项</th><th>现状命中</th><th>本板处置</th><th style="width:308px">落地映射</th></tr>
+      <tr>
+        <td>#1 展示字</td>
+        <td class="hit">系统黑体做标题，46px→28px 居中，无面孔</td>
+        <td class="ok">思源宋体 700 / 46px 左对齐，配 JetBrains Mono 注记</td>
+        <td><code style="font-size:11px">.nx-empty-title</code> 换 --serif、字号、左对齐</td>
+      </tr>
+      <tr>
+        <td>#3 布局</td>
+        <td class="hit">居中标题+副标题+两卡+三特性卡（标准 AI hero）</td>
+        <td class="ok">左右两栏（1fr/396px）：左英雄、右模式目录，栏间规则线</td>
+        <td><code>.nx-empty-workspace</code> 去 margin:auto/text-align:center → grid</td>
+      </tr>
+      <tr>
+        <td>#4 卡片</td>
+        <td class="hit">两张同款圆角白卡 + 三张同款圆角白卡，统一阴影</td>
+        <td class="ok">模式改目录条目（规则线分行）；建议改编号清单行</td>
+        <td><code>.nx-mode-card</code> / <code>.nx-quick-card</code> 去边框圆角阴影</td>
+      </tr>
+      <tr>
+        <td>#3 工具展示</td>
+        <td class="hit">绿色药丸一串（读作「成功态」而非「工具名」）</td>
+        <td class="ok">mono 文字行 + 中点分隔，超出折叠「+n」</td>
+        <td><code>.nx-tool-pill</code> 停用（启动页内），改 .tls 文本</td>
+      </tr>
+      <tr>
+        <td>#8 氛围</td>
+        <td class="hit">纯色平铺，零纹理</td>
+        <td class="ok">纸纹颗粒 4% + 幽灵描边字「问」+ 右缘竖排 slug + arXiv 双细线</td>
+        <td><code>.nx-empty-workspace</code> 加 ::before/::after 装饰层</td>
+      </tr>
+      <tr>
+        <td>强调色纪律</td>
+        <td class="hit">淡蓝引导条 + 蓝描边卡 + 蓝眉字，accent 满屏</td>
+        <td class="ok">accent 只留三处：※脚注标记 / 焦点圈 / 悬停序号；当前模式用墨色</td>
+        <td><code>.nx-start-course</code> 去 accent-soft 底 → 页脚注 .fnotebar</td>
+      </tr>
+      <tr>
+        <td>#7 动效</td>
+        <td class="hit">无</td>
+        <td class="ok">入场 4 组 80ms 错峰；建议行下划线扫过；reduced-motion 全关</td>
+        <td>启动页容器加 .reveal 组</td>
+      </tr>
+      <tr>
+        <td>#10 状态</td>
+        <td class="hit">缺焦点圈、模式悬停弱</td>
+        <td class="ok">模式/建议/绑定均有 hover+focus-visible；发送键空态禁用灰</td>
+        <td>补 ：focus-visible 与禁用态样式</td>
+      </tr>
+    </table>
+  </div>
+</div>
+</body>
+</html>

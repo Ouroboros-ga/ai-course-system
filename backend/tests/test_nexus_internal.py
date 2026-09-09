@@ -142,8 +142,17 @@ def test_course_evidence_returns_structured_items(
 
 
 def test_cs_knowledge_returns_authority_items(
-    client, internal_configured, student_user, monkeypatch
+    client, session, internal_configured, student_user, monkeypatch
 ):
+    from app.models.access_control_model import (
+        PlatformPermission,
+        PlatformPermissionAssignment,
+    )
+
+    # CR4：cs-knowledge 要求 platform.nexus.use 显式授权（停用/无授权拒绝）
+    session.add(PlatformPermissionAssignment(
+        user_id=student_user.id, permission=PlatformPermission.NEXUS_USE))
+    session.commit()
     monkeypatch.setattr(
         nexus_internal,
         "search_nodes",
@@ -155,6 +164,7 @@ def test_cs_knowledge_returns_authority_items(
                 "definition": "平均 O(1) 查找的键值映射结构。",
                 "source": "教材第 6 章",
                 "course": "数据结构与算法",
+                "score": 0.87,
             }
         ],
     )
@@ -166,8 +176,24 @@ def test_cs_knowledge_returns_authority_items(
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["authority"] == "cs_kb"
+    assert body["is_supplementary"] is True
     assert body["items"][0]["name"] == "哈希表"
     assert body["items"][0]["source"] == "教材第 6 章"
+    # 旧字段原样保留：精编概念的相关性分数随条目透出（P2-2 修复）
+    assert body["items"][0]["score"] == 0.87
+    assert body["items"][0]["is_supplementary"] is True
+
+
+def test_cs_knowledge_rejects_user_without_nexus_grant(
+    client, internal_configured, student_user,
+):
+    """有身份但无 NEXUS_USE 授权 → 403（不读 User.role 兜底）。"""
+    response = client.get(
+        "/api/v1/nexus-internal/cs-knowledge",
+        params={"q": "哈希表"},
+        headers={**AUTH, "X-Nexus-User-Id": str(student_user.id)},
+    )
+    assert response.status_code == 403
 
 
 def test_cs_knowledge_rejects_without_user(client, internal_configured):

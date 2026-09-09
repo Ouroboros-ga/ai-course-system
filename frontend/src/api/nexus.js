@@ -79,6 +79,56 @@ export function getNexusApproval(approvalId) {
 }
 
 /**
+ * 审批待办恢复（NX-LB2）：进入会话即拉本人的 pending 待办，
+ * 供输入框上方浮窗展示。不能静默替用户选中另一个运行的审批——
+ * 浮窗必须写明目标运行，因此调用方要按 session_id 过滤并展示全部。
+ */
+export function listNexusApprovals(sessionId = '', status = 'pending') {
+  return request.get('/nexus/approvals', {
+    params: { session_id: sessionId, status },
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/** 可见 preset 投影（NX-LB1）：参数白名单/默认值/预算/指标基线的唯一来源。 */
+export function listNexusReproPresets() {
+  return request.get('/nexus/repro/presets', {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/** 建提案草案（NX-LB2）：创建不执行；client_request_id 幂等。 */
+export function createNexusProposal(payload) {
+  return request.post('/nexus/repro/proposals', payload, { allowFlatResponse: true })
+}
+
+/** 提案详情（NX-LB2）：完整方案 + 校验结果 + 与父运行/上一版本的 diff。 */
+export function getNexusProposal(proposalId) {
+  return request.get(`/nexus/repro/proposals/${encodeURIComponent(proposalId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/** 改提案（NX-LB2）：乐观锁 expected_version；仅 draft；旧批准随 hash 失效。 */
+export function patchNexusProposal(proposalId, payload) {
+  return request.patch(`/nexus/repro/proposals/${encodeURIComponent(proposalId)}`, payload, {
+    allowFlatResponse: true,
+  })
+}
+
+/** 请求审批（NX-LB2）：pin 版本 + hash 生成/复用审批；不直接执行。 */
+export function requestNexusProposalApproval(proposalId, expectedVersion) {
+  return request.post(
+    `/nexus/repro/proposals/${encodeURIComponent(proposalId)}/request-approval`,
+    { expected_version: expectedVersion },
+    { allowFlatResponse: true }
+  )
+}
+
+/**
  * 批准/拒绝（NX-G2 Hard Workflow）：决定动作本人发起，服务端原子转换。
  * UI 只负责展示提案与提交决定，不代替服务端做任何放行判断。
  */
@@ -92,12 +142,44 @@ export function decideNexusApproval(approvalId, decision = 'approved') {
 /**
  * 手工执行（NX-G2）：凭已批准票据提交 Worker，与聊天工具共用服务端同一
  * 核销核心；同一票据重试返回原 job，不重复启动实验。
+ * T5：透传本次执行门（mode/research_execution_mode），缺省由服务端按
+ * 兼容语义裁决（旧 preset 兼容，自主 fail-closed）。
  */
-export function executeApprovedRepro(approvalId, sessionId = 'default') {
-  return request.post('/nexus/repro/execute', { approval_id: approvalId, session_id: sessionId }, {
+export function executeApprovedRepro(approvalId, sessionId = 'default', gate = {}) {
+  const body = { approval_id: approvalId, session_id: sessionId }
+  if (gate.mode) body.mode = gate.mode
+  if (gate.researchExecutionMode) body.research_execution_mode = gate.researchExecutionMode
+  return request.post('/nexus/repro/execute', body, {
     allowFlatResponse: true,
     skipErrorToast: true,
   })
+}
+
+/**
+ * 用户直接取消运行（T5）：本人＋同会话；preset 走 Worker，自主走 Runtime。
+ * 回收确认后终态 cancelled；执行器不可达 → 503，不伪装取消。
+ */
+export function cancelNexusRun(runId, sessionId) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/cancel`, {
+    session_id: sessionId,
+  }, { allowFlatResponse: true })
+}
+
+/**
+ * 会话执行模式偏好（T5 Ask/Auto）：服务端真相源。
+ * 无记录默认 ask；保存失败调用方只本地缓存并如实提示。
+ */
+export function getNexusSessionExecutionMode(sessionId) {
+  return request.get(`/nexus/sessions/${encodeURIComponent(sessionId)}/execution-mode`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+export function saveNexusSessionExecutionMode(sessionId, mode) {
+  return request.put(`/nexus/sessions/${encodeURIComponent(sessionId)}/execution-mode`, {
+    research_execution_mode: mode,
+  }, { allowFlatResponse: true })
 }
 
 /**
@@ -170,6 +252,116 @@ export function listNexusRuns(sessionId) {
     allowFlatResponse: true,
     skipErrorToast: true,
   })
+}
+
+/**
+ * 单个 run 详情（NX-LB1）：含 display_title/run_number/version/冻结配置，
+ * NX-LB5 起含已授权 artifacts 引用。非 owner 一律 404。
+ * F3：logCursors 为 {operation_id: 已消费字节}，在途会话操作返回增量。
+ */
+export function getNexusRunDetail(runId, logCursors) {
+  const params = {}
+  if (logCursors && typeof logCursors === 'object' && Object.keys(logCursors).length) {
+    params.log_cursors = JSON.stringify(logCursors)
+  }
+  return request.get(`/nexus/runs/${encodeURIComponent(runId)}`, {
+    params,
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 重命名运行（NX-LB1）：仅改标题，不改变执行 hash 或配置；乐观锁 409。
+ */
+export function renameNexusRun(runId, title, expectedVersion) {
+  return request.patch(`/nexus/runs/${encodeURIComponent(runId)}`, {
+    title,
+    expected_version: expectedVersion,
+  }, { allowFlatResponse: true })
+}
+
+/**
+ * 取消授权签发（NX-LB4）：用户在浮窗明确确认取消后调用；一次性、短有效期。
+ */
+export function requestNexusRunCancelGrant(runId, sessionId) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/cancel-grant`, {
+    session_id: sessionId,
+  }, { allowFlatResponse: true })
+}
+
+/**
+ * 运行备注列表（NX-LB5）：追加式，升序；Agent 备注标 author=agent。
+ */
+export function listNexusRunNotes(runId) {
+  return request.get(`/nexus/runs/${encodeURIComponent(runId)}/notes`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 自主运行报告＋配方生成（T6）：确定性拼装，不经 LLM。
+ * 本人终态 run 才可生成；产物关联本 run，可下载；落盘后回收工作区。
+ */
+export function requestNexusRunReport(runId) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/report`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 自主运行正式格式产物（SR6）：Word .docx＋LaTeX .tex，确定性转换。
+ * 与报告同门（本人终态 run）；内容同源同版本；纯渲染不碰沙箱。
+ */
+export function requestNexusRunFormats(runId) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/formats`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 自主运行干净验证（SR6）：全新沙箱重放冻结配方，比对退出码。
+ * 重放调用实验沙箱——只在 Auto 下可用（Ask 服务端 403）。
+ */
+export function requestNexusRunCleanVerify(runId, executionMode) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/clean-verify`, {
+    research_execution_mode: executionMode,
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 自主运行恢复认领（F2）：对账在途意图，需继续时后台续跑同一实验。
+ * 继续执行调用沙箱——只在 Auto 下可用（Ask 服务端 403）。
+ */
+export function requestNexusRunResume(runId, executionMode) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/resume`, {
+    research_execution_mode: executionMode,
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 自主运行操作级取消（F3）：只停卡住的命令，实验继续。
+ * 会话在途 → 中断＋确认；one-shot 在途 → 409（请走 run 级取消）。
+ */
+export function cancelNexusRunOperation(runId, operationId) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/operations/${encodeURIComponent(operationId)}/cancel`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 追加运行备注（NX-LB5）：requestId 幂等；content ≤4000 字符。
+ */
+export function createNexusRunNote(runId, content, requestId = '') {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/notes`, {
+    content,
+    request_id: requestId,
+  }, { allowFlatResponse: true })
 }
 
 /**
@@ -261,6 +453,7 @@ function parseSseFrames(buffer, onEvent) {
  * @param {string} options.message      用户输入
  * @param {string} [options.sessionId]  会话 ID（P0 阶段服务重启即清）
  * @param {string} [options.mode]       模式标识，接线预留（当前运行时忽略未知字段）
+ * @param {string} [options.researchExecutionMode] T5 Ask/Auto（ask|auto，仅 Research 发送）
  * @param {number} [options.courseId]   绑定的课程 ID，接线预留（同上）
  * @param {string} [options.model]      模型 id（服务端 allowlist 内；缺省用默认模型）
  * @param {string[]} [options.attachmentIds] 本次对话引用的附件 id（≤5，服务端验主+绑定）
@@ -271,6 +464,7 @@ export async function streamNexusMessage({
   message,
   sessionId = 'default',
   mode = null,
+  researchExecutionMode = null,
   courseId = null,
   model = null,
   attachmentIds = [],
@@ -280,6 +474,8 @@ export async function streamNexusMessage({
   const body = { message, session_id: sessionId }
   // 接线预留：运行时一旦在 /chat/stream 接收这两个字段，前端无需任何改动。
   if (mode) body.mode = mode
+  // T5 Ask/Auto：Research 显式发送本次 effective 值；General 不传。
+  if (researchExecutionMode) body.research_execution_mode = researchExecutionMode
   if (courseId != null) body.context = { course_id: courseId }
   // 模型网关 P0：服务端 allowlist 校验，清单外直接 400（见 NexusPage 模型下拉）。
   if (model) body.model = model

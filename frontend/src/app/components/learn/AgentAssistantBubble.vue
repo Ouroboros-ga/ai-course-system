@@ -1,8 +1,10 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { BookMarked, BookOpen, CornerUpLeft, MapPinned, RefreshCw, TriangleAlert } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import CodingChallengeCard from './CodingChallengeCard.vue'
+import { getDisciplineCorpusChunk } from '@/api/disciplineKnowledge.js'
+import { safeSourceUrl } from '@/app/lib/disciplineCorpusPresentation.js'
 import { useSettingsStore } from '@/stores/userSettings'
 import { renderContent } from '@/utils/markdownRenderer'
 
@@ -67,6 +69,45 @@ function retry() {
 const renderedContent = computed(() => {
     return renderContent(props.message?.content || '')
 })
+
+// 学科参考中的语料原文查看（CR5）：行内展开，只调 chunk 引用端点
+// （固定 release_id），不拼磁盘路径；失败/撤回如实提示。
+const viewingChunkId = ref(null)
+const viewingText = ref(null)
+const viewingLoading = ref(false)
+const viewingError = ref('')
+
+function isCorpusRef(ref) {
+    return ref?.result_type === 'corpus_chunk' && !!ref?.chunk_id
+}
+
+async function toggleCorpusSource(ref) {
+    const key = ref?.chunk_id
+    if (!key) return
+    if (viewingChunkId.value === key && viewingText.value) {
+        viewingChunkId.value = null
+        viewingText.value = null
+        return
+    }
+    viewingChunkId.value = key
+    viewingText.value = null
+    viewingError.value = ''
+    if (!ref?.release_id) {
+        viewingError.value = '缺少版本信息，无法查看原文。'
+        return
+    }
+    viewingLoading.value = true
+    try {
+        viewingText.value = await getDisciplineCorpusChunk(key, ref.release_id)
+    } catch (err) {
+        viewingError.value = err?.response?.status === 410
+            ? '该来源已撤回，不再展示原文。'
+            : '原文加载失败，请稍后重试。'
+        viewingText.value = null
+    } finally {
+        viewingLoading.value = false
+    }
+}
 </script>
 
 <template>
@@ -115,11 +156,31 @@ const renderedContent = computed(() => {
                 <!-- 学科参考（R14）：权威教材补充参考，非课程正式证据 -->
                 <ul v-if="message.disciplineReferences?.length" class="sfx-agent-discipline">
                     <li class="sfx-agent-seg-label sfx-agent-citations-title">学科参考</li>
-                    <li v-for="(ref, index) in message.disciplineReferences" :key="ref.node_id || index"
+                    <li v-for="(ref, index) in message.disciplineReferences" :key="ref.reference_id || ref.node_id || index"
                         class="sfx-agent-citation is-discipline">
                         <BookOpen :size="13" />
                         <span>{{ ref.name }}<template v-if="ref.course">（{{ ref.course }}）</template></span>
                         <span v-if="ref.source_title" class="sfx-t-caption">{{ ref.source_title }}</span>
+                        <span v-if="ref.result_type === 'corpus_chunk'" class="sfx-t-caption">
+                            {{ ref.source_kind }}<template v-if="ref.source_license || ref.license"> · {{ ref.source_license || ref.license }}</template><template v-if="(ref.matched_by || []).length"> · {{ ref.matched_by.join('+') }}</template>
+                        </span>
+                        <a
+                            v-if="safeSourceUrl(ref.source_url)"
+                            class="sfx-agent-source-link"
+                            :href="safeSourceUrl(ref.source_url)"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                        >出处</a>
+                        <SfxButton v-if="isCorpusRef(ref)" variant="tertiary" size="sm"
+                            :loading="viewingLoading && viewingChunkId === ref.chunk_id"
+                            @click="toggleCorpusSource(ref)">
+                            {{ viewingChunkId === ref.chunk_id && viewingText ? '收起原文' : '查看原文' }}
+                        </SfxButton>
+                    </li>
+                    <li v-if="viewingChunkId" class="sfx-agent-citation is-discipline">
+                        <span v-if="viewingLoading" class="sfx-t-caption">原文加载中…</span>
+                        <span v-else-if="viewingError" class="sfx-t-caption">{{ viewingError }}</span>
+                        <span v-else-if="viewingText" class="sfx-agent-source-text">{{ viewingText.text }}</span>
                     </li>
                 </ul>
 
@@ -420,6 +481,16 @@ const renderedContent = computed(() => {
 
 .sfx-agent-citation.is-discipline span:first-of-type {
     color: var(--text-primary);
+}
+
+.sfx-agent-source-text {
+    display: block;
+    margin-top: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-cool);
+    border-radius: var(--radius-sm);
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 /* AI 生成内容标识（伦理声明 §三） */

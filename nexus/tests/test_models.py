@@ -45,7 +45,7 @@ def test_models_manifest_default_first_dedup(monkeypatch):
 
 
 async def test_agents_isolated_per_model(monkeypatch: pytest.MonkeyPatch):
-    """同 mode 不同 model → 不同实例；同 (mode, model) → 缓存复用。"""
+    """同 mode 不同 model → 不同实例；同 (mode, model, execution) → 缓存复用。"""
     import nexus.main as main_module
     from langchain_openai import ChatOpenAI
 

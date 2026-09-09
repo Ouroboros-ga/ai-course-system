@@ -87,7 +87,15 @@ def build_index(
     files: list[str],
     limit: int | None,
     progress_every: int = 2000,
+    meta: dict | None = None,
 ) -> None:
+    """构建旧格式 FTS 索引（corpus_paragraph + contentless corpus_fts）。
+
+    CR3 补充：``meta`` 非空时额外写入 ``meta`` 表（release_id /
+    schema_version / tokenizer / tokenizer_hash / input_manifest_hash），
+    使旧索引也可被版本校验识别；默认 ``None`` 时输出与历史逐字节同构
+    （同输入同构，不承诺跨 SQLite 版本字节一致）。
+    """
     if output.exists():
         output.unlink()
     conn = sqlite3.connect(output)
@@ -186,6 +194,21 @@ def build_index(
         print(f"[done] {name}: {docs} docs -> {chunks} chunks", file=sys.stderr)
 
     conn.execute("INSERT INTO corpus_fts(corpus_fts) VALUES('optimize')")
+    if meta:
+        # CR3：可选 meta 表（新版本 FTS 的 meta 契约见 corpus_index 模块；
+        # 旧索引默认不写，保持历史输出不变）。
+        conn.execute(
+            "CREATE TABLE meta(release_id TEXT PRIMARY KEY, "
+            "schema_version TEXT NOT NULL, tokenizer TEXT NOT NULL, "
+            "tokenizer_hash TEXT NOT NULL, input_manifest_hash TEXT NOT NULL)")
+        conn.execute(
+            "INSERT INTO meta(release_id, schema_version, tokenizer, "
+            "tokenizer_hash, input_manifest_hash) VALUES (?, ?, ?, ?, ?)",
+            (str(meta.get("release_id") or ""),
+             str(meta.get("schema_version") or "discipline-fts/1"),
+             str(meta.get("tokenizer") or ""),
+             str(meta.get("tokenizer_hash") or ""),
+             str(meta.get("input_manifest_hash") or "")))
     conn.commit()
     db_bytes = output.stat().st_size
     conn.close()
@@ -202,9 +225,13 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--files", type=str, default=",".join(DEFAULT_FILES))
     parser.add_argument("--limit", type=int, default=None, help="每文件只取前 N 篇（小样本验证）")
+    parser.add_argument("--meta-json", type=str, default="",
+                        help="可选 meta JSON（CR3 版本标识；默认不写，保持历史输出）")
     args = parser.parse_args()
     files = [f.strip() for f in args.files.split(",") if f.strip()]
-    build_index(args.corpus_dir, args.output, files, args.limit)
+    meta = json.loads(args.meta_json) if args.meta_json else None
+    build_index(args.corpus_dir, args.output, files, args.limit,
+                meta=meta)
 
 
 if __name__ == "__main__":

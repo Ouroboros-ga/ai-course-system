@@ -115,6 +115,13 @@ class _FakeAsyncClient:
             status_code = 200
             def json(self):
                 return self._data
+        # NX-N0/P1-B：linkage 查询明确 404（无此作业 linkage）→ legacy 判定；
+        # 与"已配置但读失败"（unavailable）区分覆盖。
+        if "repro-runs/by-job" in str(url):
+            not_found = _Resp()
+            not_found.status_code = 404
+            not_found._data = {"detail": "RUN_NOT_FOUND"}
+            return not_found
         resp = _Resp()
         resp._data = self._record
         return resp

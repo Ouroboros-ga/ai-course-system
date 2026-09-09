@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     # Worker 的 Bearer 令牌（REPRO_WORKER_TOKEN 对应项；双方都配置才启用认证）
     repro_worker_token: str = ""
 
+    # T4 自主实验执行控制服务（deploy/repro-runtime；独立内网服务）。
+    # 未配置时自主执行核 fail-closed（run 落 failed，不静默 running）。
+    repro_control_url: str = ""
+    repro_control_token: str = ""
+
     # NX-G2 执行审批：提案有效期（秒）。过期票据一律失效，需重新提案。
     approval_ttl_s: int = 900
 

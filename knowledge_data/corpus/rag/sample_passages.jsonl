@@ -1,0 +1,40 @@
+{"passage_id": "synth-p-os-01", "source_kind": "textbook", "lang": "zh", "title": "进程与线程", "text": "进程是资源分配的基本单位，线程是 CPU 调度的基本单位。同一进程的线程共享地址空间，切换开销小于进程切换。"}
+{"passage_id": "synth-p-os-02", "source_kind": "textbook", "lang": "zh", "title": "虚拟内存", "text": "虚拟内存让程序看到连续的地址空间。页表记录虚拟页与物理页的映射，缺页时触发换入换出。"}
+{"passage_id": "synth-p-os-03", "source_kind": "textbook", "lang": "zh", "title": "死锁条件", "text": "死锁产生的四个必要条件是互斥、占有等待、不可剥夺和循环等待，缺一不可。银行家算法用于死锁避免。"}
+{"passage_id": "synth-p-os-04", "source_kind": "textbook", "lang": "zh", "title": "进程调度", "text": "时间片轮转给每个就绪进程分配固定时长，多级反馈队列兼顾交互与批处理作业。"}
+{"passage_id": "synth-p-os-05", "source_kind": "zhwiki", "lang": "zh", "title": "系统调用", "text": "系统调用是用户态进入内核态的唯一受控入口，read 与 write 是最常用的文件类调用。"}
+{"passage_id": "synth-p-net-01", "source_kind": "textbook", "lang": "zh", "title": "TCP 连接", "text": "TCP 通过三次握手建立连接，用序号与确认号保证可靠有序交付。"}
+{"passage_id": "synth-p-net-02", "source_kind": "zhwiki", "lang": "zh", "title": "IP 地址", "text": "IPv4 地址为 32 位，点分十进制表示；IPv6 地址为 128 位，冒号十六进制表示。"}
+{"passage_id": "synth-p-net-03", "source_kind": "rfc", "lang": "zh", "title": "拥塞控制", "text": "发送方维护拥塞窗口，丢包时减半窗口并进入慢启动，是互联网稳定的关键机制。"}
+{"passage_id": "synth-p-net-04", "source_kind": "zhwiki", "lang": "zh", "title": "DNS 解析", "text": "DNS 把域名逐级解析为 IP 地址，递归查询与迭代查询分工不同。"}
+{"passage_id": "synth-p-net-05", "source_kind": "rfc", "lang": "zh", "title": "HTTP 版本", "text": "HTTP/1.1 使用文本协议与短连接，HTTP/2 引入多路复用，HTTP/3 基于 QUIC。"}
+{"passage_id": "synth-p-algo-01", "source_kind": "textbook", "lang": "zh", "title": "二分查找", "text": "二分查找要求搜索空间有序，每次比较后排除一半区间，时间复杂度为对数级别。"}
+{"passage_id": "synth-p-algo-02", "source_kind": "textbook", "lang": "zh", "title": "快速排序", "text": "快速排序选取基准把数组分成两部分递归处理，平均时间复杂度为 n log n，最坏为平方级别。"}
+{"passage_id": "synth-p-algo-03", "source_kind": "zhwiki", "lang": "zh", "title": "哈希表", "text": "哈希表用哈希函数把键映射到槽位，冲突时链地址法把元素挂到同一槽位链表。"}
+{"passage_id": "synth-p-algo-04", "source_kind": "zhwiki", "lang": "zh", "title": "动态规划", "text": "动态规划把原问题分解为重叠子问题，备忘录避免重复计算，适用于最优子结构问题。"}
+{"passage_id": "synth-p-algo-05", "source_kind": "arxiv", "lang": "zh", "title": "近似算法", "text": "对 NP 难问题可用近似算法在多项式时间内给出有保证界的解，贪心是常用策略。"}
+{"passage_id": "synth-p-db-01", "source_kind": "textbook", "lang": "zh", "title": "事务 ACID", "text": "事务满足原子性、一致性、隔离性与持久性，数据库据此保证强一致性。"}
+{"passage_id": "synth-p-db-02", "source_kind": "zhwiki", "lang": "zh", "title": "B+ 树索引", "text": "B+ 树索引把数据存于叶子并链表相连，范围查询只需顺序遍历叶子层。"}
+{"passage_id": "synth-p-db-03", "source_kind": "zhwiki", "lang": "zh", "title": "范式", "text": "第三范式要求消除非主属性对候选键的传递依赖，是常用的关系模式设计目标。"}
+{"passage_id": "synth-p-db-04", "source_kind": "arxiv", "lang": "zh", "title": "预写日志", "text": "数据库先写预写日志再改数据页，崩溃后按日志重做与回滚，保证持久性。"}
+{"passage_id": "synth-p-db-05", "source_kind": "textbook", "lang": "zh", "title": "并发控制", "text": "两阶段锁协议保证可串行化，死锁检测通过等待图发现循环并回滚牺牲者。"}
+{"passage_id": "synth-p-en-01", "source_kind": "enwiki", "lang": "en", "title": "Paging", "text": "Paging divides memory into fixed-size frames. A page table maps each virtual page to a physical frame."}
+{"passage_id": "synth-p-en-02", "source_kind": "enwiki", "lang": "en", "title": "TCP handshake", "text": "TCP establishes a connection with a three-way handshake using sequence and acknowledgment numbers."}
+{"passage_id": "synth-p-en-03", "source_kind": "enwiki", "lang": "en", "title": "Binary search", "text": "Binary search needs a sorted array and halves the search interval on each comparison."}
+{"passage_id": "synth-p-en-04", "source_kind": "enwiki", "lang": "en", "title": "Hash table", "text": "A hash table maps keys to slots with a hash function and chains colliding entries in linked lists."}
+{"passage_id": "synth-p-en-05", "source_kind": "enwiki", "lang": "en", "title": "Quick sort", "text": "Quick sort partitions around a pivot and recurses. Average time is n log n and worst case is quadratic."}
+{"passage_id": "synth-p-en-06", "source_kind": "rfc", "lang": "en", "title": "Congestion window", "text": "The sender keeps a congestion window, halving it on loss and growing it in slow start."}
+{"passage_id": "synth-p-en-07", "source_kind": "rfc", "lang": "en", "title": "IPv6", "text": "IPv6 addresses are 128 bits long and written in colon hexadecimal notation."}
+{"passage_id": "synth-p-en-08", "source_kind": "arxiv", "lang": "en", "title": "WAL", "text": "Write-ahead logging records changes before data pages, so crash recovery can redo and undo safely."}
+{"passage_id": "synth-p-en-09", "source_kind": "arxiv", "lang": "en", "title": "B+ tree", "text": "B+ tree indexes keep data in linked leaves, so range scans walk the leaf level in order."}
+{"passage_id": "synth-p-en-10", "source_kind": "textbook", "lang": "en", "title": "Deadlock", "text": "Deadlock needs mutual exclusion, hold and wait, no preemption, and circular wait together."}
+{"passage_id": "synth-p-en-11", "source_kind": "textbook", "lang": "en", "title": "Threads", "text": "Threads of one process share the address space, so context switches cost less than process switches."}
+{"passage_id": "synth-p-en-12", "source_kind": "enwiki", "lang": "en", "title": "DNS", "text": "DNS resolves domain names level by level into IP addresses with recursive and iterative queries."}
+{"passage_id": "synth-p-en-13", "source_kind": "enwiki", "lang": "en", "title": "Dynamic programming", "text": "Dynamic programming memoizes overlapping subproblems and fits problems with optimal substructure."}
+{"passage_id": "synth-p-en-14", "source_kind": "enwiki", "lang": "en", "title": "ACID", "text": "Atomicity, consistency, isolation, and durability together give transactions strong guarantees."}
+{"passage_id": "synth-p-en-15", "source_kind": "rfc", "lang": "en", "title": "HTTP/2", "text": "HTTP/2 multiplexes many streams over one connection instead of plain-text sequential requests."}
+{"passage_id": "synth-p-en-16", "source_kind": "arxiv", "lang": "en", "title": "Approximation", "text": "Approximation algorithms trade optimality for polynomial time with provable bounds on hard problems."}
+{"passage_id": "synth-p-en-17", "source_kind": "textbook", "lang": "en", "title": "Scheduling", "text": "Round robin gives each ready process a fixed quantum, while feedback queues favor interactive jobs."}
+{"passage_id": "synth-p-en-18", "source_kind": "enwiki", "lang": "en", "title": "Normal forms", "text": "Third normal form removes transitive dependencies of non-key attributes on candidate keys."}
+{"passage_id": "synth-p-en-19", "source_kind": "enwiki", "lang": "en", "title": "System calls", "text": "System calls are the controlled gate from user mode to kernel mode for privileged operations."}
+{"passage_id": "synth-p-en-20", "source_kind": "arxiv", "lang": "en", "title": "Two-phase locking", "text": "Two-phase locking guarantees serializability, and wait-for graphs detect deadlocks for rollback."}

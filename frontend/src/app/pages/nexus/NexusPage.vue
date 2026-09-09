@@ -9,7 +9,8 @@
  *
  * 本轮可用性重构（2026-09-03）：
  * - 数据源切换收敛到侧栏底部状态区（唯一入口）；演示模式顶部保留一条状态说明条
- * - 首屏 Chips 只保留 ready 能力 + 课程绑定；wired/unwired 收进「◇ N 项待接入」popover
+ * - 首屏 Chips 只展示 ready 能力（工具已配齐，「N 项待接入」开发中说明已删；
+ *   三态真相仍在 nexusCapabilities.js，接线状态不靠界面贴条）
  * - 右栏大数字统计块改为「能力状态」列表（与 Chips 同一真相源，不再自相矛盾）
  * - 过程层统一「实验记录轨」视觉：surface-cool 底 + 状态点 + mono 时间戳
  * - 修复：isToolExpanded 未定义导致过程卡展开崩溃；多个模板类名与样式错位；
@@ -59,7 +60,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, requestNexusRunFormats, requestNexusRunCleanVerify, requestNexusRunResume, cancelNexusRunOperation, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -79,6 +80,22 @@ import {
 import { applyPlanEvent, applyRestoredPlan, createPlanState } from './planState.js'
 import NexusPlanCard from './components/NexusPlanCard.vue'
 import NexusEvidenceCard from './components/NexusEvidenceCard.vue'
+import NexusExperimentWorkspace from './components/NexusExperimentWorkspace.vue'
+import NexusAskWindow from './components/NexusAskWindow.vue'
+import {
+  experimentName,
+  reproCancellable,
+  reproElapsed,
+  reproIsCurrentStep,
+  reproLogLines,
+  reproLogSource,
+  reproStageNotes,
+  reproStageRail,
+  reproStatusLabel,
+  reproStepLabel,
+  reproStepState,
+  REPRO_TERMINAL_STATUSES
+} from './reproShared.js'
 
 // ── 0. 使用权限（转型决策 D10：platform.nexus.use 显式授予）──
 const counter = useCounterStore()
@@ -128,6 +145,716 @@ const activeMode = computed({
 
 function persistSessions() {
   saveLocalSessions(sessions.value)
+}
+
+// ── 2b. v6：同一个研究会话的两个视图（研究对话 ／ 实验工作台）──
+// 工作台不是独立页面、不新增路由；它是本会话 run 数据的另一种视图。
+// 视图选择记在本会话 sessionStorage：刷新保持，换会话不串。
+const workspaceView = ref(
+  typeof sessionStorage !== 'undefined' && sessionStorage.getItem('nexus_workspace_view') === 'lab'
+    ? 'lab'
+    : 'chat'
+)
+
+function setWorkspaceView(v) {
+  workspaceView.value = v
+  // 浮窗属于工作台；离开工作台就收起（运行时才可能执行到这里，无 TDZ 风险）
+  if (v !== 'lab') askWindowOpen.value = false
+  try {
+    sessionStorage.setItem('nexus_workspace_view', v)
+  } catch {
+    /* 存储不可用时仅退化为本次不记忆 */
+  }
+}
+
+/**
+ * 本会话的 run 列表。显示名以**后端命名**为准（NX-LB1：display_title，
+ * 用户命名优先、否则 preset 展示名 + 会话内稳定序号，跨设备一致）；
+ * 本地/demo 运行（无后端行）回退 experimentName 本地命名。
+ * 后端命名经 backendRunNames 按 job_id 合并——turn.reproRun 本体只读
+ * 投影，不在此改写轮询状态。
+ */
+const backendRunNames = ref({})
+
+function stampBackendRunName(reproRun, backend) {
+  if (!reproRun || !backend) return
+  // 只合命名类元数据：显示/重命名/序号/版本，不碰状态与轮询字段。
+  for (const key of ['display_title', 'title', 'run_number', 'version',
+    'preset_display_name', 'paper_title']) {
+    if (backend[key] !== undefined) reproRun[key] = backend[key]
+  }
+  if (backend.runId) reproRun.runId = backend.runId
+}
+
+const sessionRuns = computed(() => {
+  const s = currentSession.value
+  if (!s?.turns?.length) return []
+  return s.turns
+    // T5：自主 run 无 job_id，按 run_id/runId 收敛（与 preset job 标识不碰撞）。
+    .filter((t) => t?.reproRun && (t.reproRun.job_id || t.reproRun.run_id || t.reproRun.runId))
+    .map((t, i, arr) => {
+      const preset = t.reproRun.preset_id
+      const seq = arr.slice(0, i).filter((x) => x?.reproRun?.preset_id === preset).length + 1
+      const backend = backendRunNames.value[t.reproRun.job_id]
+        || backendRunNames.value[t.reproRun.run_id || t.reproRun.runId] || {}
+      // runId = nexus_runs.run_id（NX-LB1 稳定标识）：重命名 / 备注 / 详情用它；
+      // job_id 只服务 Worker cancel / report。无 runId → 重命名不可用。
+      // T5：自主 run 无 job_id，id 回退 runId（同一会话内唯一，不碰撞）。
+      const runId = t.reproRun.runId || t.reproRun.run_id || ''
+      return {
+        id: t.reproRun.job_id || runId,
+        runId,
+        name: experimentName({ ...t.reproRun, ...backend }, seq),
+        run: t.reproRun,
+        turn: t
+      }
+    })
+})
+
+const runningRunCount = computed(
+  () => sessionRuns.value.filter((r) => ['queued', 'running', 'cancelling'].includes(r.run.status)).length
+)
+
+const activeRunId = ref('')
+watch(
+  sessionRuns,
+  (list) => {
+    if (!list.length) {
+      if (activeRunId.value) activeRunId.value = ''
+      return
+    }
+    if (!list.some((r) => r.id === activeRunId.value)) {
+      activeRunId.value = list[list.length - 1].id
+    }
+  },
+  { immediate: true }
+)
+
+const isResearchMode = computed(() => activeMode.value === NEXUS_MODES.RESEARCH)
+const isLabView = computed(() => isResearchMode.value && workspaceView.value === 'lab')
+const activeRun = computed(() => sessionRuns.value.find((r) => r.id === activeRunId.value) || null)
+const activeRunArtifacts = computed(() => activeRun.value?.turn?.artifacts || [])
+
+function switchActiveRun(id) {
+  activeRunId.value = id
+}
+
+/** 会话内「打开工作台」：定位到该 run 并切到工作台视图 */
+function openRunInWorkspace(turn) {
+  if (turn?.reproRun?.job_id) activeRunId.value = turn.reproRun.job_id
+  else if (turn?.reproRun?.run_id || turn?.reproRun?.runId) {
+    activeRunId.value = turn.reproRun.run_id || turn.reproRun.runId
+  }
+  setWorkspaceView('lab')
+}
+
+// 工作台里对某个 run 取消：复用会话内既有的 cancel 实现（同一 API、同一文案）
+async function cancelRunFromWorkspace(id) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  if (item?.turn) await cancelReproRun(item.turn)
+}
+
+// ── 询问 Nexus 浮窗（工作台内）：继承研究对话上下文 ──
+const askWindowOpen = ref(false)
+function openAskWindow() {
+  askWindowOpen.value = true
+}
+function onAskSend(text) {
+  // 引用边界：只带明确的 run ID / 步骤，不复制全量日志、不混其他会话
+  const run = activeRun.value?.run
+  const ref = run ? `\n\n（引用：本次运行 ${run.job_id}· 第 ${run.currentStep ?? '—'} 步）` : ''
+  draft.value = `${text}${ref}`
+  setWorkspaceView('chat')
+  askWindowOpen.value = false
+  send()
+}
+
+// 结果态：回到研究对话解释结果（预填，由用户发送，不自动触发模型任务）
+function analyzeRunResult(id) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const run = item?.run
+  const verdict = run?.verdict ? `判定 ${run.verdict}` : '结果'
+  draft.value = `请解释本次实验结果（${item?.name || '本次运行'} · ${verdict}），与预期有什么差异，下一步建议是什么？`
+  setWorkspaceView('chat')
+  nextTick(() => {
+    const el = document.querySelector('.nx-composer-textarea')
+    if (el) el.focus()
+  })
+}
+
+// ── NX-LB2 调整方案再运行：基于父运行的冻结参数开新提案 → 送审 → 浮窗批准 ──
+// 白名单/范围来自 GET /repro/presets 的 parameters.schema（零前端硬编码）；
+// 基线优先取 run 详情 config_snapshot.parameters，取不到回 preset 默认值。
+const proposalDraft = ref(null)
+
+function rerunFromWorkspace(id) {
+  const item = sessionRuns.value.find((r) => r.id === (id || activeRunId.value))
+  const runId = item?.runId
+  const preset = item
+    ? reproPresets.value.find((p) => (p.preset_id || p.id) === item.run?.preset_id) || null
+    : null
+  const schema = preset?.parameters?.schema
+  if (!item || !runId) {
+    showToast('本次运行还没有服务端记录（run_id 缺失），不能基于它创建新提案', 'error')
+    return
+  }
+  if (!schema || !Object.keys(schema).length) {
+    showToast('该预设暂不支持参数化，可在对话里描述要调整的方向', 'info')
+    return
+  }
+  const values = {}
+  for (const [name, spec] of Object.entries(schema)) values[name] = String(spec.default ?? '')
+  proposalDraft.value = {
+    runId,
+    presetId: preset.preset_id,
+    presetName: preset.display_name || preset.preset_id,
+    runName: item.name,
+    schema,
+    baseline: { ...values },
+    values,
+    submitting: false,
+    error: ''
+  }
+  // 冻结基线异步补齐：只取白名单内的键；详情取不到就按 preset 默认值当基线
+  void (async () => {
+    try {
+      const det = await getNexusRunDetail(runId)
+      const frozen = det?.config_snapshot?.parameters
+      const d = proposalDraft.value
+      if (d && d.runId === runId && frozen && typeof frozen === 'object') {
+        for (const name of Object.keys(schema)) {
+          if (frozen[name] !== undefined && frozen[name] !== null) {
+            d.baseline[name] = String(frozen[name])
+            d.values[name] = String(frozen[name])
+          }
+        }
+      }
+    } catch { /* 保持默认基线 */ }
+  })()
+}
+
+function closeProposalEditor() {
+  if (proposalDraft.value?.submitting) return
+  proposalDraft.value = null
+}
+
+function paramChanged(name) {
+  const d = proposalDraft.value
+  return !!d && String(d.values[name]) !== String(d.baseline[name])
+}
+
+const proposalChangedCount = computed(() => {
+  const d = proposalDraft.value
+  if (!d) return 0
+  return Object.keys(d.schema).filter((n) => String(d.values[n]) !== String(d.baseline[n])).length
+})
+
+const metricSensitiveChanged = computed(() => {
+  const d = proposalDraft.value
+  if (!d) return false
+  return Object.entries(d.schema).some(
+    ([n, sp]) => sp.metric_sensitive && String(d.values[n]) !== String(d.baseline[n])
+  )
+})
+
+async function submitProposal() {
+  const d = proposalDraft.value
+  if (!d || d.submitting) return
+  // 前端先做类型/范围校验（与服务端 schema 同规则；422 兜底直接透出）
+  const params = {}
+  for (const [name, spec] of Object.entries(d.schema)) {
+    const raw = String(d.values[name] ?? '').trim()
+    const num = Number(raw)
+    if (!raw || !Number.isFinite(num)) {
+      d.error = name + '：需要数字'
+      return
+    }
+    if (spec.type === 'int' && !Number.isInteger(num)) {
+      d.error = name + '：需要整数'
+      return
+    }
+    if (num < spec.min || num > spec.max) {
+      d.error = name + '：允许范围 ' + spec.min + '–' + spec.max
+      return
+    }
+    params[name] = num
+  }
+  d.submitting = true
+  d.error = ''
+  try {
+    let reqId = ''
+    try { reqId = crypto.randomUUID() } catch { reqId = 'rerun-' + Date.now() }
+    const res = await createNexusProposal({
+      preset_id: d.presetId,
+      session_id: activeSessionId.value || 'default',
+      parent_run_id: d.runId,
+      parameters: params,
+      client_request_id: reqId
+    })
+    const p = res?.proposal || res || {}
+    await requestNexusProposalApproval(p.proposal_id, p.version)
+    proposalDraft.value = null
+    await loadPendingApprovals()
+    showToast('新提案已送审，请在输入框上方确认后才会执行', 'success')
+  } catch (err) {
+    const code = err?.errorCode || err?.response?.data?.code || ''
+    const map = {
+      PROPOSAL_PARAM_UNKNOWN: '参数不在该预设的白名单内',
+      PROPOSAL_PARAM_TYPE: '参数类型不符合 schema',
+      PROPOSAL_PARAM_OUT_OF_RANGE: '参数超出允许范围',
+      PROPOSAL_PRESET_UNSUPPORTED: '该预设暂不支持参数化',
+      PROPOSAL_PARENT_NOT_FOUND: '原运行不存在或已不可引用',
+      PROPOSAL_VERSION_CONFLICT: '提案版本冲突，请重试'
+    }
+    d.error = map[code] || err?.message || '提案创建失败，未执行任何操作'
+    d.submitting = false
+  }
+}
+
+// ── NX-LB4 取消授权签发：模型请求取消时，用户在此显式授权 ──
+// 模型意图本身不构成授权；grant 只由本端点（登录态）签发，
+// 一次性、5 分钟 TTL，绑定 (user, run, cancel_run)，模型工具核销后才真取消。
+async function grantCancelFor(turn) {
+  const run = turn?.reproRun
+  const runId = run?.runId || run?.run_id
+  if (!runId) {
+    showToast('本次运行还没有服务端记录，无法签发取消授权', 'error')
+    return
+  }
+  if (run.granting) return
+  run.granting = true
+  try {
+    await requestNexusRunCancelGrant(runId, activeSessionId.value || 'default')
+    showToast('已签发一次性取消授权（5 分钟内有效）：Nexus 现在可以取消本次运行', 'success')
+  } catch (err) {
+    const code = err?.errorCode || err?.response?.data?.code || ''
+    if (code === 'RUN_SESSION_MISMATCH') {
+      showToast('会话不匹配：请回到发起该运行的会话再签发', 'error')
+    } else if (err?.status === 404) {
+      showToast('运行不存在或没有服务端记录', 'error')
+    } else {
+      showToast('签发失败，请重试', 'error')
+    }
+  } finally {
+    run.granting = false
+  }
+}
+
+// ── NX-LB1 重命名：PATCH /runs/{run_id}，乐观锁 ──
+// 只改显示名，不改执行 hash / 配置；冲突 409 拉最新不覆盖用户输入。
+async function renameRunFromWorkspace({ id, title, onError, onDone }) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const runId = item?.runId
+  if (!runId) {
+    onError?.('本次运行还没有服务端记录（run_id 缺失），暂不能重命名')
+    return
+  }
+  const version = Number(item.run.version ?? item.run.run_number ?? 0)
+  try {
+    const res = await renameNexusRun(runId, title || null, version)
+    const merged = res?.data ?? res
+    if (merged && typeof merged === 'object') {
+      item.run.title = merged.title ?? item.run.title
+      item.run.display_title = merged.display_title ?? item.run.display_title
+      item.run.version = merged.version ?? item.run.version
+    }
+    // 让 sessionRuns 重算显示名（服务端 display_title 优先）
+    backendRunNames.value[item.run.job_id] = {
+      ...(backendRunNames.value[item.run.job_id] || {}),
+      ...(merged || {}),
+      runId
+    }
+    onDone?.()
+    showToast(title ? '已重命名' : '已恢复默认名', 'success')
+  } catch (err) {
+    const code = err?.response?.data?.code || err?.code || ''
+    if (code === 'RUN_VERSION_CONFLICT') {
+      onError?.('运行信息已被别处更新，已刷新为最新名称')
+    } else if (err?.response?.status === 422) {
+      onError?.('名称不合法（1–120 字符）')
+    } else {
+      onError?.('重命名失败，请稍后重试')
+    }
+  }
+}
+
+// ── NX-LB5 运行备注：追加式，request_id 幂等 ──
+const runNotes = ref([])
+const noting = ref(false)
+
+async function loadRunNotes(runId) {
+  if (!runId) {
+    runNotes.value = []
+    return
+  }
+  try {
+    const res = await listNexusRunNotes(runId)
+    const data = res?.data ?? res
+    runNotes.value = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+  } catch {
+    // fail-closed：拉不到就显示为空并如实说明，不伪造条目
+    runNotes.value = []
+  }
+}
+
+watch(
+  () => activeRun.value?.runId || '',
+  (rid) => {
+    if (isLabView.value) loadRunNotes(rid)
+  },
+  { immediate: true }
+)
+watch(isLabView, (v) => {
+  if (v) loadRunNotes(activeRun.value?.runId || '')
+})
+
+async function addRunNote({ content, onError, onDone }) {
+  const runId = activeRun.value?.runId
+  if (!runId) {
+    onError?.('本次运行还没有服务端记录，暂不能加备注')
+    return
+  }
+  noting.value = true
+  const requestId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  try {
+    await createNexusRunNote(runId, content, requestId)
+    await loadRunNotes(runId)
+    onDone?.()
+  } catch {
+    onError?.('备注保存失败，请重试')
+  } finally {
+    noting.value = false
+  }
+}
+
+// ── T6 自主运行报告＋配方：确定性拼装，不经 LLM；产物关联本 run，可下载 ──
+async function requestAutoReport(id) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const run = item?.run
+  const runId = item?.runId
+  if (!run || !runId || run.reportRequested) return
+  run.reportRequested = true
+  try {
+    const res = await requestNexusRunReport(runId)
+    for (const a of res?.artifacts || []) {
+      if (a?.artifact_id && !(item.turn.artifacts || []).some((x) => x.artifact_id === a.artifact_id)) {
+        item.turn.artifacts = [...(item.turn.artifacts || []), a]
+      }
+    }
+    // F1：四分量分别存 run（环境/目标/指标/干净各自成立，不合成单一绿色成功）。
+    run.autoReport = {
+      environment_ready: res?.environment_ready ?? null,
+      execution_succeeded: res?.execution_succeeded ?? null,
+      metric_verdict: res?.metric_verdict ?? null,
+      clean_verification: res?.clean_verification ?? null,
+      clean_note: res?.clean_note ?? '',
+      goal: res?.goal ?? null,
+      operation_summary: res?.operation_summary ?? null,
+      legacy_target: !!res?.legacy_target,
+      metric_note: res?.metric_note ?? '',
+    }
+    persistSessions()
+    showToast(`报告已生成：执行${res?.execution_succeeded ? '成功' : '失败'} · 指标${res?.metric_verdict || '—'} · ${res?.artifacts?.length || 0} 个产物`, 'success')
+  } catch (err) {
+    run.reportRequested = false
+    showToast(err?.message || '报告生成失败', 'error')
+  }
+}
+
+// ── SR6 正式格式产物：Word .docx＋LaTeX .tex（确定性转换，不经 LLM） ──
+async function requestRunFormats(id) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const run = item?.run
+  const runId = item?.runId
+  if (!run || !runId || run.formatsRequested) return
+  run.formatsRequested = true
+  try {
+    const res = await requestNexusRunFormats(runId)
+    for (const a of res?.artifacts || []) {
+      if (a?.artifact_id && !(item.turn.artifacts || []).some((x) => x.artifact_id === a.artifact_id)) {
+        item.turn.artifacts = [...(item.turn.artifacts || []), a]
+      }
+    }
+    persistSessions()
+    showToast(`正式格式已生成：Word ${res?.checks?.docx?.ok ? '通过' : '异常'} · LaTeX ${res?.checks?.tex?.ok ? '通过' : '异常'} · 编译${res?.checks?.compile?.code || '—'}`, 'success')
+  } catch (err) {
+    run.formatsRequested = false
+    showToast(err?.message || '正式格式生成失败', 'error')
+  }
+}
+
+// ── SR6 干净验证：全新沙箱重放冻结配方（只在 Auto 下可用） ──
+// 即返 verifying（后台落盘后经详情轮询自动更新）；已有结论直接返回。
+async function requestCleanVerify(id) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const run = item?.run
+  const runId = item?.runId
+  if (!run || !runId || run.cleanStatus === 'verifying') return
+  try {
+    const res = await requestNexusRunCleanVerify(runId, execMode.value || 'ask')
+    run.cleanStatus = res?.clean_verification || ''
+    persistSessions()
+    if (res?.deduped) {
+      showToast(`干净验证（已有结论）：${res?.clean_verification || '—'}`, 'success')
+    } else if (res?.clean_verification === 'verifying') {
+      showToast('干净验证运行中（全新沙箱重放），完成后自动更新', 'success')
+    } else {
+      showToast(`干净验证：${res?.clean_verification || '—'}（${res?.matched ?? '—'}/${res?.total ?? '—'} 步一致）`, 'success')
+    }
+  } catch (err) {
+    showToast(err?.message || '干净验证失败', 'error')
+  }
+}
+
+// ── F2 恢复认领：对账在途意图，需继续时后台续跑同一实验 ──
+// 即返对账结论（终态接管/接管运行中/未知）；已有执行者仅观察，不重复启动。
+async function requestResumeRun(id) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const run = item?.run
+  const runId = item?.runId
+  if (!run || !runId || run.resuming) return
+  run.resuming = true
+  try {
+    const res = await requestNexusRunResume(runId, execMode.value || 'ask')
+    if (typeof res?.recovery_status === 'string') run.recoveryStatus = res.recovery_status
+    if (res?.detail) run.completionReason = res.detail
+    persistSessions()
+    if (res?.needs_continue) {
+      showToast('已认领并继续执行（后台续跑，详情轮询可见）', 'success')
+    } else if (res?.recovery_status === 'unrecoverable') {
+      showToast(`不可自动恢复：${res?.detail || '见详情'}`, 'warning')
+    } else {
+      showToast(`对账完成：${res?.detail || '无待办'}`, 'success')
+    }
+  } catch (err) {
+    showToast(err?.message || '恢复认领失败', 'error')
+  } finally {
+    run.resuming = false
+  }
+}
+
+// ── F3 操作级中断：只停卡住的命令，实验继续 ──
+// 会话在途 → 中断＋确认；one-shot 在途 → 409（请走 run 级取消）。
+async function requestInterruptOp(id, operationId) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const run = item?.run
+  const runId = item?.runId
+  if (!run || !runId || !operationId || run.interrupting) return
+  run.interrupting = true
+  try {
+    const res = await cancelNexusRunOperation(runId, operationId)
+    persistSessions()
+    if (res?.unconfirmed) {
+      showToast('中断未确认停止，容器已回收（原因保留），可换命令继续', 'warning')
+    } else {
+      showToast(`已中断 ${operationId}（已确认停止），可继续排错`, 'success')
+    }
+  } catch (err) {
+    showToast(err?.message || '中断失败', 'error')
+  } finally {
+    run.interrupting = false
+  }
+}
+
+// ── NX-LB1 preset 投影：参数白名单唯一来源，前端不硬编码 ──
+const reproPresets = ref([])
+const activePreset = computed(() => {
+  const pid = activeRun.value?.run?.preset_id
+  if (!pid) return null
+  return reproPresets.value.find((p) => (p.preset_id || p.id) === pid) || null
+})
+
+async function loadReproPresets() {
+  try {
+    const res = await listNexusReproPresets()
+    const data = res?.data ?? res
+    const list = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+    reproPresets.value = list
+  } catch {
+    reproPresets.value = []
+  }
+}
+onMounted(() => {
+  if (nexusDataSourceMode.value === 'real') loadReproPresets()
+})
+
+/**
+ * 输入框上方的审批浮窗要展示的提案：本会话**最近一个仍处于 pending** 的审批。
+ * 已批准 / 已拒绝 / 已过期的都不再浮在输入框上——它们归消息流留存。
+ */
+const pendingApproval = computed(() => {
+  const turns = currentSession.value?.turns || []
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    const t = turns[i]
+    if (t?.approval?.status === 'pending' && t.approval.approval_id) return t
+  }
+  return null
+})
+
+/* ── NX-LB2 审批待办恢复 + 提案摘要（审批浮窗 v2）──
+ * SSE 推来的审批卡在消息流里；但刷新/换设备后只剩服务端记录，
+ * 浮窗必须能从 GET /approvals?session_id&status=pending 恢复待办。
+ * 两条来源按 approval_id 去重，服务端为准（它可能更新了版本/失效）。 */
+const restoredApprovals = ref([])
+
+async function loadPendingApprovals() {
+  const sid = activeSessionId.value
+  if (!sid || nexusDataSourceMode.value !== 'real') {
+    restoredApprovals.value = []
+    return
+  }
+  try {
+    const res = await listNexusApprovals(sid, 'pending')
+    const data = res?.data ?? res
+    const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+    restoredApprovals.value = items
+  } catch {
+    // fail-closed：拉不到就只显示 SSE 来源的待办，不伪造
+    restoredApprovals.value = []
+  }
+}
+
+/** 归一化：SSE 的 turn 与服务端待办项形状不同，浮窗只认这一种 */
+function normalizeApproval(src) {
+  const ap = src?.approval || src || {}
+  return {
+    id: ap.approval_id || ap.id || '',
+    preset: ap.preset_id || ap.preset || '',
+    objective: ap.objective || '',
+    repo: ap.repo_url || ap.repo || '',
+    license: ap.repo_license || ap.license || '',
+    budget: ap.budget || {},
+    planHash: ap.plan_hash || ap.hash || '',
+    expiresAt: ap.expires_at || '',
+    proposalId: ap.proposal_id || '',
+    proposalVersion: ap.proposal_version ?? ap.version ?? null,
+    diff: Array.isArray(ap.diff) ? ap.diff : Array.isArray(ap.parameter_diff) ? ap.parameter_diff : [],
+    baselineNote: ap.baseline_note || ap.metric_policy || '',
+    status: ap.status || '',
+    turn: src?.approval ? src : null
+  }
+}
+
+/** 浮窗要展示的待办：服务端恢复项 + SSE 卡，按 approval_id 去重（服务端优先） */
+const pendingItems = computed(() => {
+  const map = new Map()
+  const push = (raw) => {
+    const n = normalizeApproval(raw)
+    if (!n.id) return
+    if (!map.has(n.id)) map.set(n.id, n)
+  }
+  for (const raw of restoredApprovals.value) push(raw)
+  const t = pendingApproval.value
+  if (t) {
+    const n = normalizeApproval(t)
+    // 服务端那条可能带更全的 diff/objective：有提案信息的留服务端，否则补 SSE
+    if (!map.has(n.id)) map.set(n.id, n)
+  }
+  return [...map.values()]
+})
+
+/** 服务端恢复项（没有 SSE turn）批准：decide 后走同一 execute 核销 */
+async function approveRestored(item) {
+  if (item.turn) {
+    await decideApprovalFor(item.turn, 'approved')
+    await loadPendingApprovals()
+    return
+  }
+  try {
+    await decideNexusApproval(item.id, 'approved')
+    await executeApprovedRepro(item.id, activeSessionId.value || 'default', {
+      mode: activeMode.value,
+      researchExecutionMode: isResearchMode.value ? execMode.value : null,
+    })
+    showToast('已批准并提交执行', 'success')
+  } catch (err) {
+    const code = err?.response?.data?.code || err?.code || ''
+    if (code === 'APPROVAL_STALE' || code === 'APPROVAL_INVALID') {
+      showToast('方案已更新或票据失效，请重新确认', 'error')
+    } else {
+      showToast('批准失败，请重试', 'error')
+    }
+  }
+  await loadPendingApprovals()
+}
+
+// T5：浮窗合并操作——切换 Auto＋本次批准＋执行一次完成（无 turn 项专用）。
+async function approveRestoredWithAuto(item) {
+  if (item.turn) {
+    await approveWithAuto(item.turn)
+    await loadPendingApprovals()
+    return
+  }
+  try {
+    await setExecMode('auto')
+    await decideNexusApproval(item.id, 'approved')
+    await executeApprovedRepro(item.id, activeSessionId.value || 'default', {
+      mode: activeMode.value,
+      researchExecutionMode: 'auto',
+    })
+    showToast('已切换 Auto 并批准提交执行', 'success')
+  } catch (err) {
+    showToast(err?.message || '切换并批准失败，未执行任何操作', 'error')
+  }
+  await loadPendingApprovals()
+}
+
+async function rejectRestored(item) {
+  if (item.turn) {
+    await decideApprovalFor(item.turn, 'rejected')
+    await loadPendingApprovals()
+    return
+  }
+  try {
+    await decideNexusApproval(item.id, 'rejected')
+    showToast('已拒绝', 'success')
+  } catch {
+    showToast('拒绝失败，请重试', 'error')
+  }
+  await loadPendingApprovals()
+}
+
+watch(activeSessionId, () => {
+  loadPendingApprovals()
+})
+onMounted(() => {
+  if (nexusDataSourceMode.value === 'real') loadPendingApprovals()
+})
+
+function diffKindLabel(kind) {
+  const k = String(kind || '').toLowerCase()
+  if (k.includes('add') || k === 'new') return '新增'
+  if (k.includes('del') || k.includes('remove')) return '移除'
+  return '修改'
+}
+function diffKindClass(kind) {
+  const k = String(kind || '').toLowerCase()
+  if (k.includes('add') || k === 'new') return 'is-add'
+  if (k.includes('del') || k.includes('remove')) return 'is-del'
+  return 'is-mod'
+}
+
+/**
+ * 浮窗继承的引用徽标：如实写出「带进去了什么」。
+ * 只带 job_id / 步骤 / 有界日志行数，不复制全量日志、不混入其他会话。
+ */
+const askContextPill = computed(() => {
+  const run = activeRun.value?.run
+  if (!run) return ''
+  const step = run.currentStep ?? '—'
+  const ref = run.job_id || run.run_id || run.runId || '—'
+  return `附引用 ${ref} · 第 ${step} 步 · 日志末 ${reproLogLines(run).length} 行`
+})
+
+/** 「查看完整方案」：滚到消息流里那张审批卡（提案全文在那儿，浮窗只是摘要） */
+function scrollToApprovalInStream() {
+  setWorkspaceView('chat')
+  nextTick(() => {
+    const el = document.querySelector('.nx-repro-live')
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  })
 }
 
 function initSessions() {
@@ -296,6 +1023,59 @@ function switchSession(id) {
   if (target) {
     void restoreSessionRuns(target)
     void restoreSessionPlan(target)
+    // T5：执行模式随会话恢复（服务端偏好真相源；失败本地默认 ask）。
+    void restoreExecMode(target)
+  }
+}
+
+// ── T5 Ask/Auto：Research 输入框选择器 ＋ 服务端会话偏好 ──
+// - 只在 Research 展示；General 隐藏且不发送（服务端执行核无授权）。
+// - 同一会话的研究对话与询问浮窗共享同一 execMode（单一状态源）。
+// - 刷新/切会话由服务端偏好恢复；保存失败只本地缓存并如实提示。
+// - 切 Ask 只约束后续新请求：已启动 run 继续按原授权执行，不暗中取消。
+const execMode = ref('ask')
+const execModeSaved = ref(true)
+
+function sessionExecKey(id) {
+  return `nexus_exec_mode_${id || 'default'}`
+}
+
+async function restoreExecMode(session) {
+  if (!session || nexusDataSourceMode.value !== 'real') return
+  try {
+    const res = await getNexusSessionExecutionMode(session.id)
+    const mode = res?.research_execution_mode
+    if (mode === 'ask' || mode === 'auto') {
+      execMode.value = mode
+      execModeSaved.value = true
+      try { localStorage.setItem(sessionExecKey(session.id), mode) } catch { /* 忽略 */ }
+      return
+    }
+  } catch { /* 失败回落本地 */ }
+  try {
+    const cached = localStorage.getItem(sessionExecKey(session.id))
+    execMode.value = cached === 'auto' ? 'auto' : 'ask'
+  } catch { execMode.value = 'ask' }
+  execModeSaved.value = false
+}
+
+/* 选择器说明：分段控件（与视图切换器同语汇），两项一句话差别见模板 title；
+ * 模式真值只有 ask|auto（服务端校验，未知值 400）。 */
+
+async function setExecMode(mode) {
+  if (mode !== 'ask' && mode !== 'auto') return
+  execMode.value = mode
+  execModeSaved.value = true
+  const sid = currentSession.value?.id
+  if (!sid || nexusDataSourceMode.value !== 'real') return
+  try {
+    await saveNexusSessionExecutionMode(sid, mode)
+    try { localStorage.setItem(sessionExecKey(sid), mode) } catch { /* 忽略 */ }
+  } catch {
+    // 偏好保存失败：只本地缓存并如实提示，不假称跨设备已保存。
+    execModeSaved.value = false
+    try { localStorage.setItem(sessionExecKey(sid), mode) } catch { /* 忽略 */ }
+    showToast('执行模式偏好保存失败，仅本次会话有效', 'warning')
   }
 }
 
@@ -407,6 +1187,37 @@ async function backfillRestoredRunDetail(turn, jobId) {
   persistSessions()
 }
 
+// v6 实验名后端接线：按 job_id 重建命名投影（执行后新建 run 即时收敛用；
+// 恢复路径复用已拉取的 runs 列表，不另发请求）。失败静默——本地回退名不受影响。
+async function refreshBackendRunNames() {
+  const session = currentSession.value
+  if (!session || nexusDataSourceMode.value !== 'real') return
+  let runs
+  try {
+    const res = await listNexusRuns(session.id)
+    runs = Array.isArray(res?.items) ? res.items : []
+  } catch {
+    return
+  }
+  for (const run of runs) {
+    // T5：自主 run 无 job_id，按 run_id 入 map（与 job 键不碰撞）。
+    const mapKey = run?.job_id || run?.run_id
+    if (!mapKey) continue
+    backendRunNames.value[mapKey] = {
+      display_title: run.display_title || '',
+      title: run.title || '',
+      run_number: run.run_number ?? null,
+      version: run.version ?? 1,
+      preset_display_name: run.preset_display_name || '',
+      paper_title: run.paper_title || '',
+      runId: run.run_id || '',
+    }
+    const existing = (session.turns || []).find((t) => t.reproRun?.job_id === run.job_id
+      || (run.run_id && (t.reproRun?.run_id === run.run_id || t.reproRun?.runId === run.run_id)))
+    if (existing) stampBackendRunName(existing.reproRun, backendRunNames.value[mapKey])
+  }
+}
+
 async function restoreSessionRuns(session) {
   if (!session || _runsRestoredIds.has(session.id) || nexusDataSourceMode.value !== 'real') return
   let runs = []
@@ -419,24 +1230,49 @@ async function restoreSessionRuns(session) {
   _runsRestoredIds.add(session.id)
   if (!Array.isArray(session.turns)) session.turns = []
   for (const run of runs) {
-    if (!run?.job_id) continue
+    const isAuto = (run?.tool === 'autonomous_experiment') || (!run?.job_id && !!run?.run_id)
+    if (!run?.job_id && !isAuto) continue
+    // v6 实验名后端接线（NX-LB1）：命名投影按 job_id/run_id 入 map，
+    // sessionRuns 合并后显示（用户命名优先、否则 preset + 稳定序号）。
+    const mapKey = run.job_id || run.run_id
+    const backend = {
+      display_title: run.display_title || '',
+      title: run.title || '',
+      run_number: run.run_number ?? null,
+      version: run.version ?? 1,
+      preset_display_name: run.preset_display_name || '',
+      paper_title: run.paper_title || '',
+      runId: run.run_id || '',
+    }
+    backendRunNames.value[mapKey] = backend
     const liveStatus = run.live?.status || run.status || 'unknown'
     const terminal = REPRO_TERMINAL_STATUSES.includes(liveStatus)
-    const existing = session.turns.find((t) => t.reproRun?.job_id === run.job_id)
+    const existing = session.turns.find((t) => (run.job_id && t.reproRun?.job_id === run.job_id)
+      || (run.run_id && (t.reproRun?.run_id === run.run_id || t.reproRun?.runId === run.run_id)))
     if (existing) {
       // 本地 turn 状态落后于远端（如轮询断档期间作业已终态）→ 也恢复一次轮询：
       // 单次拉取即更新卡片并自行停止，不重复提交。
       if (!REPRO_TERMINAL_STATUSES.includes(existing.reproRun.status)
         && !['unknown', 'stale'].includes(liveStatus)) {
-        startReproPolling(existing, run.job_id)
+        if (run.job_id) startReproPolling(existing, run.job_id)
+        else if (run.run_id) startRunDetailPolling(existing, run.run_id)
+      }
+      // 跨设备重命名一致：后端命名（含 title/display_title/序号/版本）向本地收敛。
+      stampBackendRunName(existing.reproRun, backend)
+      // T5：自主恢复带回 attempts/live（详情合并口径一致）。
+      if (isAuto && run.live?.attempts) {
+        existing.reproRun.attempts = run.live.attempts
+        existing.reproRun.provider = 'autonomous'
+        existing.reproRun.reconciling = run.live.status === 'reconciling'
       }
       continue
     }
     // 孤儿 run（换设备/刷新丢本地 turn）：建恢复 turn 展示，不重新提交；
     // reportRequested=true 抑制自动补报告（避免重复产物），用户可手动补领。
+    // T5：自主孤儿 run 同样恢复（attempt 投影＋详情轮询，不重放执行）。
     const known = REPRO_RESTORE_KNOWN.includes(liveStatus)
     const turn = {
-      question: `（已恢复）${run.preset_id || '实验'}复现`,
+      question: `（已恢复）${run.preset_id || run.preset_display_name || '实验'}复现`,
       answer: '',
       toolEvents: [],
       papers: [],
@@ -448,9 +1284,14 @@ async function restoreSessionRuns(session) {
       restoredRun: true,
       createdAt: null,
       reproRun: {
-        job_id: run.job_id,
+        job_id: run.job_id || '',
+        run_id: run.run_id || '',
+        runId: run.run_id || '',
+        provider: isAuto ? 'autonomous' : 'preset',
         status: known ? liveStatus : 'unknown',
         stages: [],
+        attempts: isAuto && Array.isArray(run.live?.attempts) ? run.live.attempts : [],
+        reconciling: isAuto && run.live?.status === 'reconciling',
         stageEvents: Array.isArray(run.live?.stage_events) ? run.live.stage_events : [],
         currentStep: run.live?.current_step ?? null,
         liveLog: '',
@@ -466,16 +1307,27 @@ async function restoreSessionRuns(session) {
         detail: run.live?.note || run.live?.detail || null,
         seedUsed: false,
         reportError: null,
+        // 后端命名随行（恢复 turn 持久化后仍显示服务端名，不回退本地命名）。
+        display_title: run.display_title || '',
+        title: run.title || '',
+        run_number: run.run_number ?? null,
+        version: run.version ?? 1,
+        preset_display_name: run.preset_display_name || '',
+        paper_title: run.paper_title || '',
+        runId: run.run_id || '',
       },
     }
     session.turns.push(turn)
     // F4：恢复时为所有已知作业补齐详情——queued/running/**cancelling** 持续
     // 轮询；终态（succeeded/failed/rejected/cancelled）一次性拉取历史步骤
     // 与日志，不因"清单只给状态"而停在空 Console。
+    // T5：自主 run 走详情轮询（attempt 恢复），同样不重放执行。
     if (REPRO_RESTORE_NONTERMINAL.includes(liveStatus)) {
-      startReproPolling(turn, run.job_id)
+      if (run.job_id) startReproPolling(turn, run.job_id)
+      else if (run.run_id) startRunDetailPolling(turn, run.run_id)
     } else if (known) {
-      void backfillRestoredRunDetail(turn, run.job_id)
+      if (run.job_id) void backfillRestoredRunDetail(turn, run.job_id)
+      else if (run.run_id) startRunDetailPolling(turn, run.run_id)
     }
   }
   persistSessions()
@@ -722,26 +1574,13 @@ const REPRO_POLL_INTERVAL_MS = 5000
 const REPRO_POLL_MAX = 200 // 5s × 200 ≈ 17min，覆盖 Worker 900s 硬截止 + 余量
 const reproPollTimers = new Map()
 
-const REPRO_STATUS_LABELS = {
-  queued: '排队中',
-  running: '执行中',
-  succeeded: '已完成',
-  failed: '失败',
-  rejected: '已拒绝',
-  cancelling: '取消中',
-  cancelled: '已取消',
-  unknown: '状态未知',
-}
-
-const REPRO_TERMINAL_STATUSES = ['succeeded', 'failed', 'rejected', 'cancelled']
-// F4：恢复分类。注意必须声明在 REPRO_TERMINAL_STATUSES 之后——模块级
-// 展开引用，放前面会触发 TDZ ReferenceError 使整个 chunk 崩掉（线上实测）。
+// 复现作业的状态/阶段/耗时/日志等**只读投影**已抽到 ./reproShared.js ——
+// 会话内 Console 与实验工作台（v6 主舞台）共用同一真相源，不允许两处各写一份。
+// F4：恢复分类。注意声明顺序——模块级展开引用，放前面会触发 TDZ 使整个 chunk 崩掉（线上实测）。
 const REPRO_RESTORE_NONTERMINAL = ['queued', 'running', 'cancelling']
-const REPRO_RESTORE_KNOWN = [...REPRO_RESTORE_NONTERMINAL, ...REPRO_TERMINAL_STATUSES]
-
-function reproStatusLabel(run) {
-  return REPRO_STATUS_LABELS[run?.status] || run?.status || '未知'
-}
+const REPRO_RESTORE_KNOWN = [...REPRO_RESTORE_NONTERMINAL, ...REPRO_TERMINAL_STATUSES,
+  // T5：reconciling 是自主 run 的已知展示态（执行器失联但运行未终止），继续轮询。
+  'reconciling']
 
 // NX-G2：审批状态文案（pending/approved/consumed/rejected/expired）。
 const APPROVAL_STATUS_LABELS = {
@@ -820,25 +1659,111 @@ function startReproPolling(turn, jobId) {
   void tick()
 }
 
-// ── NX-E3 取消 + NX-E2 Console 投影辅助 ──
-function reproCancellable(run) {
-  return ['queued', 'running', 'cancelling'].includes(run?.status)
-}
+// ── NX-E3 取消（投影辅助见 ./reproShared.js）──
+// T5：聊天 Stop（abort SSE）绝不冒充取消；取消走独立 API。
+// 自主 run 无 job_id → 按 run_id 经 Runtime 取消（回收确认后 cancelled）。
 
 async function cancelReproRun(turn) {
   const run = turn?.reproRun
-  if (!run?.job_id || run.cancelling || !reproCancellable(run)) return
+  if (!run || run.cancelling || !reproCancellable(run)) return
+  const runId = run.runId || run.run_id || ''
+  if (!run.job_id && !runId) return
   run.cancelling = true
   try {
+    if (!run.job_id && runId) {
+      const res = await cancelNexusRun(runId, activeSessionId.value || 'default')
+      run.status = res?.status || 'cancelling'
+      run.reconciling = false
+      persistSessions()
+      if (!res?.already_terminal) showToast('已发出取消，等待回收确认…', 'warning')
+      return
+    }
     const res = await cancelNexusReproJob(run.job_id)
     run.status = res?.status || 'cancelling'
     persistSessions()
     if (!res?.already_terminal) showToast('已发出取消，等待回收确认…', 'warning')
   } catch (err) {
-    showToast(err?.message || '取消失败，作业可能已结束', 'error')
+    showToast(err?.message || '取消失败，运行可能已结束', 'error')
   } finally {
     run.cancelling = false
   }
+}
+
+// T5：自主 run 详情轮询（服务端快照恢复）：attempt 投影＋reconciling 语义。
+// 与作业轮询共用 timers 表（键为 run_id），上限一致；终态停轮询。
+function applyRunDetail(turn, detail) {
+  if (!turn?.reproRun || !detail) return
+  const run = turn.reproRun
+  run.status = detail.status || run.status
+  run.provider = 'autonomous'
+  run.attempts = Array.isArray(detail.live?.attempts) ? detail.live.attempts : (run.attempts || [])
+  run.attempt_no = detail.live?.attempt_no ?? detail.attempt_no ?? run.attempt_no ?? 0
+  run.reconciling = (detail.live?.status === 'reconciling')
+  // SR6：干净B结论随详情直通（""=未验证/verifying=运行中/passed/failed）。
+  if (typeof detail.clean_status === 'string') run.cleanStatus = detail.clean_status
+  // F2：恢复状态随详情直通（UI 不做新枚举分支，只读展示）。
+  if (typeof detail.live?.recovery_status === 'string') run.recoveryStatus = detail.live.recovery_status
+  if (typeof detail.live?.completion_reason === 'string') run.completionReason = detail.live.completion_reason
+  // F3：在途增量合并（游标按 op 推进；reset 即替换缓冲）。
+  const increments = detail.live?.log_increments
+  if (increments && typeof increments === 'object') {
+    if (!run.opLogText || typeof run.opLogText !== 'object') run.opLogText = {}
+    if (!run.opLogCursors || typeof run.opLogCursors !== 'object') run.opLogCursors = {}
+    for (const [opId, inc] of Object.entries(increments)) {
+      if (!inc || typeof inc !== 'object') continue
+      const text = typeof inc.increment === 'string' ? inc.increment : ''
+      if (inc.reset) {
+        run.opLogText[opId] = text
+      } else {
+        run.opLogText[opId] = (run.opLogText[opId] || '') + text
+      }
+      if (typeof inc.offset === 'number') run.opLogCursors[opId] = inc.offset
+    }
+  }
+  if (typeof detail.live?.active_operation === 'string') run.activeOperation = detail.live.active_operation || null
+  run.detail = detail.live?.detail || detail.live?.note || run.detail || null
+  // 自主运行中增量日志：取最后一条有日志尾的 attempt（只读呈现）。
+  if (run.status === 'running' && Array.isArray(run.attempts)) {
+    const tailed = run.attempts.filter((a) => a.log_tail)
+    if (tailed.length) run.liveLog = tailed[tailed.length - 1].log_tail
+  }
+  stampBackendRunName(run, {
+    display_title: detail.display_title || '',
+    title: detail.title || '',
+    run_number: detail.run_number ?? null,
+    version: detail.version ?? 1,
+    preset_display_name: detail.preset_display_name || '',
+    paper_title: detail.paper_title || '',
+    runId: detail.run_id || '',
+  })
+}
+
+function startRunDetailPolling(turn, runId) {
+  if (!runId || reproPollTimers.has(runId)) return
+  let polls = 0
+  const tick = async () => {
+    polls += 1
+    if (polls > REPRO_POLL_MAX) {
+      stopReproPolling(runId)
+      if (turn?.reproRun) turn.reproRun.pollExhausted = true
+      return
+    }
+    let detail
+    try {
+      // F3：携带游标轮询在途增量（游标在 applyRunDetail 内推进）。
+      detail = await getNexusRunDetail(runId, turn?.reproRun?.opLogCursors)
+    } catch {
+      return // 单次失败不终止轮询；上限兜底
+    }
+    if (!detail || !turn?.reproRun) return
+    applyRunDetail(turn, detail)
+    persistSessions()
+    if (REPRO_TERMINAL_STATUSES.includes(detail.status)) {
+      stopReproPolling(runId)
+    }
+  }
+  reproPollTimers.set(runId, setInterval(tick, REPRO_POLL_INTERVAL_MS))
+  void tick()
 }
 
 function toggleReproExpanded(turn) {
@@ -848,89 +1773,6 @@ function toggleReproExpanded(turn) {
   persistSessions()
 }
 
-// Console 阶段条：把 Worker 真实 stage_events 投影到固定六段轨道。
-const REPRO_RAIL = [
-  { stage: 'preparing', label: 'Preparing' },
-  { stage: 'building', label: 'Building' },
-  { stage: 'running', label: 'Running' },
-  { stage: 'metric', label: 'Metric' },
-  { stage: 'verifying', label: 'Verifying' },
-  { stage: 'completed', label: 'Completed' },
-]
-
-function reproStageRail(run) {
-  const events = Array.isArray(run.stageEvents) ? run.stageEvents : []
-  const latest = {}
-  for (const event of events) {
-    const prev = latest[event.stage]
-    if (!prev || (event.seq ?? 0) >= (prev.seq ?? 0)) latest[event.stage] = event
-  }
-  const badTerminal = ['failed', 'rejected', 'cancelled'].includes(run.status)
-  return REPRO_RAIL.map(({ stage, label }) => {
-    const event = latest[stage]
-    let state = 'pending'
-    if (event) {
-      if (event.status === 'done') state = 'done'
-      else if (event.status === 'skipped' || event.status === 'not_applicable') state = 'skipped'
-      else if (event.status === 'failed') state = 'failed'
-      else if (event.status === 'started') state = badTerminal ? 'failed' : 'current'
-    }
-    return { stage, label, state, note: event?.note || '' }
-  })
-}
-
-function reproStageNotes(run) {
-  const events = Array.isArray(run.stageEvents) ? run.stageEvents : []
-  return events
-    .filter((e) => e.status === 'skipped' || e.status === 'not_applicable')
-    .map((e) => `${e.stage}：${e.note || '本批不适用'}`)
-    .join('；')
-}
-
-function reproIsCurrentStep(run, index) {
-  return run.status === 'running' && run.currentStep === index
-}
-
-function reproStepState(run, step) {
-  if (reproIsCurrentStep(run, step.index)) return 'run'
-  if (step.timed_out) return 'err'
-  if (step.exit_code === 0) return 'ok'
-  if (step.exit_code != null) return 'err'
-  return 'pend'
-}
-
-function reproStepLabel(run, step) {
-  const state = reproStepState(run, step)
-  return { ok: '完成', err: '失败', run: '运行中', pend: '待执行' }[state]
-}
-
-function reproLogText(run) {
-  if (['running', 'cancelling', 'queued'].includes(run.status) && run.liveLog) {
-    return run.liveLog
-  }
-  const withLog = (run.stages || []).filter((s) => s.log_tail)
-  return withLog.length ? withLog[withLog.length - 1].log_tail : ''
-}
-
-function reproLogSource(run) {
-  if (['running', 'cancelling'].includes(run.status)) {
-    return `运行中 · 第 ${run.currentStep ?? '—'} 步（增量）`
-  }
-  return '终态日志尾'
-}
-
-function reproLogLines(run) {
-  const text = reproLogText(run)
-  return text ? text.replace(/\n+$/, '').split('\n').slice(-20).join('\n') : ''
-}
-
-function reproElapsed(run) {
-  if (!run.startedAt) return ''
-  const end = run.finishedAt || (run.status === 'running' ? Date.now() / 1000 : null)
-  if (!end) return ''
-  const total = Math.max(0, Math.round(end - run.startedAt))
-  return total >= 60 ? `${Math.floor(total / 60)}m${String(total % 60).padStart(2, '0')}s` : `${total}s`
-}
 
 // ── NX-G2 执行审批：决定 + 手工执行（UI 只提交决定，放行由服务端核销）──
 async function decideApprovalFor(turn, decision) {
@@ -969,7 +1811,44 @@ async function executeApprovalFor(turn) {
   ap.executing = true
   ap.error = null
   try {
-    const res = await executeApprovedRepro(ap.approval_id, activeSessionId.value || 'default')
+    // T5：透传本次执行门（Research+Auto 才放行；Ask 由服务端 403）。
+    const res = await executeApprovedRepro(ap.approval_id, activeSessionId.value || 'default', {
+      mode: activeMode.value,
+      researchExecutionMode: isResearchMode.value ? execMode.value : null,
+    })
+    // T5 自主执行：返回 run_id（无 job），建 run 引用条并按详情轮询恢复。
+    const runId = res?.run_id
+    if (runId && !res?.job && !turn.reproRun) {
+      turn.reproRun = {
+        job_id: '',
+        run_id: runId,
+        runId,
+        status: res?.status || 'running',
+        provider: 'autonomous',
+        stages: [],
+        attempts: [],
+        stageEvents: [],
+        currentStep: null,
+        liveLog: '',
+        startedAt: null,
+        finishedAt: null,
+        expanded: true,
+        cancelling: false,
+        reconciling: false,
+        verdict: null,
+        comparison: [],
+        reportRequested: true,
+        pollExhausted: false,
+        code: null,
+        detail: null,
+        seedUsed: false,
+        reportError: null
+      }
+      persistSessions()
+      startRunDetailPolling(turn, runId)
+      void refreshBackendRunNames()
+      return
+    }
     const job = res?.job
     if (job?.job_id && !turn.reproRun) {
       turn.reproRun = {
@@ -994,6 +1873,8 @@ async function executeApprovalFor(turn) {
       }
       persistSessions()
       startReproPolling(turn, job.job_id)
+      // 本轮新建的 run 也收敛到后端命名（不等下次刷新；失败静默，保持本地回退名）。
+      void refreshBackendRunNames()
     } else if (!job?.job_id) {
       ap.error = res?.detail || res?.code || '执行未返回作业，未启动实验'
     }
@@ -1005,6 +1886,38 @@ async function executeApprovalFor(turn) {
     ap.executing = false
   }
 }
+
+// T5：Ask 下确认卡的合并操作——一次点击完成"切换 Auto＋本次批准＋执行"，
+// 不弹第二个模式确认。任一步失败如实报错，不伪装已切换/已批准。
+async function approveWithAuto(turn) {
+  const ap = turn?.approval
+  if (!ap?.approval_id || ap.deciding || ap.executing) return
+  ap.deciding = true
+  ap.error = null
+  try {
+    await setExecMode('auto')
+    const res = await decideNexusApproval(ap.approval_id, 'approved')
+    const next = res?.approval || {}
+    if (next?.status) ap.status = next.status
+    if (ap.status !== 'approved') {
+      ap.error = '批准未成功，未切换执行'
+      return
+    }
+    persistSessions()
+    await executeApprovalFor(turn)
+  } catch (err) {
+    ap.error = err?.errorCode
+      ? `${err.errorCode}：${err?.message || '切换并批准失败，未执行任何操作'}`
+      : (err?.message || '切换并批准失败，未执行任何操作')
+  } finally {
+    ap.deciding = false
+  }
+}
+
+// T5：本会话活跃 run（切换 Ask 后继续按原授权执行，不暗中取消）。
+const activeRuns = computed(() => sessionRuns.value.filter((r) =>
+  ['queued', 'running', 'cancelling'].includes(r.run.status)))
+const hasActiveRuns = computed(() => activeRuns.value.length > 0)
 
 // NX-E1：恢复 turn 手动补领报告（自动补会重复产物；手动一次由用户控制）。
 async function claimRestoredReport(turn) {
@@ -1075,10 +1988,6 @@ const readyCapabilities = computed(() =>
   effectiveCapabilities.value.filter((c) => c.effective === EFFECTIVE_STATE.READY)
 )
 
-const pendingCapabilities = computed(() =>
-  effectiveCapabilities.value.filter((c) => c.effective !== EFFECTIVE_STATE.READY)
-)
-
 function chipLabel(cap) {
   return cap.id === 'web_search' ? 'Web 搜索 · 自动' : cap.label
 }
@@ -1116,6 +2025,36 @@ function capStateTagText(cap) {
   if (cap.state === CAPABILITY_STATE.WIRED) return '已连接 · 未生效'
   return '未建立'
 }
+
+/* ── 启动页右侧「本会话上下文」：只列本轮真正生效（ready 态）的能力 ──
+ * wired/unwired 的开发中说明已按 2026-09-08 决定从界面移除：
+ * 未接入的能力不显示行（缺席 ≠ 谎称已生效），降级/未知仍如实标出。
+ * 能力真相仍在 nexusCapabilities.js，这里只做展示映射。 */
+const CONTEXT_CAP_ROWS = [
+  { id: 'web_search', k: 'Web 检索' },
+  { id: 'cs_knowledge', k: 'CS 知识库' },
+  { id: 'course_materials', k: '课程资料' }
+]
+
+function capTagClass(cap) {
+  if (!cap) return 'no'
+  if (cap.effective === EFFECTIVE_STATE.READY) return 'ok'
+  if (cap.effective === EFFECTIVE_STATE.DEGRADED || cap.effective === EFFECTIVE_STATE.UNKNOWN) return 'half'
+  if (cap.state === CAPABILITY_STATE.WIRED) return 'half'
+  return 'no'
+}
+
+const contextRows = computed(() =>
+  CONTEXT_CAP_ROWS
+    .map((r) => ({ r, cap: effectiveCapabilities.value.find((c) => c.id === r.id) }))
+    .filter(({ cap }) => cap && cap.state === CAPABILITY_STATE.READY)
+    .map(({ r, cap }) => ({
+      k: r.k,
+      v: capStateTagText(cap),
+      cls: capTagClass(cap),
+      hint: capHint(r.id)
+    }))
+)
 
 const capIconMap = {
   FileText,
@@ -1181,6 +2120,20 @@ const sessionSources = computed(() => {
         }
       } else if (evt?.name === 'search_cs_knowledge') {
         for (const item of itemsOf(evt) || []) {
+          // CR5：语料块（title/reference_id）与精编概念（name）分开收录，
+          // 回源身份保留，展示截断不删除引用入口。
+          if (item?.result_type === 'corpus_chunk' || item?.chunk_id) {
+            if (!item?.title) continue
+            csKb.push({
+              name: item.title,
+              source: item.source_kind || '',
+              course: '',
+              reference_id: item.reference_id || '',
+              chunk_id: item.chunk_id || '',
+              license: item.license || '',
+            })
+            continue
+          }
           if (!item?.name) continue
           csKb.push({ name: item.name, source: item.source || '', course: item.course || '' })
         }
@@ -1673,6 +2626,8 @@ async function runTurn(message) {
       message,
       sessionId: currentSession.value.id,
       mode: activeMode.value,
+      // T5 Ask/Auto：Research 显式发送本次 effective 值；General 不传。
+      researchExecutionMode: isResearchMode.value ? execMode.value : null,
       courseId: currentSession.value.courseId ?? null,
       model: effectiveModel.value || null,
       // NX-A1：仅发送就绪附件 id；绑定与验主在服务端完成。
@@ -2151,6 +3106,7 @@ const emptySuggestions = computed(() =>
     <!-- ── 2. 中央主工作区 ── -->
     <main class="nx-main">
       <header class="nx-top-header">
+        <div class="nx-top-left">
         <div class="nx-mode-selector-wrap nx-flyout">
           <SfxButton
             variant="tertiary"
@@ -2164,46 +3120,110 @@ const emptySuggestions = computed(() =>
             <ChevronDown :size="15" class="nx-chevron" :class="{ 'is-open': modeDropdownOpen }" />
           </SfxButton>
 
-          <!-- 模式即工具白名单：切换在菜单里直接可见"能做什么"的变化 -->
+          <!-- 模式下拉（ChatGPT 式，2026-09-08 家良拍板二次简化）：只留 名称 + 一句话差别 + ✓。
+               工具白名单不进菜单——真实白名单由服务端在执行时裁决，菜单里铺 pill 只制造噪音；
+               一句话描述已在切换前把「它做什么」说清。 -->
           <div v-if="modeDropdownOpen" class="nx-dropdown-menu">
-            <div class="nx-dropdown-head">切换工作模式</div>
             <div
               v-for="(cfg, key) in NEXUS_MODE_CONFIG"
               :key="key"
               class="nx-dropdown-item"
-              :class="{ 'is-active': activeMode === key }"
               role="button"
               tabindex="0"
               @click="switchMode(key)"
               @keydown.enter.prevent="switchMode(key)"
               @keydown.space.prevent="switchMode(key)"
             >
-              <div class="nx-dropdown-item-icon">
-                <component :is="key === NEXUS_MODES.RESEARCH ? Microscope : Sparkles" :size="17" />
+              <div class="nx-dropdown-item-title">
+                {{ cfg.label }}
+                <Check v-if="activeMode === key" :size="14" class="nx-check" />
               </div>
-              <div class="nx-dropdown-item-content">
-                <div class="nx-dropdown-item-title">
-                  {{ cfg.label }}
-                  <Check v-if="activeMode === key" :size="14" class="nx-check" />
-                </div>
-                <div class="nx-dropdown-item-desc">{{ cfg.desc }}</div>
-                <div class="nx-dropdown-tools">
-                  <span class="nx-tools-label">可用工具</span>
-                  <span v-for="t in cfg.tools" :key="t" class="nx-tool-pill">
-                    {{ formatToolDisplayName(t) }}
-                  </span>
-                </div>
-              </div>
+              <div class="nx-dropdown-item-desc">{{ cfg.desc }}</div>
             </div>
           </div>
         </div>
+
+        <!-- v6：左上角 = 当前视图的身份。研究对话显示会话名，实验工作台显示实验名。
+             实验名以后端命名为准（NX-LB1 display_title，用户命名优先、否则
+             preset 展示名 + 会话内稳定序号）；本地/demo 运行回退本地命名。 -->
+        <div class="nx-top-title">
+          <span class="nx-tt-main">
+            {{ isLabView ? (activeRun?.name || '未命名实验') : (currentSession?.title || '新对话') }}
+          </span>
+          <span class="nx-tt-sub">
+            {{ isLabView
+              ? (activeRun?.run?.job_id || activeRun?.runId || '未建立')
+              : (isResearchMode ? 'Research 会话' : 'General 会话') }}
+          </span>
+        </div>
+        </div><!-- /.nx-top-left -->
+
+        <!-- v6：视图切换器固定右上角，两个视图同位同款。
+             工作台内不再提供左上「← 返回研究对话」——切换器即返回：
+             一处切换、处处可见，用户不会在两个层级间迷路。 -->
+        <div
+          v-if="isResearchMode"
+          class="nx-view-switch"
+          role="tablist"
+          aria-label="本会话视图切换"
+        >
+          <span
+            class="nx-vs-btn"
+            :class="{ 'is-on': !isLabView }"
+            role="tab"
+            tabindex="0"
+            :aria-selected="!isLabView"
+            @click="setWorkspaceView('chat')"
+            @keydown.enter.prevent="setWorkspaceView('chat')"
+            @keydown.space.prevent="setWorkspaceView('chat')"
+          >研究对话</span>
+          <span
+            class="nx-vs-btn"
+            :class="{ 'is-on': isLabView }"
+            role="tab"
+            tabindex="0"
+            :aria-selected="isLabView"
+            @click="setWorkspaceView('lab')"
+            @keydown.enter.prevent="setWorkspaceView('lab')"
+            @keydown.space.prevent="setWorkspaceView('lab')"
+          >实验工作台<b v-if="runningRunCount" class="nx-vs-cnt">{{ runningRunCount }} 个运行中</b></span>
+        </div>
       </header>
 
-      <!-- Context Chips：首屏只保留 ready 能力 + 课程；其余收进「待接入」popover -->
+      <!-- v6：实验工作台 —— 同一 Research 会话的第二视图，与上方切换器联动。
+           不新增路由、不是独立页面；它只是本会话 run 数据的另一种视图。 -->
+      <NexusExperimentWorkspace
+        v-if="isLabView"
+        class="nx-lab-host"
+        :runs="sessionRuns"
+        :active-id="activeRunId"
+        :artifacts="activeRunArtifacts"
+        :cancelling="!!activeRun?.run?.cancelling"
+        :notes="runNotes"
+        :preset="activePreset"
+        :noting="noting"
+        :execution-mode="execMode"
+        @switch="switchActiveRun"
+        @cancel="cancelRunFromWorkspace"
+        @ask="openAskWindow"
+        @analyze="analyzeRunResult"
+        @report="requestAutoReport"
+        @formats="requestRunFormats"
+        @clean-verify="requestCleanVerify"
+        @resume="requestResumeRun"
+        @interrupt-op="({ id, operationId }) => requestInterruptOp(id, operationId)"
+        @rerun="rerunFromWorkspace"
+        @rename="renameRunFromWorkspace"
+        @add-note="addRunNote"
+      />
+
+      <!-- Context Chips：只展示 ready 能力。
+           工具已配齐，wired/unwired 的开发中说明不再上界面（2026-09-08 家良拍板）；
+           能力接线真相仍由 nexusCapabilities.js 单源驱动，chips 自动跟随。 -->
       <!-- Context Chips：只放「本轮回答真正会用到的能力」。
            课程绑定入口已下沉——首屏在启动页引导条，对话中在右栏「上下文」面板
            （UX 评审 P1-4）。它属于低频设置，不该在每轮对话的顶部占一个 chip。 -->
-      <div class="nx-context-bar">
+      <div v-show="!isLabView" class="nx-context-bar">
         <div class="nx-chips-scroll">
           <span
             v-for="cap in readyCapabilities"
@@ -2214,141 +3234,148 @@ const emptySuggestions = computed(() =>
             <component :is="capIconMap[cap.icon]" :size="13" class="nx-chip-icon" />
             <span>{{ chipLabel(cap) }}</span>
           </span>
-
-          <div
-            class="nx-chip is-pending nx-flyout"
-            role="button"
-            tabindex="0"
-            :aria-expanded="pendingOpen"
-            title="查看未接入能力"
-            @click.stop="pendingOpen = !pendingOpen"
-            @keydown.enter.stop.prevent="pendingOpen = !pendingOpen"
-            @keydown.space.stop.prevent="pendingOpen = !pendingOpen"
-          >
-            <span class="nx-chip-pending-mark" aria-hidden="true">◇</span>
-            <span>{{ pendingCapabilities.length }} 项待接入</span>
-            <ChevronDown :size="12" class="nx-chip-caret" :class="{ 'is-open': pendingOpen }" />
-            <div v-if="pendingOpen" class="nx-popover">
-              <div class="nx-popover-head">以下能力尚未接入运行时，接线后此界面自动生效</div>
-              <div v-for="cap in pendingCapabilities" :key="cap.id" class="nx-popover-cap">
-                <component :is="capIconMap[cap.icon]" :size="14" class="nx-popover-cap-icon" />
-                <div class="nx-popover-cap-body">
-                  <div class="nx-popover-cap-name">
-                    {{ cap.label }}
-                    <span class="nx-cap-tag" :class="cap.state">{{ capStateTagText(cap) }}</span>
-                  </div>
-                  <div class="nx-popover-cap-hint">{{ capHint(cap.id) }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 
       <!-- 状态条：演示说明 / 真实模式健康错误（互斥，同一位置） -->
-      <div v-if="nexusDataSourceMode === 'demo'" class="nx-status-strip is-demo" role="status">
+      <div v-if="nexusDataSourceMode === 'demo' && !isLabView" class="nx-status-strip is-demo" role="status">
         <TriangleAlert :size="13" class="nx-strip-icon" />
         <span>演示数据：由浏览器本地模拟，不会发送到服务器；会话仅保存在本机。</span>
       </div>
-      <div v-else-if="healthError" class="nx-status-strip is-error" role="alert">
+      <div v-else-if="healthError && !isLabView" class="nx-status-strip is-error" role="alert">
         <AlertCircle :size="13" class="nx-strip-icon" />
         <span>Nexus 运行时不可达（{{ healthError }}）。可在左栏底部切换回演示数据预览界面。</span>
       </div>
 
       <!-- 消息流主滚动区 -->
-      <div ref="scrollArea" class="nx-chat-scroll">
+      <div v-show="!isLabView" ref="scrollArea" class="nx-chat-scroll">
         <!-- 空状态 -->
-        <div v-if="!currentSession?.turns?.length" class="nx-empty-workspace">
-          <div class="nx-empty-eyebrow">
-            {{ activeMode === NEXUS_MODES.RESEARCH ? 'NEXUS RESEARCH' : 'NEXUS' }}
-          </div>
-          <h2 class="nx-empty-title">
-            {{ activeMode === NEXUS_MODES.RESEARCH ? '从一个研究问题开始' : '从一个问题开始' }}
-          </h2>
-          <p class="nx-empty-subtitle">
-            {{ activeMode === NEXUS_MODES.RESEARCH
-              ? '搜索论文、整理证据、比较方法；需要验证时进入实验复现。'
-              : 'Nexus 会拆解复杂任务，检索课程资料与 Web，给出可核对的过程与答案。' }}
-          </p>
+        <!-- ── 启动页（空态）v2 · 控制台方向 ──
+             这块界面只服务一件事：让用户打出第一句话。因此：
+             · 左对齐到消息列（发出第一条消息时不跳位），不再居中；
+             · 去卡片化，靠 1px 发丝线分区；
+             · 用右侧「本会话上下文」回答真正的问题——这次回答会用到什么；
+             · 不引入任何装饰性元素（v1 的 46px 衬线标题 / 幽灵描边字已废弃）。 -->
+        <div v-if="!currentSession?.turns?.length" class="nx-welcome">
+          <section class="nx-wl-main">
+            <p class="nx-wl-eyebrow">
+              <i class="nx-wl-mark" aria-hidden="true" />
+              Nexus · {{ currentSession?.title || '新会话' }} ·
+              {{ activeMode === NEXUS_MODES.RESEARCH ? 'Research' : 'General' }}
+            </p>
+            <h2 class="nx-wl-title">
+              {{ activeMode === NEXUS_MODES.RESEARCH ? '从一个研究问题开始' : '从一个问题开始' }}
+            </h2>
+            <p class="nx-wl-lede">
+              {{ activeMode === NEXUS_MODES.RESEARCH
+                ? '搜索论文、整理证据、比较方法；需要验证时进入实验复现。'
+                : 'Nexus 会拆解复杂任务，检索课程资料与 Web，给出可核对的过程与答案。' }}
+            </p>
 
-          <!-- 模式预设卡（UX 评审 P1-5）：Mode 切换即工具白名单，
-               这个决定必须在打字之前就看得见，而不是藏在顶部的下拉里。 -->
-          <div class="nx-mode-cards">
-            <div
-              v-for="(cfg, key) in NEXUS_MODE_CONFIG"
-              :key="key"
-              class="nx-mode-card"
-              :class="{ 'is-active': activeMode === key }"
-              role="button"
-              tabindex="0"
-              :aria-pressed="activeMode === key"
-              @click="switchMode(key)"
-              @keydown.enter.prevent="switchMode(key)"
-              @keydown.space.prevent="switchMode(key)"
-            >
-              <span v-if="activeMode === key" class="nx-mc-cur">当前</span>
-              <div class="nx-mc-head">
-                <span class="nx-mc-iconbox">
-                  <component
-                    :is="key === NEXUS_MODES.RESEARCH ? Microscope : Sparkles"
-                    :size="17"
-                  />
-                </span>
-                <div class="nx-mc-titlebox">
-                  <span class="nx-mc-title">{{ cfg.label }}</span>
-                  <span class="nx-mc-sub">可用工具 {{ cfg.tools.length }} 项</span>
-                </div>
-              </div>
-              <p class="nx-mc-desc">{{ cfg.desc }}</p>
-              <div class="nx-mc-tools">
-                <span v-for="t in cfg.tools" :key="t" class="nx-tool-pill">
-                  {{ formatToolDisplayName(t) }}
+            <!-- 模式即工具白名单（UX 评审 P1-5）：打字之前就看得见，
+                 切换在原地完成；控件语汇与右上「研究对话／实验工作台」一致。 -->
+            <div class="nx-wl-modeset">
+              <div class="nx-seg" role="tablist" aria-label="工作模式">
+                <span
+                  v-for="(cfg, key, i) in NEXUS_MODE_CONFIG"
+                  :key="key"
+                  class="nx-seg-btn"
+                  :class="{ 'is-on': activeMode === key }"
+                  role="tab"
+                  tabindex="0"
+                  :aria-selected="activeMode === key"
+                  :aria-pressed="activeMode === key"
+                  @click="switchMode(key)"
+                  @keydown.enter.prevent="switchMode(key)"
+                  @keydown.space.prevent="switchMode(key)"
+                >
+                  <i class="nx-seg-no">{{ String(i + 1).padStart(2, '0') }}</i>{{ cfg.label }}
                 </span>
               </div>
+              <span
+                class="nx-wl-tools"
+                :title="`可用工具 ${NEXUS_MODE_CONFIG[activeMode].tools.length} 项：${NEXUS_MODE_CONFIG[activeMode].tools.map(formatToolDisplayName).join(' · ')}`"
+              >
+                <em>·</em>可用工具 <b>{{ NEXUS_MODE_CONFIG[activeMode].tools.length }}</b> 项<em>·</em>
+                <template
+                  v-for="(t, i) in NEXUS_MODE_CONFIG[activeMode].tools.slice(0, 5)"
+                  :key="t"
+                >
+                  <em v-if="i">·</em>{{ formatToolDisplayName(t) }}
+                </template>
+                <span
+                  v-if="NEXUS_MODE_CONFIG[activeMode].tools.length > 5"
+                  class="nx-wl-more"
+                >+{{ NEXUS_MODE_CONFIG[activeMode].tools.length - 5 }}</span>
+              </span>
             </div>
-          </div>
 
-          <!-- 课程绑定引导条（UX 评审 P1-4）：课程入口从顶部 chips 收敛到这里 -->
-          <div class="nx-start-course">
-            <BookOpen :size="14" class="nx-sc-icon" />
-            <span class="nx-sc-text">
-              {{
-                currentSession?.courseName
-                  ? `已绑定课程：${currentSession.courseName}`
-                  : '未绑定课程 · 回答只会用到 Web 与通用知识'
-              }}
-            </span>
-            <SfxButton
-              variant="secondary"
-              size="sm"
-              class="nx-sc-btn"
-              @click="coursePickerOpen = true"
-            >
-              {{ currentSession?.courseId ? '更换' : '绑定课程' }}
-            </SfxButton>
-          </div>
-
-          <div
-            class="nx-quick-cards"
-            :class="{ 'is-research': activeMode === NEXUS_MODES.RESEARCH }"
-          >
-            <div
-              v-for="sg in emptySuggestions"
-              :key="sg.title"
-              class="nx-quick-card"
-              role="button"
-              tabindex="0"
-              @click="applySuggestion(sg.prompt)"
-              @keydown.enter.prevent="applySuggestion(sg.prompt)"
-              @keydown.space.prevent="applySuggestion(sg.prompt)"
-            >
-              <component :is="capIconMap[sg.icon]" :size="15" class="nx-qc-icon" />
-              <div class="nx-qc-text">
-                <span class="nx-qc-title">{{ sg.title }}</span>
-                <span class="nx-qc-desc">{{ sg.desc }}</span>
+            <div class="nx-wl-sect">
+              <span class="nx-wl-sect-t">起点建议</span>
+              <span class="nx-wl-sect-c">Starters</span>
+            </div>
+            <div class="nx-starters">
+              <div
+                v-for="(sg, i) in emptySuggestions"
+                :key="sg.title"
+                class="nx-starter"
+                role="button"
+                tabindex="0"
+                @click="applySuggestion(sg.prompt)"
+                @keydown.enter.prevent="applySuggestion(sg.prompt)"
+                @keydown.space.prevent="applySuggestion(sg.prompt)"
+              >
+                <span class="nx-starter-no">{{ String(i + 1).padStart(2, '0') }}</span>
+                <span class="nx-starter-tx">
+                  <b>{{ sg.title }}</b>
+                  <span>{{ sg.desc }}</span>
+                </span>
+                <span class="nx-starter-ar" aria-hidden="true">→</span>
               </div>
             </div>
-          </div>
+          </section>
+
+          <!-- 右侧上下文面板：回答"这次回答会用到什么"。
+               能力三态只读 nexusCapabilities.js，这里不硬编码任何状态。 -->
+          <aside class="nx-ctx">
+            <div class="nx-ctx-h">本会话上下文 / Context</div>
+            <div class="nx-ctx-row">
+              <span class="nx-ctx-k">课程</span>
+              <span class="nx-ctx-v" :class="{ 'is-off': !currentSession?.courseId }">
+                {{ currentSession?.courseName || '未绑定' }}
+              </span>
+              <SfxButton
+                variant="secondary"
+                size="sm"
+                class="nx-ctx-bind"
+                @click="coursePickerOpen = true"
+              >
+                {{ currentSession?.courseId ? '更换' : '绑定课程' }}
+              </SfxButton>
+            </div>
+            <div
+              v-for="row in contextRows"
+              :key="row.k"
+              class="nx-ctx-row"
+              :title="row.hint"
+            >
+              <span class="nx-ctx-k">{{ row.k }}</span>
+              <span class="nx-ctx-v">
+                <span class="nx-ctx-tag" :class="row.cls">{{ row.v }}</span>
+              </span>
+            </div>
+            <div class="nx-ctx-row">
+              <span class="nx-ctx-k">会话存储</span>
+              <span class="nx-ctx-v">
+                {{ nexusDataSourceMode === 'demo' ? '本地模拟 · 仅存本机' : '仅保存在本机' }}
+              </span>
+            </div>
+            <p class="nx-ctx-note">
+              {{ currentSession?.courseId
+                ? '本轮回答会参考这门课的资料与知识图谱。'
+                : '未绑定课程时，回答只会用到 Web 与通用知识；绑定后该课的资料与知识图谱会进入检索范围。' }}
+            </p>
+          </aside>
         </div>
 
         <!-- 对话 Turns 消息流 -->
@@ -2505,7 +3532,19 @@ const emptySuggestions = computed(() =>
                   · 批准后才提交执行，未批准不会运行任何代码
                 </p>
                 <div v-if="turn.approval.status === 'pending'" class="nx-answer-actions">
+                  <!-- T5 Ask：运行按钮改为一次完成的合并操作（切换 Auto＋本次批准＋执行）。 -->
                   <SfxButton
+                    v-if="isResearchMode && execMode === 'ask'"
+                    variant="primary"
+                    size="sm"
+                    :loading="turn.approval.deciding || turn.approval.executing"
+                    title="一次点击完成切换到 Auto、本次批准与执行，不再二次确认"
+                    @click="approveWithAuto(turn)"
+                  >
+                    切换 Auto 并批准执行
+                  </SfxButton>
+                  <SfxButton
+                    v-else
                     variant="primary"
                     size="sm"
                     :loading="turn.approval.deciding || turn.approval.executing"
@@ -2520,6 +3559,20 @@ const emptySuggestions = computed(() =>
                     @click="decideApprovalFor(turn, 'rejected')"
                   >
                     拒绝
+                  </SfxButton>
+                </div>
+                <!-- T5：切 Ask 不暗中取消已启动 run；卡片下标注并保留用户取消。 -->
+                <div v-if="turn.approval.status === 'pending' && hasActiveRuns" class="nx-rl-note">
+                  已启动实验继续运行，可在工作台取消。
+                  <SfxButton
+                    v-for="r in activeRuns"
+                    :key="r.id"
+                    variant="danger"
+                    size="sm"
+                    :loading="r.run.cancelling"
+                    @click="cancelReproRun(r.turn)"
+                  >
+                    取消 {{ r.name }}
                   </SfxButton>
                 </div>
                 <p v-if="turn.approval.error" class="nx-turn-failure">{{ turn.approval.error }}</p>
@@ -2546,8 +3599,10 @@ const emptySuggestions = computed(() =>
               <div v-if="turn.reproRun" class="nx-repro-live" :class="{ 'is-collapsed': !turn.reproRun.expanded }">
                 <div class="nx-rl-head nx-cs-head" @click="toggleReproExpanded(turn)">
                   <FlaskConical :size="15" class="nx-rl-icon" />
-                  <span class="nx-rl-title">复现作业 · {{ turn.reproRun.job_id }}</span>
+                  <!-- T5：自主 run 无 job_id，标题用运行名；状态含 reconciling。 -->
+                  <span class="nx-rl-title">{{ turn.reproRun.job_id ? `复现作业 · ${turn.reproRun.job_id}` : `自主实验 · ${turn.reproRun.run_id || turn.reproRun.runId || ''}` }}</span>
                   <span class="nx-rl-status" :class="turn.reproRun.status">{{ reproStatusLabel(turn.reproRun) }}</span>
+                  <span v-if="turn.reproRun.reconciling" class="nx-rl-note" title="执行器不可达，显示登记快照；运行未终止，恢复后继续">对账中</span>
                   <span class="nx-cs-spacer" />
                   <span v-if="reproElapsed(turn.reproRun)" class="nx-cs-elapsed">{{ reproElapsed(turn.reproRun) }}</span>
                   <SfxButton
@@ -2559,12 +3614,59 @@ const emptySuggestions = computed(() =>
                   >
                     取消
                   </SfxButton>
+                  <SfxButton
+                    v-if="reproCancellable(turn.reproRun) && (turn.reproRun.runId || turn.reproRun.run_id)"
+                    variant="tertiary"
+                    size="sm"
+                    title="Nexus 请求取消本次运行时，你在此签发一次性授权（5 分钟内有效）"
+                    :loading="turn.reproRun.granting"
+                    @click.stop="grantCancelFor(turn)"
+                  >
+                    授权取消
+                  </SfxButton>
+                  <!-- v6：会话内这张卡只做「引用条」——看清状态、能取消；
+                        要看全量（日志/步骤/指标）去实验工作台，那里才是主舞台。 -->
+                  <SfxButton
+                    variant="tertiary"
+                    size="sm"
+                    title="在实验工作台查看（右上角可切回研究对话）"
+                    @click.stop="openRunInWorkspace(turn)"
+                  >
+                    打开工作台
+                  </SfxButton>
                   <span class="nx-cs-toggle">{{ turn.reproRun.expanded ? '▾' : '▸' }}</span>
                 </div>
 
                 <template v-if="turn.reproRun.expanded">
-                  <!-- 阶段条：Preparing→Building→Running→Metric→Verifying→Completed -->
-                  <div class="nx-cs-stagebar" role="list" aria-label="执行阶段">
+                  <!-- T5 自主 run：attempt 即步骤（编号/命令摘要/退出码/日志尾），
+                       不套用 Worker 六段轨道（无 Building/Verifying 即 skipped，不假装）。 -->
+                  <div v-if="turn.reproRun.provider === 'autonomous' && (turn.reproRun.attempts || []).length" class="nx-cs-sec">
+                    <div class="nx-cs-sech">
+                      <span>尝试记录</span>
+                      <span class="nx-cs-secn">实际命令与退出码只读呈现，不重放执行</span>
+                    </div>
+                    <table class="nx-cs-table">
+                      <thead>
+                        <tr><th>#</th><th>命令摘要</th><th>退出码</th><th>耗时</th><th>结果</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="a in turn.reproRun.attempts"
+                          :key="a.attempt_no"
+                          :class="{ 'is-bad': a.result === 'failed' }"
+                        >
+                          <td class="nx-cs-mono">{{ a.attempt_no }}</td>
+                          <td class="nx-cs-cmd">{{ a.command_summary }}</td>
+                          <td class="nx-cs-mono">{{ a.exit_code ?? '—' }}</td>
+                          <td class="nx-cs-mono">{{ a.duration_s != null ? `${Math.round(a.duration_s)}s` : '—' }}</td>
+                          <td><span class="nx-cs-chip" :class="`is-${a.result === 'succeeded' ? 'ok' : a.result === 'failed' ? 'err' : a.result === 'running' ? 'run' : 'pend'}`">{{ a.result === 'succeeded' ? '完成' : a.result === 'failed' ? '失败' : a.result === 'running' ? '运行中' : '—' }}</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <!-- 阶段条：Preparing→Building→Running→Metric→Verifying→Completed。
+                       自主 run 无 Worker 轨道时隐藏（attempt 表才是真相源）。 -->
+                  <div v-if="turn.reproRun.provider !== 'autonomous'" class="nx-cs-stagebar" role="list" aria-label="执行阶段">
                     <template v-for="(st, i) in reproStageRail(turn.reproRun)" :key="st.stage">
                       <div v-if="i" class="nx-cs-stgline" :class="{ 'is-done': st.state === 'done' }" />
                       <div class="nx-cs-stg" :class="`is-${st.state}`" role="listitem" :title="st.note || st.label">
@@ -2730,7 +3832,7 @@ const emptySuggestions = computed(() =>
       <NexusPlanCard :plan="currentSession?.planState?.plan" />
 
       <!-- 底部 Composer -->
-      <footer class="nx-composer-box">
+      <footer v-show="!isLabView" class="nx-composer-box">
         <div class="nx-composer-inner">
           <!-- NX-A1 附件 chips：就绪/部分解析随消息引用；失败可删重传 -->
           <div
@@ -2750,6 +3852,92 @@ const emptySuggestions = computed(() =>
               <X :size="11" class="nx-attach-remove" @click="removeSessionAttachment(a)" />
             </span>
           </div>
+          <!-- v6：审批浮窗挂在输入框上方。
+               理由：决定与「提出修改」必须在同一个视线落点——用户在输入框打字时
+               就能看到提案并改它，不必上翻到消息流里找那张卡（历史上滚过就看不见了）。
+               消息流里那张卡保留不动，作为提案的留存记录。 -->
+          <!-- v2（NX-LB2）：支持多条待办（服务端恢复 + SSE），带结构化 diff 与基线提示。
+               不静默替用户选中某个运行——每条都写明 preset 与指纹。 -->
+          <div v-for="item in pendingItems" :key="item.id" class="nx-approval-dock">
+            <div class="nx-ad-head">
+              <FlaskConical :size="14" class="nx-ad-icon" />
+              <span class="nx-ad-title">复现方案待你确认 · {{ item.preset || '未命名 preset' }}</span>
+              <span class="nx-ad-status">待批准</span>
+            </div>
+            <p v-if="item.objective" class="nx-ad-obj">{{ item.objective }}</p>
+            <div class="nx-ad-meta">
+              <span v-if="item.repo" class="nx-ad-repo">{{ item.repo }}</span>
+              <span v-if="item.license">许可 {{ item.license }}</span>
+              <span>
+                预算约 {{ item.budget?.estimated_minutes ?? '—' }} 分钟 /
+                {{ item.budget?.max_steps ?? '—' }} 步
+              </span>
+              <span v-if="item.expiresAt">有效期至 {{ item.expiresAt }}</span>
+            </div>
+
+            <!-- 结构化 diff：只渲染服务端给的差异，前端不自己比对 -->
+            <div v-if="item.diff.length" class="nx-ad-diff">
+              <div class="nx-ad-diffcap">与上一版的差异</div>
+              <div v-for="(d, di) in item.diff" :key="di" class="nx-ad-drow">
+                <span class="nx-ad-dk" :class="diffKindClass(d.kind || d.type)">
+                  {{ diffKindLabel(d.kind || d.type) }}
+                </span>
+                <span class="nx-ad-dn">{{ d.name || d.key || d.field || '—' }}</span>
+                <span class="nx-ad-dv">
+                  <s v-if="d.before !== undefined && d.before !== null">{{ d.before }}</s>
+                  <template v-if="d.before !== undefined && d.before !== null"> → </template>
+                  <b>{{ d.after ?? d.value ?? '—' }}</b>
+                </span>
+              </div>
+            </div>
+
+            <!-- 基线不匹配：如实标注，不沿用旧容差判 PASS -->
+            <p v-if="item.baselineNote" class="nx-ad-warn">
+              {{ item.baselineNote }}
+            </p>
+
+            <p class="nx-ad-note">
+              计划指纹 {{ String(item.planHash || '').slice(0, 12) }}…
+              <template v-if="item.proposalId"> · 提案 v{{ item.proposalVersion ?? '—' }}</template>
+              · 批准后才提交执行，未批准不会运行任何代码
+            </p>
+            <div class="nx-ad-actions">
+              <!-- T5 Ask：一次完成的合并操作（切换 Auto＋本次批准＋执行）。 -->
+              <SfxButton
+                v-if="isResearchMode && execMode === 'ask'"
+                variant="primary"
+                size="sm"
+                :loading="item.turn?.approval?.deciding || item.turn?.approval?.executing"
+                title="一次点击完成切换到 Auto、本次批准与执行，不再二次确认"
+                @click="approveRestoredWithAuto(item)"
+              >
+                切换 Auto 并批准执行
+              </SfxButton>
+              <SfxButton
+                v-else
+                variant="primary"
+                size="sm"
+                :loading="item.turn?.approval?.deciding || item.turn?.approval?.executing"
+                @click="approveRestored(item)"
+              >
+                批准执行
+              </SfxButton>
+              <SfxButton variant="secondary" size="sm" @click="scrollToApprovalInStream">
+                查看完整方案
+              </SfxButton>
+              <SfxButton
+                variant="danger"
+                size="sm"
+                :disabled="item.turn?.approval?.deciding"
+                @click="rejectRestored(item)"
+              >
+                拒绝
+              </SfxButton>
+              <span class="nx-ad-hint">↓ 在下面输入框提出修改，改完重新确认</span>
+            </div>
+            <p v-if="item.turn?.approval?.error" class="nx-ad-error">{{ item.turn.approval.error }}</p>
+          </div>
+
           <textarea
             v-model="draft"
             class="nx-composer-textarea"
@@ -2772,6 +3960,47 @@ const emptySuggestions = computed(() =>
                 <template #icon><Paperclip :size="13" /></template>
                 附件
               </SfxButton>
+              <!-- T5 Ask/Auto：只在 Research 展示；General 隐藏且不发送。
+                   下拉式（对齐 ChatGPT 模式切换的形态）：收起只占当前模式名，
+                   展开后每项一句话说清差别——模式差异在切换前就看得见。
+                   同一会话的研究对话与询问浮窗共享 execMode；切 Ask 不取消已启动 run。 -->
+              <div
+                v-if="isResearchMode"
+                class="nx-seg nx-exec-seg"
+                role="tablist"
+                aria-label="执行模式"
+                title="Ask 自主研究与文档输出，不运行实验；Auto 确认一次后可自主配置、运行和修复实验"
+              >
+                <span
+                  class="nx-seg-btn"
+                  :class="{ 'is-on': execMode === 'ask' }"
+                  role="tab"
+                  tabindex="0"
+                  :aria-selected="execMode === 'ask'"
+                  title="自主研究与文档输出，不运行实验"
+                  @click="setExecMode('ask')"
+                  @keydown.enter.prevent="setExecMode('ask')"
+                  @keydown.space.prevent="setExecMode('ask')"
+                >
+                  <i class="nx-seg-no">研</i>研究与写作
+                </span>
+                <span
+                  class="nx-seg-btn"
+                  :class="{ 'is-on': execMode === 'auto' }"
+                  role="tab"
+                  tabindex="0"
+                  :aria-selected="execMode === 'auto'"
+                  title="可在确认后自主配置、运行和修复实验"
+                  @click="setExecMode('auto')"
+                  @keydown.enter.prevent="setExecMode('auto')"
+                  @keydown.space.prevent="setExecMode('auto')"
+                >
+                  <i class="nx-seg-no">验</i>研究与实验
+                </span>
+              </div>
+              <span v-if="isResearchMode && !execModeSaved" class="nx-rl-note" title="偏好保存失败，仅本次会话有效">
+                偏好未同步
+              </span>
               <input
                 ref="attachmentInput"
                 type="file"
@@ -2826,11 +4055,23 @@ const emptySuggestions = computed(() =>
       </footer>
     </main>
 
+    <!-- v6：工作台内的「询问 Nexus」浮窗。继承同一研究会话的上下文，可自由拖动；
+         关闭后实验继续运行——它只是把对话搬过来，不是切换会话、也不是中断。 -->
+    <NexusAskWindow
+      :open="askWindowOpen"
+      :context-text="currentSession?.title || '本会话'"
+      :context-pill="askContextPill"
+      :busy="streaming"
+      @close="askWindowOpen = false"
+      @send="onAskSend"
+    />
+
     <!-- ── 3. 右侧回应区：48px 图标轨（常驻）+ 320px overlay 抽屉（按需展开） ──
          图标轨保证「过程与来源始终一键可达」，抽屉默认收起，把 272px 还回主工作区；
          开合状态按设备持久化（page-design.md §3.4）。 -->
     <div v-if="!isTablet && !isMobileOrSmall" class="nx-detail-zone">
       <!-- 3.1 overlay 抽屉：覆盖主工作区右侧，不挤压主内容宽度 -->
+      <Transition name="nx-drawer">
       <section v-if="detailDrawerOpen" class="nx-detail-drawer">
         <header class="nx-dd-head">
           <div class="nx-dd-bar">
@@ -2960,14 +4201,16 @@ const emptySuggestions = computed(() =>
               </div>
 
               <div v-if="sessionSources.csKb.length" class="nx-src-group">
-                <div class="nx-src-head">CS 知识库 · {{ sessionSources.csKb.length }}（权威来源）</div>
+                <div class="nx-src-head">CS 知识库 · {{ sessionSources.csKb.length }}</div>
                 <div
                   v-for="(k, i) in sessionSources.csKb"
                   :key="`k${i}`"
                   class="nx-src-row"
                 >
                   <span class="nx-src-title">{{ k.name }}</span>
-                  <span class="nx-src-meta">{{ [k.source, k.course].filter(Boolean).join(' · ') }}</span>
+                  <span class="nx-src-meta">
+                    {{ [k.source, k.course, k.license].filter(Boolean).join(' · ') }}<template v-if="k.reference_id"> · {{ k.reference_id }}</template>
+                  </span>
                 </div>
               </div>
 
@@ -3009,6 +4252,7 @@ const emptySuggestions = computed(() =>
         </div>
         </div>
       </section>
+      </Transition>
 
       <!-- 3.2 48px 图标轨：常驻，点击切换面板 / 再点收起 -->
       <aside class="nx-detail-rail" aria-label="回应区面板">
@@ -3111,6 +4355,51 @@ const emptySuggestions = computed(() =>
         </div>
       </div>
     </SfxDrawer>
+
+    <!-- NX-LB2 提案编辑器：基于已完成的运行改参数 → 新提案 → 送审。
+         只列服务端白名单参数（parameters.schema），前端先校验，服务端兜底。 -->
+    <Transition name="nx-prop-fade">
+    <div v-if="proposalDraft" class="nx-prop-backdrop" @click.self="closeProposalEditor">
+      <div class="nx-prop" role="dialog" aria-modal="true" aria-label="调整方案再运行">
+        <div class="nx-prop-head">
+          <span class="nx-prop-title">调整方案 · {{ proposalDraft.presetName }}</span>
+          <span class="nx-prop-sub">基于 {{ proposalDraft.runName }}</span>
+        </div>
+        <div class="nx-prop-body">
+          <div v-for="(spec, name) in proposalDraft.schema" :key="name" class="nx-prop-row">
+            <div class="nx-prop-k">
+              <span class="nx-prop-name">{{ name }}</span>
+              <span class="nx-prop-help">{{ spec.help }}</span>
+            </div>
+            <div class="nx-prop-ctl">
+              <input
+                v-model="proposalDraft.values[name]"
+                class="nx-prop-input"
+                type="number"
+                :min="spec.min"
+                :max="spec.max"
+                :step="spec.type === 'float' ? '0.1' : '1'"
+              />
+              <span class="nx-prop-base">基线 {{ proposalDraft.baseline[name] }}</span>
+            </div>
+            <span v-if="paramChanged(name)" class="nx-prop-changed">改</span>
+          </div>
+          <p v-if="metricSensitiveChanged" class="nx-prop-warn">
+            修改了影响指标的参数：无已验证基线时，本次结果只出探索性结论，不宣称复现通过。
+          </p>
+          <p v-if="proposalDraft.error" class="nx-prop-error">{{ proposalDraft.error }}</p>
+        </div>
+        <div class="nx-prop-foot">
+          <span class="nx-prop-count">{{ proposalChangedCount ? '改动 ' + proposalChangedCount + ' 项' : '未改动' }}</span>
+          <span class="nx-prop-spacer" />
+          <SfxButton variant="secondary" size="sm" @click="closeProposalEditor">取消</SfxButton>
+          <SfxButton variant="primary" size="sm" :loading="proposalDraft.submitting" @click="submitProposal">
+            生成提案并送审
+          </SfxButton>
+        </div>
+      </div>
+    </div>
+    </Transition>
   </div>
   <div v-else class="nx-perm-denied">
     <AlertCircle :size="30" />
@@ -3165,7 +4454,8 @@ const emptySuggestions = computed(() =>
 }
 
 /* 键盘可达性：所有自绘可点元素统一焦点环 */
-.nx-quick-card:focus-visible,
+.nx-starter:focus-visible,
+.nx-seg-btn:focus-visible,
 .nx-chip:focus-visible,
 .nx-dv-row:focus-visible,
 .nx-dv-subrow:focus-visible,
@@ -3174,8 +4464,7 @@ const emptySuggestions = computed(() =>
 .nx-session-item:focus-visible,
 .nx-course-picker-item:focus-visible,
 .nx-dr-item:focus-visible,
-.nx-dd-close:focus-visible,
-.nx-mode-card:focus-visible {
+.nx-dd-close:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
@@ -3617,6 +4906,256 @@ const emptySuggestions = computed(() =>
   position: relative;
 }
 
+/* ── v6：顶栏左侧组（模式选择器 + 当前视图身份） ── */
+.nx-top-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.nx-top-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border-default);
+}
+
+.nx-tt-main {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 34ch;
+}
+
+.nx-tt-sub {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── v6：视图切换器（固定右上角，两个视图同位同款） ── */
+.nx-view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.nx-vs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 26px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.nx-vs-btn:hover {
+  color: var(--text-primary);
+}
+
+.nx-vs-btn:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.nx-vs-btn.is-on {
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(20, 33, 61, 0.08);
+}
+
+.nx-vs-cnt {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--nexus-accent);
+  background: var(--nexus-accent-soft);
+  border-radius: var(--radius-full);
+  padding: 1px 6px;
+}
+
+/* 工作台主舞台：吃掉主区剩余高度，自己内部再分栏 */
+.nx-lab-host {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── v6：输入框上方的审批浮窗 ── */
+.nx-approval-dock {
+  margin-bottom: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-panel);
+  border: 1px solid var(--nexus-accent-line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.nx-ad-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nx-ad-icon {
+  color: var(--nexus-accent);
+  flex-shrink: 0;
+}
+
+.nx-ad-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.nx-ad-status {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--nexus-accent);
+  background: var(--nexus-accent-soft);
+  border: 1px solid var(--nexus-accent-line);
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+}
+
+.nx-ad-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-2);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.nx-ad-meta .nx-ad-repo {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.nx-ad-note {
+  margin: var(--space-2) 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.nx-ad-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.nx-ad-hint {
+  font-size: 11px;
+  color: var(--text-disabled);
+}
+
+.nx-ad-error {
+  margin: var(--space-2) 0 0;
+  font-size: 11.5px;
+  color: var(--red-700);
+}
+
+/* 审批浮窗 v2：目标 / diff / 基线提示 */
+.nx-ad-obj {
+  margin: var(--space-2) 0 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.nx-ad-diff {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-2);
+}
+
+.nx-ad-diffcap {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.nx-ad-drow {
+  display: grid;
+  grid-template-columns: 44px 120px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.nx-ad-dk {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  text-align: center;
+  padding: 1px 0;
+  border-radius: var(--radius-xs);
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+}
+
+.nx-ad-dk.is-mod { color: var(--nexus-accent); background: var(--nexus-accent-soft); }
+.nx-ad-dk.is-add { color: var(--green-700); background: var(--green-100); }
+.nx-ad-dk.is-del { color: var(--red-700); background: var(--red-100); }
+
+.nx-ad-dn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.nx-ad-dv {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.nx-ad-dv s { color: var(--text-disabled); }
+
+.nx-ad-warn {
+  margin: var(--space-2) 0 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-xs);
+  background: #fdf6e3;
+  box-shadow: inset 0 0 0 1px #ecd9a4;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: #8a6a1f;
+}
+
 .nx-mode-sfx-btn {
   padding: 4px var(--space-2);
   min-height: 40px;
@@ -3641,7 +5180,7 @@ const emptySuggestions = computed(() =>
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  width: 320px;
+  width: 264px;
   background: var(--surface-panel);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
@@ -3650,16 +5189,8 @@ const emptySuggestions = computed(() =>
   z-index: 60;
 }
 
-.nx-dropdown-head {
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-  padding: var(--space-1) var(--space-2) var(--space-2);
-}
-
 .nx-dropdown-item {
-  display: flex;
-  gap: var(--space-3);
-  padding: var(--space-3);
+  padding: 9px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out);
@@ -3669,24 +5200,9 @@ const emptySuggestions = computed(() =>
   background: var(--surface-cool);
 }
 
-.nx-dropdown-item.is-active {
-  background: var(--nexus-accent-soft);
-}
-
-.nx-dropdown-item-icon {
-  color: var(--ink-700);
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.nx-dropdown-item-content {
-  flex: 1;
-  min-width: 0;
-}
-
 .nx-dropdown-item-title {
   font-weight: 600;
-  font-size: var(--ui-md-size);
+  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3705,25 +5221,6 @@ const emptySuggestions = computed(() =>
   line-height: var(--caption-line);
 }
 
-.nx-dropdown-tools {
-  margin-top: 6px;
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-}
-
-.nx-tools-label {
-  margin-right: 2px;
-}
-
-.nx-tool-pill {
-  background: var(--surface-soft);
-  padding: 1px 6px;
-  border-radius: var(--radius-xs);
-}
 
 /* ── Context Chips 行 ── */
 .nx-context-bar {
@@ -3752,6 +5249,10 @@ const emptySuggestions = computed(() =>
   color: var(--text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 /* ready：唯一允许"激活观感"的能力状态 */
@@ -3761,113 +5262,9 @@ const emptySuggestions = computed(() =>
 }
 
 /* 待接入聚合入口：虚线 + 菱形标记，中性不报警 */
-.nx-chip.is-pending {
-  border-style: dashed;
-  color: var(--text-secondary);
-  cursor: pointer;
-  background: transparent;
-}
-
-.nx-chip.is-pending:hover {
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-}
-
-.nx-chip-pending-mark {
-  color: var(--text-muted);
-  font-size: var(--caption-size);
-}
-
-.nx-chip-caret {
-  color: var(--text-muted);
-  transition: transform var(--duration-fast) var(--ease-out);
-}
-
-.nx-chip-caret.is-open {
-  transform: rotate(180deg);
-}
 
 .nx-chip-icon {
   color: var(--text-muted);
-}
-
-/* 待接入 popover */
-.nx-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  width: 312px;
-  background: var(--surface-panel);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  padding: var(--space-2);
-  z-index: 60;
-}
-
-.nx-popover-head {
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-  padding: var(--space-1) var(--space-2) var(--space-2);
-  line-height: var(--caption-line);
-}
-
-.nx-popover-cap {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border-radius: var(--radius-sm);
-}
-
-.nx-popover-cap:hover {
-  background: var(--surface-cool);
-}
-
-.nx-popover-cap-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.nx-popover-cap-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.nx-popover-cap-name {
-  font-size: var(--ui-sm-size);
-  font-weight: 500;
-  color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.nx-cap-tag {
-  font-size: var(--caption-size);
-  font-weight: 450;
-  padding: 0 6px;
-  height: 18px;
-  line-height: 18px;
-  border-radius: var(--radius-xs);
-}
-
-.nx-cap-tag.wired {
-  background: var(--amber-100);
-  color: var(--amber-700);
-}
-
-.nx-cap-tag.unwired {
-  background: var(--surface-soft);
-  color: var(--text-muted);
-}
-
-.nx-popover-cap-hint {
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-  margin-top: 2px;
-  line-height: var(--caption-line);
 }
 
 /* ── 状态条（演示说明 / 运行时不可达） ── */
@@ -3902,248 +5299,291 @@ const emptySuggestions = computed(() =>
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* 预留滚动条槽位：Research 建议 4 条比 General 3 条高，若刚好跨过
+     出滚动条的临界点，宽度会突变导致整块横向抖一下。 */
+  scrollbar-gutter: stable;
   padding: var(--space-6);
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
 }
 
-.nx-empty-workspace {
-  margin: auto;
-  max-width: 640px;
-  text-align: center;
-  padding: var(--space-8) 0;
-}
-
-.nx-empty-eyebrow {
-  font-family: var(--font-mono);
-  font-size: var(--caption-size);
-  letter-spacing: 0.16em;
-  color: var(--nexus-accent);
-  font-weight: 500;
-  margin-bottom: var(--space-3);
-}
-
-.nx-empty-title {
-  font-size: var(--title-2-size);
-  font-weight: 600;
-  color: var(--ink-900);
-  margin-bottom: var(--space-2);
-}
-
-.nx-empty-subtitle {
-  font-size: var(--body-md-size);
-  color: var(--text-secondary);
-  line-height: 1.6;
-  margin: 0 auto;
-  max-width: 460px;
-}
-
-/* 启动页：模式预设卡（UX 评审 P1-5） */
-.nx-mode-cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
-  margin-top: var(--space-6);
-  text-align: left;
-}
-
-.nx-mode-card {
-  position: relative;
-  padding: 14px var(--space-4) var(--space-3);
-  /* 设计板 Board C：1.5px 描边 + 14px 圆角，比既有 md 圆角更舒展 */
-  border: 1.5px solid var(--border-default);
-  background: var(--surface-panel);
-  border-radius: 14px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  transition:
-    border-color var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out);
-}
-
-.nx-mode-card:hover {
-  border-color: var(--nexus-accent-line);
-}
-
-/* 选中态：accent 描边 + 极淡 accent 底（设计板是 3.5% 透明度的蓝），
-   不用 accent-soft 实底——会把卡片内容压下去 */
-.nx-mode-card.is-active {
-  border-color: var(--nexus-accent);
-  background: linear-gradient(0deg, rgba(0, 122, 244, 0.035), rgba(0, 122, 244, 0.035)),
-    var(--surface-panel);
-  box-shadow: var(--shadow-sm);
-}
-
-.nx-mc-cur {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  padding: 2px 9px;
-  border-radius: var(--radius-full);
-  background: var(--nexus-accent-soft);
-  color: var(--nexus-accent-strong);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.nx-mc-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-/* 图标容器块：32×32 accent-soft 底（设计板 .mcard .mi） */
-.nx-mc-iconbox {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  border-radius: 9px;
-  background: var(--nexus-accent-soft);
-  color: var(--nexus-accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.nx-mc-titlebox {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding-right: 44px;
-}
-
-.nx-mc-title {
-  font-size: 14.5px;
-  font-weight: 650;
-  color: var(--ink-900);
-}
-
-.nx-mc-sub {
-  font-size: 10.5px;
-  font-weight: 500;
-  color: var(--text-disabled);
-}
-
-.nx-mc-desc {
+/* ══════════════════════════════════════════════════════════════
+   启动页（空态）v2 · 控制台方向
+   与 NexusLab v4/v6 共用视觉词：1px 发丝线分区、mono 大写小标、
+   26–28px 控件 / 1px 描边、accent 只出现在关键动作。
+   不引入任何装饰性字符（v1 的衬线大标题与幽灵描边字已废弃）。
+   ══════════════════════════════════════════════════════════════ */
+.nx-welcome {
+  /* 顶部对齐，不用 margin:auto 垂直居中。
+     原因（实测）：General 3 条建议 / Research 4 条，工具白名单 5 vs 10 项，
+     切换模式时内容高度会变；居中会把这个差值的一半变成"整块上下平移"，
+     用户看到的就是整个启动页在跳。顶部对齐后，上方元素零位移，
+     只有最下方的建议列表向下增长——这是列表变长该有的行为。 */
   margin: 0;
-  min-height: 32px;
-  font-size: 11.5px;
-  line-height: 1.6;
-  color: var(--text-muted);
+  padding-top: var(--space-2);
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 28px;
+  align-items: start;
 }
 
-.nx-mc-tools {
+.nx-wl-eyebrow {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
 }
 
-/* 启动页的工具 pill 用绿色（设计板 .tpill），与能力三态的"已生效"同色语义 */
-.nx-mc-tools .nx-tool-pill {
-  background: var(--green-100);
-  color: var(--green-700);
-  font-weight: 600;
+.nx-wl-mark {
+  width: 6px;
+  height: 6px;
+  background: var(--ink-900);
+  flex-shrink: 0;
 }
 
-/* 启动页：课程绑定引导条（UX 评审 P1-4，对齐设计板 .bind-strip）
-   淡蓝强调条而非灰色虚线——它是"这一步能提升回答质量"的引导，不是背景信息 */
-.nx-start-course {
+.nx-wl-title {
+  margin-top: 12px;
+  font-size: 27px;
+  font-weight: 650;
+  line-height: 1.32;
+  letter-spacing: -0.01em;
+  color: var(--ink-900);
+}
+
+.nx-wl-lede {
+  margin-top: 8px;
+  max-width: 34em;
+  /* min-height = 2 行：两种模式的引导句长短不同（34 字 / 25 字），
+     不锁下限会出现 2 行↔1 行的抖动。 */
+  min-height: calc(13.5px * 1.8 * 2);
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+}
+
+/* 模式分段控件：与右上「研究对话／实验工作台」同一控件语汇 */
+.nx-wl-modeset {
+  margin-top: 18px;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: var(--space-4);
-  padding: 9px 14px;
-  border: 1px solid var(--nexus-accent-line);
-  border-radius: 10px;
-  background: var(--nexus-accent-soft);
-  text-align: left;
-}
-
-.nx-sc-icon {
-  color: var(--nexus-accent-strong);
-  flex-shrink: 0;
-}
-
-.nx-sc-text {
-  flex: 1;
+  /* nowrap：工具行在窄屏若换行，整行高度 18→36，切换模式时下方全部位移 */
+  flex-wrap: nowrap;
   min-width: 0;
-  font-size: var(--caption-size);
-  line-height: 1.55;
-  color: var(--nexus-accent-strong);
 }
 
-/* 幽灵按钮（设计板 .ghost-btn）：白底 + accent 描边，压得住淡蓝底 */
-.nx-sc-btn {
-  flex-shrink: 0;
-  height: 26px;
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: 7px;
-  background: var(--surface-panel);
-  border-color: var(--nexus-accent-line);
-  color: var(--nexus-accent-strong);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.nx-quick-cards {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-3);
-  margin-top: var(--space-8);
-  text-align: left;
-}
-
-.nx-quick-cards.is-research {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.nx-quick-card {
-  padding: var(--space-3) var(--space-4);
+.nx-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-soft);
   border: 1px solid var(--border-default);
-  background: var(--surface-panel);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  transition: border-color var(--duration-fast) var(--ease-out);
+  border-radius: var(--radius-full);
 }
 
-.nx-quick-card:hover {
-  border-color: var(--color-focus);
-}
-
-.nx-qc-icon {
+.nx-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
   color: var(--text-secondary);
-  margin-top: 2px;
-  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
-.nx-qc-text {
+.nx-seg-btn:hover { color: var(--text-primary); }
+.nx-seg-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+
+.nx-seg-btn.is-on {
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(20, 33, 61, 0.08);
+}
+
+.nx-seg-no {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-style: normal;
+  color: var(--text-disabled);
+  font-variant-numeric: tabular-nums;
+}
+
+.nx-seg-btn.is-on .nx-seg-no { color: var(--nexus-accent); }
+
+/* T5 Ask/Auto：输入框工具栏内的同一分段控件语汇（26px 高对齐 SfxButton sm）。 */
+
+/* 工具白名单：mono 一行，不用绿色药丸（绿色会被读成"成功态"） */
+.nx-wl-tools {
+  /* 恒为一行：可伸缩 + 溢出省略，全量工具名挂 title。
+     Research 10 项比 General 5 项长得多，不锁一行就会换行导致高度抖动。 */
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 18px;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.nx-wl-tools em {
+  font-style: normal;
+  color: var(--border-strong);
+  padding: 0 3px;
+}
+
+.nx-wl-tools b {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.nx-wl-more { color: var(--text-disabled); }
+
+/* 分区小标：12.5px 标题 + mono 大写注，全站统一 */
+.nx-wl-sect {
+  margin-top: 26px;
+  max-width: 640px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.nx-wl-sect-t { font-size: 12.5px; font-weight: 600; color: var(--ink-900); }
+
+.nx-wl-sect-c {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+/* 起点建议：行式清单，发丝线分隔，不做卡片 */
+.nx-starters {
+  max-width: 640px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-width: 0;
 }
 
-.nx-qc-title {
-  font-weight: 600;
-  font-size: var(--ui-sm-size);
-  color: var(--text-primary);
+.nx-starter {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 8px 11px 0;
+  border-bottom: 1px solid var(--border-default);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
 }
 
-.nx-qc-desc {
-  font-size: var(--caption-size);
+.nx-starter:hover { background: var(--surface-panel); }
+.nx-starter:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+
+.nx-starter-no {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-disabled);
+  font-variant-numeric: tabular-nums;
+}
+
+.nx-starter-tx { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nx-starter-tx b { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.nx-starter-tx span { font-size: 11.5px; line-height: 1.6; color: var(--text-secondary); }
+
+.nx-starter-ar {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-disabled);
+  transition:
+    transform var(--duration-slow) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+/* accent 全屏唯一落点：悬停时箭头右移并着色 */
+.nx-starter:hover .nx-starter-ar {
+  transform: translateX(3px);
+  color: var(--nexus-accent);
+}
+
+/* ── 右侧上下文面板：回答"这次回答会用到什么" ── */
+.nx-ctx {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+  overflow: hidden;
+}
+
+.nx-ctx-h {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--surface-canvas);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
   color: var(--text-muted);
-  line-height: var(--caption-line);
+  text-transform: uppercase;
 }
+
+.nx-ctx-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.nx-ctx-k { flex: 0 0 68px; font-size: 12px; color: var(--text-secondary); }
+.nx-ctx-v { margin-left: auto; font-size: 12px; color: var(--text-primary); text-align: right; }
+.nx-ctx-v.is-off { color: var(--text-muted); }
+.nx-ctx-bind { flex-shrink: 0; height: 26px; min-height: 26px; padding: 0 10px; }
+
+.nx-ctx-tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+}
+
+.nx-ctx-tag.ok { color: var(--green-700); background: var(--green-100); }
+
+.nx-ctx-tag.half {
+  color: #8a6a1f;
+  background: #fdf6e3;
+  box-shadow: inset 0 0 0 1px #ecd9a4;
+}
+
+.nx-ctx-tag.no { color: var(--text-muted); background: var(--surface-soft); }
+
+.nx-ctx-note {
+  padding: 10px 14px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  background: var(--surface-canvas);
+  border-top: 1px solid var(--border-default);
+}
+
 
 /* ── 对话 Turn ── */
 .nx-chat-turn {
@@ -5167,18 +6607,20 @@ const emptySuggestions = computed(() =>
   /* 对齐设计板 Board B：14px 圆角 + shadow-md 级投影，浮层感要出来 */
   border-radius: 14px 0 0 14px;
   box-shadow: -12px 0 32px rgba(16, 26, 49, 0.1);
-  animation: nx-drawer-in var(--duration-normal) var(--ease-out);
 }
 
-@keyframes nx-drawer-in {
-  from {
-    opacity: 0;
-    transform: translateX(16px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+/* 抽屉进出场：--duration-normal（design.md §4 抽屉/面板）。
+   进场同时补退场——此前只有 keyframes 进场，关掉是瞬间消失。 */
+.nx-drawer-enter-active,
+.nx-drawer-leave-active {
+  transition:
+    opacity var(--duration-normal) var(--ease-out),
+    transform var(--duration-normal) var(--ease-out);
+}
+.nx-drawer-enter-from,
+.nx-drawer-leave-to {
+  opacity: 0;
+  transform: translateX(16px);
 }
 
 .nx-dd-head {
@@ -5287,6 +6729,9 @@ const emptySuggestions = computed(() =>
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   flex-shrink: 0;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 /* 3.2 图标轨 */
@@ -5312,6 +6757,9 @@ const emptySuggestions = computed(() =>
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   position: relative;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .nx-dr-item:hover {
@@ -5660,6 +7108,9 @@ const emptySuggestions = computed(() =>
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
 }
 
 .nx-course-picker-item:hover {
@@ -5740,4 +7191,125 @@ const emptySuggestions = computed(() =>
   justify-content: flex-end;
   gap: var(--space-2);
 }
+
+/* ══════════ NX-LB2 提案编辑器（调整方案再运行） ══════════ */
+.nx-prop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(18, 24, 38, 0.44);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+}
+.nx-prop {
+  width: 560px;
+  max-width: 100%;
+  max-height: min(72vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.nx-prop-head {
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.nx-prop-title { font-size: 14px; font-weight: 600; color: var(--ink-900); }
+.nx-prop-sub { font-size: var(--caption-size); color: var(--text-muted); }
+.nx-prop-body { flex: 1; overflow-y: auto; padding: 6px 18px 12px; }
+.nx-prop-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.nx-prop-row:last-of-type { border-bottom: 0; }
+.nx-prop-k { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.nx-prop-name { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.nx-prop-help { font-size: var(--caption-size); color: var(--text-muted); }
+.nx-prop-ctl { display: flex; align-items: center; gap: 8px; }
+.nx-prop-input {
+  width: 88px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  background: var(--surface-canvas);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.nx-prop-input:focus { outline: none; border-color: var(--border-strong); }
+.nx-prop-base {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.nx-prop-changed {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-900);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
+}
+.nx-prop-warn,
+.nx-prop-error { margin-top: 10px; font-size: 11.5px; line-height: 1.7; }
+.nx-prop-warn { color: var(--text-secondary); }
+.nx-prop-error { color: var(--red-700); }
+.nx-prop-foot {
+  padding: 12px 18px 14px;
+  border-top: 1px solid var(--border-default);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.nx-prop-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+.nx-prop-spacer { flex: 1; }
+/* ══════════ 切换动画 ══════════
+ * 全部只动 opacity / transform，不碰布局属性（避免重排引起的位置抖动）。
+ * 时长与缓动一律取 design.md §4 令牌：菜单 120ms、模态与抽屉 200ms。 */
+
+/* 执行模式菜单：向上淡入，--duration-fast */
+.nx-exec-fade-enter-active,
+.nx-exec-fade-leave-active {
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+.nx-exec-fade-enter-from,
+.nx-exec-fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+/* 提案编辑器：--duration-normal；面板轻微上浮，遮罩纯淡入 */
+.nx-prop-fade-enter-active,
+.nx-prop-fade-leave-active {
+  transition: opacity var(--duration-normal) var(--ease-out);
+}
+.nx-prop-fade-enter-from,
+.nx-prop-fade-leave-to { opacity: 0; }
+.nx-prop-fade-enter-active .nx-prop,
+.nx-prop-fade-leave-active .nx-prop {
+  transition: transform var(--duration-normal) var(--ease-out);
+}
+.nx-prop-fade-enter-from .nx-prop,
+.nx-prop-fade-leave-to .nx-prop { transform: translateY(8px); }
 </style>

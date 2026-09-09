@@ -31,9 +31,11 @@ SYSTEM_PROMPT = """你是 CodeNexus 的 Nexus AI，服务对象是教师与学�
    KNOWLEDGE_RETRIEVAL_UNAVAILABLE）时如实告知用户失败原因，
    绝不编造检索结果。
 2. 证据合流（M2）：search_course_materials（课程资料，经核实）与
-   search_cs_knowledge（CS 知识库，权威来源）的可信度高于公开网络资料；
+   search_cs_knowledge（CS 语料参考，补充参考）的可信度高于公开网络资料；
    但引用必须按相关性取舍——资料与问题无关时如实说明未找到相关课程资料
    或知识库条目，不得强行引用，也**不得**对不同来源做任何加权、打分或合成分。
+   CS 语料参考可追溯不等于正确：引用时必须核对原文引用（reference_id），
+   不得标"教材级权威"，不得写成既定事实。
 3. 语言：默认使用中文回答；技术术语与代码保持原文。
 4. 计划（NX-H1）：TodoListMiddleware 提供 write_todos——只对真正多步骤
    （≥3 步）的任务建计划并随执行更新；寒暄/单步问答不建计划。
@@ -54,6 +56,11 @@ NEXUS_EXCLUDED_TOOLS = frozenset(
     {"ls", "write_file", "edit_file", "delete", "glob", "grep", "execute", "task"}
 )
 
+# T2 Ask/Auto：触发实验代码沙箱的工具（Ask 不绑定；Auto 经批准后可用）。
+# Ask 仍保留准备类工具（提案创建/修改/请求审批——“帮我运行”继续做准备工作
+# 并给出切换入口）与只读/取消类工具（查运行、读日志、下载报告、用户取消）。
+EXPERIMENT_EXECUTION_TOOLS = frozenset({"run_reproduction"})
+
 # Research-only 工具（M1-B2 双 Profile）：General 模式结构性不绑定，
 # 模型请求侧不可见（未传入 create_deep_agent 即不进 bind_tools）。
 RESEARCH_ONLY_TOOLS = frozenset(
@@ -64,13 +71,22 @@ RESEARCH_ONLY_TOOLS = frozenset(
         # NX-R1a：上传论文全文证据薄链（Research-only）。
         "collect_paper_evidence",
         "write_research_report",
+        # NX-LB4/LB5：运行操作与提案工具（取消需用户一次性授权）。
+        "get_reproduction_run",
+        "cancel_reproduction_run",
+        "add_reproduction_note",
+        "create_reproduction_proposal",
+        "update_reproduction_proposal",
+        "request_reproduction_approval",
+        # T3：无 preset 入口（只准备提案，不执行；Ask 保留）。
+        "prepare_experiment",
     }
 )
 
 MODE_PROMPT_APPENDIX = {
     "general": """
 
-你是通用助手（General 模式）：用网页检索、课程资料与 CS 知识库
+你是通用助手（General 模式）：用网页检索、课程资料与 CS 语料参考
 回答通用问题、整理资料、生成文档。
 论文检索、复现规划与执行属 Research 模式能力，本模式下不可用；
 用户提出此类需求时，应建议切换到 Nexus Research。""",
@@ -99,7 +115,14 @@ MODE_PROMPT_APPENDIX = {
    候选必须标注 abstract_only，不得冒充读过全文；全文不可得时提示用户上传。
 3. 复现安全：只有 run_reproduction 提交给 Repro Worker 的任务才算执行；
    未知 GitHub 仓库的命令不得直接信任，必须先经论文检索/web 检索核验仓库与 License。
-4. 引用纪律：研究报告中只能引用 collect_paper_evidence 返回的 evidence_id
+ 4. 运行操作（NX-LB4）：用 get_reproduction_run 查询用户明确提到的运行；
+    cancel_reproduction_run 是破坏性操作——工具返回 confirmation_required 时
+    必须先向用户说明并等待其界面确认，绝不能自行重试取消或替用户决定；
+    提案修改（create/update_reproduction_proposal、request_reproduction_approval）
+    只准备执行材料并把 proposal/approval 引用展示给用户，批准永远由用户发起。
+    无预设的论文/仓库用 prepare_experiment 准备自主提案（只准备、不执行；
+    不回答"仅支持 nanoGPT"，不要求用户先提供指标/主张）。
+5. 引用纪律：研究报告中只能引用 collect_paper_evidence 返回的 evidence_id
    （write_research_report 服务端渲染引用，模型不得编造页码或引文）；
    引用被拒时按返回的修复指引最多修正一次，仍失败则如实输出证据缺口。""",
 }
@@ -151,11 +174,19 @@ def build_summarization_middleware(llm: Any) -> SummarizationMiddleware:
     )
 
 
-def _tools_for_mode(mode: str) -> list[Any]:
-    """M1-B2 模式工具白名单：General 结构性不绑定 research-only 三工具。"""
+def _tools_for_mode(mode: str, execution_mode: str | None = None) -> list[Any]:
+    """M1-B2 模式工具白名单：General 结构性不绑定 research-only 工具。
+
+    T2 Ask/Auto：Research+Ask 额外不绑定实验执行工具（run_reproduction）——
+    Ask 下模型请求侧不可见，纵深防御执行核（服务端核销）仍独立校验。
+    execution_mode 缺省按 Ask 收敛（安全默认）；General 传 auto 也不放行。
+    """
     if mode == "general":
         return [t for t in NEXUS_TOOLS if t.name not in RESEARCH_ONLY_TOOLS]
-    return list(NEXUS_TOOLS)
+    tools = list(NEXUS_TOOLS)
+    if (execution_mode or "ask").strip().lower() != "auto":
+        tools = [t for t in tools if t.name not in EXPERIMENT_EXECUTION_TOOLS]
+    return tools
 
 
 class InvalidNexusModel(ValueError):
@@ -227,6 +258,7 @@ def build_agent(
     mode: str = "general",
     checkpointer: Any | None = None,
     model: str | None = None,
+    execution_mode: str | None = None,
 ) -> Any:
     """构建 Nexus 主智能体。LLM 未配置时抛出 RuntimeError（调用方 fail-closed）。
 
@@ -235,6 +267,10 @@ def build_agent(
     切模式上下文连续。checkpointer 为空时用 InMemorySaver（本地/测试）；服务器
     lifespan 传入 AsyncPostgresSaver 实现重启可续聊。Compact 始终经原生
     middleware 启用；工具面经三层收敛（见 NEXUS_EXCLUDED_TOOLS 注释）。
+
+    T2 Ask/Auto：Research 工具面再按 execution_mode 拆分（Ask 不绑定
+    run_reproduction；缺省 Ask，安全默认）。调用方（main 聊天入口）须传
+    本次 effective 值；实例缓存键须区分 Ask/Auto（见 main.get_agent）。
 
     模型网关 P0：model 为服务端 allowlist 内的模型 id（调用方 main._require_model
     已校验）；同 (mode, model) 复用实例，不同模型各持独立 LLM。切模型不断会话
@@ -248,7 +284,7 @@ def build_agent(
     saver = checkpointer if checkpointer is not None else InMemorySaver()
     return create_deep_agent(
         model=llm,
-        tools=_tools_for_mode(mode),
+        tools=_tools_for_mode(mode, execution_mode),
         system_prompt=SYSTEM_PROMPT + MODE_PROMPT_APPENDIX[mode],
         middleware=[
             FilesystemMiddleware(tools=["read_file"]),

@@ -1,5 +1,7 @@
 # Nexus AI Runtime
 
+> **2026-09-08 CS 检索接入（NEXT）：**[语料向量化与 RAG 上线计划](../docs/phase1/2026-09-08_CS语料向量化与RAG上线实施计划.md)的 CR4/CR6 负责接入 Backend 统一语料检索、修正 `search_cs_knowledge` 的补充参考语义，并独立部署 Nexus。当前 `/cs-knowledge` 仍只查精编概念；本文更新不代表全量语料已经接入。Nexus 不加载学科 embedding 模型，不与 Backend 共享 Python 环境。
+
 > **2026-09-05 现行开发方向**：下方 P0 清单与测试基数为早期快照，当前以 [NX 开发计划](../docs/phase1/CodeNexus_P2开发计划.md) 和 [v1.3 架构](../docs/phase1/CodeNexus_转型设计与实施方案_v1.3.md) 为准。M0–M5 为受控 MVP；后续附件/视觉、Todo/Subagent、论文研究/复现、SandboxProvider、Console、Session 产品历史均待独立验收。
 
 > **状态**：P0 已实现（2026-09-03，本地可运行 + 真实 SearXNG 链路验证通过）

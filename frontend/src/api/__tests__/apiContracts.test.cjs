@@ -833,6 +833,12 @@ test('disciplineKnowledge.js: 学科知识库客户端路径与后端路由一�
   assert.equal(extractFirstPath(src, 'getDisciplineKnowledgeOverview'), '/discipline-knowledge/overview')
   assert.match(backend, /@router\.get\("\/overview"\)/)
 
+  assert.equal(
+    extractFirstPath(src, 'getDisciplineCorpusChunk'),
+    '/discipline-knowledge/chunks/${encodeURIComponent(chunkId)}',
+  )
+  assert.match(backend, /@router\.get\("\/chunks\/\{chunk_id\}"\)/)
+
   assert.equal(extractFirstPath(src, 'reloadDisciplineKnowledge'), '/discipline-knowledge/reload')
   assert.match(backend, /@router\.post\("\/reload"\)/)
 
@@ -852,6 +858,63 @@ test('DisciplineKnowledgePage.vue: 消费解包后的 data（request.js 拦截�
   assert.doesNotMatch(src, /body\?\.data/)
   assert.match(src, /overview\.value = body \?\? null/)
   assert.match(src, /results\.value = body\?\.results \?\? \[\]/)
+})
+
+test('DisciplineKnowledgePage.vue: 资料检索模式与原文查看（CR5）', () => {
+  const src = read('frontend/src/app/pages/discipline/DisciplineKnowledgePage.vue')
+  const client = read('frontend/src/api/disciplineKnowledge.js')
+  const lib = read('frontend/src/app/lib/disciplineCorpusPresentation.js')
+  // 模式切换与原文查看必须使用 SfxButton；资料模式只调 chunk 引用端点
+  assert.match(src, /switchMode\('corpus'\)/)
+  assert.match(src, /getDisciplineCorpusChunk/)
+  assert.match(src, /formatCorpusCoverage/)
+  assert.match(client, /getDisciplineCorpusChunk/)
+  assert.match(client, /\/discipline-knowledge\/chunks\//)
+  assert.match(lib, /formatCorpusCoverage/)
+  // 不拼磁盘路径、不渲染绝对路径
+  assert.doesNotMatch(src, /object_key/)
+  assert.doesNotMatch(src, /\/opt\//)
+  // 出处链接经白名单（P2-8）：只渲染 http/https，不裸绑 source_url
+  assert.match(src, /safeSourceUrl/)
+  assert.doesNotMatch(src, /:href="row\.source_url"/)
+})
+
+test('DisciplineKnowledgePage.vue: 概念/语料结果独立渲染（P1-2 修复）', () => {
+  const src = read('frontend/src/app/pages/discipline/DisciplineKnowledgePage.vue')
+  // 结果列表不得挂在提示 template 的 v-else-if 链上：检索成功后概念卡会永不渲染
+  assert.match(src, /<ul v-if="conceptResults\.length && !loading"/)
+  assert.doesNotMatch(src, /<ul v-else-if="conceptResults\.length"/)
+  assert.match(src, /<ul v-if="corpusResults\.length && !loading"/)
+})
+
+test('AgentAssistantBubble.vue: 语料引用行内查看原文（CR5）', () => {
+  const src = read('frontend/src/app/components/learn/AgentAssistantBubble.vue')
+  assert.match(src, /getDisciplineCorpusChunk/)
+  assert.match(src, /reference_id/)
+  assert.match(src, /isCorpusRef/)
+  assert.doesNotMatch(src, /object_key/)
+  // 许可字段来自端点 source_license（P2-4 修复：不再只读 ref.license）
+  assert.match(src, /source_license/)
+  // 出处链接经白名单（P2-8）：不裸绑 source_url
+  assert.match(src, /safeSourceUrl/)
+  assert.doesNotMatch(src, /:href="ref\.source_url"/)
+})
+
+test('useLearningWorkspace.js: 学科版本与引用声明透传、历史回看兼容（CR5）', () => {
+  const src = read('frontend/src/features/student-learning/composables/useLearningWorkspace.js')
+  assert.match(src, /disciplineReleaseId/)
+  assert.match(src, /usedDisciplineReferenceIds/)
+  assert.match(src, /msg\.discipline_references/)
+})
+
+test('NexusPage.vue: CS 语料条目保留回源身份（CR5）', () => {
+  const src = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  assert.match(src, /search_cs_knowledge/)
+  assert.match(src, /reference_id/)
+  assert.match(src, /chunk_id/)
+  // 回源身份与许可要真的渲染出来（P2-5 修复），不只是收集
+  assert.match(src, /k\.reference_id/)
+  assert.match(src, /k\.license/)
 })
 
 // ── CodeNexus 转型 S1：Nexus AI 全局入口 ────────────────────────────────────
@@ -1004,6 +1067,67 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   const report = read('nexus/src/nexus/repro_report.py')
   assert.match(report, /EXPLORATORY/)
 
+  // NX-LB3/LB4/LB5：运行上下文投影、取消授权、备注、产物关联。
+  // client（nexus.js）与后端路由一一对应；Runtime 工具与 LB2 同一域服务。
+  assert.match(src, /getNexusRunDetail[\s\S]*?\/nexus\/runs\/\$\{encodeURIComponent\(runId\)\}/)
+  assert.match(src, /renameNexusRun[\s\S]*?\/nexus\/runs\/\$\{encodeURIComponent\(runId\)\}/)
+  assert.match(src, /requestNexusRunCancelGrant[\s\S]*?\/nexus\/runs\/\$\{encodeURIComponent\(runId\)\}\/cancel-grant/)
+  assert.match(src, /listNexusRunNotes[\s\S]*?\/nexus\/runs\/\$\{encodeURIComponent\(runId\)\}\/notes/)
+  assert.match(src, /createNexusRunNote[\s\S]*?\/nexus\/runs\/\$\{encodeURIComponent\(runId\)\}\/notes/)
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/cancel-grant"\)/)
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/notes"\)/)
+  assert.match(backend, /@router\.get\("\/runs\/\{run_id\}\/notes"\)/)
+  assert.match(backend, /def _build_run_context/)
+  assert.match(backend, /run_context/)
+  assert.match(backend, /async def _worker_cancel/)
+  assert.match(backend, /create_grant\(/)
+  assert.match(internal, /consume_grant\(/)
+  const grantSvc = read('backend/app/services/nexus_action_grant_service.py')
+  assert.match(grantSvc, /def create_grant/)
+  assert.match(grantSvc, /def consume_grant/)
+  const noteSvc = read('backend/app/services/nexus_run_service.py')
+  assert.match(noteSvc, /def add_run_note/)
+  assert.match(noteSvc, /def list_run_notes/)
+  assert.match(internal, /@router\.get\("\/runs\/\{run_id\}\/status"\)/)
+  assert.match(internal, /@router\.post\("\/runs\/\{run_id\}\/cancel"\)/)
+  assert.match(internal, /@router\.post\("\/runs\/\{run_id\}\/notes"\)/)
+  assert.match(internal, /CANCEL_CONFIRMATION_REQUIRED/)
+  const artifactSvc = read('backend/app/services/nexus_artifact_service.py')
+  assert.match(artifactSvc, /def list_run_artifacts/)
+  assert.match(backend, /merged\["artifacts"\] = nexus_artifact_service\.list_run_artifacts/)
+  assert.match(reproTool, /get_reproduction_run/)
+  assert.match(reproTool, /cancel_reproduction_run/)
+  assert.match(reproTool, /add_reproduction_note/)
+  assert.match(reproTool, /create_reproduction_proposal/)
+  assert.match(reproTool, /update_reproduction_proposal/)
+  assert.match(reproTool, /request_reproduction_approval/)
+  assert.match(proposals, /def request_approval_for_proposal/)
+  assert.match(runtime, /_acquire_thread_writer/)
+  assert.match(runtime, /SESSION_BUSY/)
+  assert.match(runtime, /client_request_id/)
+  assert.match(runtime, /def _run_context_note/)
+  // NX-N0 可信度收尾：核销冻结快照＋linkage 三态＋锁释放＋恢复错误语义。
+  assert.match(proposals, /def lock_proposal_for_execution/)
+  assert.match(approvals, /frozen_proposal/)
+  assert.match(reproTool, /frozen_snapshot/)
+  assert.match(runtime, /linkage_status == "unavailable"/)
+  assert.match(report, /"unknown"/)
+  assert.match(report, /INCOMPLETE/)
+  assert.match(runtime, /CHECKPOINT_READ_FAILED/)
+  const paperResearch = read('nexus/src/nexus/tools/paper_research.py')
+  assert.match(paperResearch, /CITATION_NUMBER_INVALID/)
+  assert.match(paperResearch, /CITATION_BODY_MISSING/)
+  assert.match(paperResearch, /EVIDENCE_SOURCE_REVOKED/)
+  // v6 实验名后端接线：显示名以后端 display_title 为准，本地回退保留。
+  const reproShared = read('frontend/src/app/pages/nexus/reproShared.js')
+  assert.match(reproShared, /export function experimentName\(run, seq = 1\)/)
+  assert.match(reproShared, /run\?\.display_title \|\| run\?\.title/)
+  const nxPage = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  assert.match(nxPage, /backendRunNames = ref\(\{\}\)/)
+  assert.match(nxPage, /async function refreshBackendRunNames\(\)/)
+  assert.match(nxPage, /experimentName\(\{ \.\.\.t\.reproRun, \.\.\.backend \}, seq\)/)
+  assert.match(nxPage, /stampBackendRunName\(existing\.reproRun, backend\)/)
+
   // M1-F3 + NX-G1/NX-A1：前端模式工具声明与 Runtime 双 Profile 工具面同源（防漂移）。
   // Runtime：general 结构性排除 research-only 三工具；read_attachment 双模式共用。
   // 前端 NEXUS_MODE_CONFIG 的 tools 列表必须等于对应模式的真实产品工具面
@@ -1014,12 +1138,14 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   assert.match(runtime, /_require_model\(request\.model\)/)
   assert.match(runtime, /"models": llm_models_manifest\(settings\)/)
   // NX-R1a：Research-only 集合扩展至 5 工具（新增上传论文证据薄链两工具）。
-  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",[\s\S]*?"collect_paper_evidence",[\s\S]*?"write_research_report",\s*\}\s*\)/)
+  // NX-LB4/LB5：再扩展至 11 工具（新增 6 个运行操作与提案工具；General 仍不可见）。
+  // T3：再 +1（prepare_experiment 无 preset 入口，只准备不执行；Ask 保留）。
+  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",[\s\S]*?"collect_paper_evidence",[\s\S]*?"write_research_report",[\s\S]*?"get_reproduction_run",[\s\S]*?"cancel_reproduction_run",[\s\S]*?"add_reproduction_note",[\s\S]*?"create_reproduction_proposal",[\s\S]*?"update_reproduction_proposal",[\s\S]*?"request_reproduction_approval",[\s\S]*?"prepare_experiment",\s*\}\s*\)/)
   const cfgSrc = read('frontend/src/api/nexusAdapter.js')
   assert.match(cfgSrc, /model = null,/)
   assert.match(cfgSrc, /model,/)
   assert.match(cfgSrc, /\[NEXUS_MODES\.GENERAL\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'read_attachment'\]/)
-  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment',\s*'collect_paper_evidence',\s*'write_research_report'\]/)
+  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment',\s*'collect_paper_evidence',\s*'write_research_report',\s*'get_reproduction_run',\s*'cancel_reproduction_run',\s*'add_reproduction_note',\s*'create_reproduction_proposal',\s*'update_reproduction_proposal',\s*'request_reproduction_approval',\s*'prepare_experiment'\]/)
 
   assert.match(main, /nexus_proxy\.router, prefix="\/api\/v1\/nexus"/)
 })
@@ -1091,7 +1217,14 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   assert.match(backend, /require_platform_permission\(session, current_user, PlatformPermission\.NEXUS_USE\)/)
   // NX-H1：+计划快照反代（plan）→ 22 个受权限门端点。
   // NX-LB1/LB2：+presets/proposals×4/approvals-list/runs-rename → 29 个。
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 29)
+  // NX-LB4/LB5：+runs-cancel-grant/runs-notes×2 → 32 个。
+  // T2 Ask/Auto：+sessions execution-mode 查询/保存×2 → 34 个。
+  // T5：+runs/{id}/cancel 用户直接取消 → 35 个。
+  // T6：+runs/{id}/report 自主报告 → 36 个。
+  // SR6：+runs/{id}/formats 正式格式＋runs/{id}/clean-verify 干净验证 → 38 个。
+  // F2：+runs/{id}/resume 恢复认领 → 39 个。
+  // F3：+runs/{id}/operations/{op}/cancel 操作级取消 → 40 个。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 40)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })
@@ -1138,4 +1271,132 @@ test('NexusPage.vue: 流式输出节流（防"突进式"输出）', () => {
   // 滚动必须 rAF 节流且尊重用户位置：handleEvent 里禁止逐 token 强行置底。
   assert.match(page, /requestAnimationFrame/)
   assert.match(page, /nearBottom/)
+})
+
+test('T5 Ask/Auto：输入框选择器＋服务端偏好＋合并批准动作（前端规格 §2.1/§12.1）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  // 客户端：偏好查询/保存＋执行门透传＋run 级取消，全部 allowFlatResponse。
+  assert.match(client, /export function getNexusSessionExecutionMode\(sessionId\)/)
+  assert.match(client, /export function saveNexusSessionExecutionMode\(sessionId, mode\)/)
+  assert.match(client, /export function cancelNexusRun\(runId, sessionId\)/)
+  assert.match(client, /researchExecutionMode/)
+  assert.match(client, /export function requestNexusRunReport\(runId\)/)
+  assert.match(client, /\/nexus\/runs\/.*\/report/)
+  // 选择器只在 Research 展示（General 隐藏且不发送），与视图切换器同分段语汇。
+  assert.match(page, /v-if="isResearchMode"[\s\S]*?nx-exec-seg/)
+  assert.match(page, /研究与写作/)
+  assert.match(page, /研究与实验/)
+  assert.match(page, /setExecMode\('ask'\)/)
+  assert.match(page, /setExecMode\('auto'\)/)
+  // 偏好恢复与保存失败语义：服务端真相源，失败只本地缓存并如实提示。
+  assert.match(page, /restoreExecMode/)
+  assert.match(page, /偏好保存失败，仅本次会话有效/)
+  // Ask 下合并动作一次完成（切换＋批准＋执行），无二次确认。
+  assert.match(page, /切换 Auto 并批准执行/)
+  assert.match(page, /approveWithAuto/)
+  assert.match(page, /approveRestoredWithAuto/)
+  // 切 Ask 不暗中取消：活跃 run 注明继续运行＋保留用户取消（danger）。
+  assert.match(page, /已启动实验继续运行/)
+  // 聊天 Stop 与取消分离：stop 只 abort SSE，取消走独立 API。
+  assert.match(page, /abortController\.abort\(\)/)
+  assert.match(page, /cancelNexusRun\(runId, activeSessionId/)
+})
+
+test('T5 自主 run 工作台复用：attempt 投影＋reconciling＋Ask 复跑门', () => {
+  const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')
+  const shared = read('frontend/src/app/pages/nexus/reproShared.js')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  // 工作台按 provider 分流：自主 run 渲染 attempts，不套 Worker 六段轨道。
+  assert.match(ws, /isAutonomous/)
+  assert.match(ws, /command_summary/)
+  assert.match(ws, /v-if="!isAutonomous"[\s\S]*?nxw-stagebar/)
+  assert.match(ws, /对账中/)
+  // T6：终态自主 run 可生成报告（Ask 下禁用，服务端同样约束）。
+  assert.match(ws, /isReportable/)
+  assert.match(ws, /生成报告/)
+  assert.match(ws, /@click="emit\('report', active\.id\)"/)
+  // Ask 下复跑禁用且给原因（title），服务端 403 双保险。
+  assert.match(ws, /:disabled="isAsk"/)
+  assert.match(ws, /Ask 模式不运行实验，切换到 Auto 后可用/)
+  assert.match(ws, /executionMode: \{ type: String, default: 'ask' \}/)
+  // 共享投影单源：日志尾回退 attempts，不各写一份。
+  assert.match(shared, /run\?\.attempts/)
+  // 父组件透传执行模式＋run 级取消＋详情轮询＋报告生成恢复。
+  assert.match(page, /:execution-mode="execMode"/)
+  assert.match(page, /cancelNexusRun\(run/)
+  assert.match(page, /startRunDetailPolling/)
+  assert.match(page, /requestNexusRunReport\(runId\)/)
+  assert.match(page, /@report="requestAutoReport"/)
+})
+
+test('SR6 正式输出：Word/LaTeX 导出＋干净验证（Auto 门，Ask 禁用）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  // 客户端：双函数＋allowFlatResponse，与报告链同形状。
+  assert.match(client, /export function requestNexusRunFormats\(runId\)/)
+  assert.match(client, /\/nexus\/runs\/.*\/formats/)
+  assert.match(client, /export function requestNexusRunCleanVerify\(runId, executionMode\)/)
+  assert.match(client, /\/nexus\/runs\/.*\/clean-verify/)
+  // 后端：双反代路由（D10 门数 38 另行锁定）。
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/formats"\)/)
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/clean-verify"\)/)
+  // 工作台：指标页报告区动作行（干净验证 Ask 禁用＋原因）。
+  assert.match(ws, /导出 Word\/LaTeX/)
+  assert.match(ws, /干净验证/)
+  assert.match(ws, /@click="emit\('formats', active\.id\)"/)
+  assert.match(ws, /@click="emit\('clean-verify', active\.id\)"/)
+  // 父组件：处理函数＋事件绑定（与报告链同模式）。
+  assert.match(page, /requestRunFormats/)
+  assert.match(page, /requestCleanVerify/)
+  assert.match(page, /@formats="requestRunFormats"/)
+  assert.match(page, /@clean-verify="requestCleanVerify"/)
+})
+
+test('F2 恢复认领：对账在途意图后继续（Auto 门，Ask 禁用）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  // 客户端：恢复函数＋allowFlatResponse，与干净验证链同形状。
+  assert.match(client, /export function requestNexusRunResume\(runId, executionMode\)/)
+  assert.match(client, /\/nexus\/runs\/.*\/resume/)
+  // 后端：反代路由（D10 门数 39 另行锁定）。
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/resume"\)/)
+  // 工作台：运行中自主 run 继续执行按钮（Ask 禁用＋原因），恢复状态只读展示。
+  assert.match(ws, /继续执行/)
+  assert.match(ws, /@click="emit\('resume', active\.id\)"/)
+  assert.match(ws, /recoveryStatus/)
+  // 父组件：处理函数＋事件绑定＋详情透传（与报告链同模式）。
+  assert.match(page, /requestResumeRun/)
+  assert.match(page, /@resume="requestResumeRun"/)
+  assert.match(page, /run\.recoveryStatus = /)
+})
+
+test('F3 操作级中断＋增量 Console（会话语义，整体取消保留）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const runtime = read('nexus/src/nexus/main.py')
+  // 客户端：中断函数＋详情游标参数，与报告链同形状。
+  assert.match(client, /export function cancelNexusRunOperation\(runId, operationId\)/)
+  assert.match(client, /\/nexus\/runs\/.*\/operations\/.*\/cancel/)
+  assert.match(client, /getNexusRunDetail\(runId, logCursors\)/)
+  // 后端：操作级取消反代（D10 门数 40 另行锁定）＋详情游标透传。
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/operations\/\{operation_id\}\/cancel"\)/)
+  assert.match(backend, /log_cursors/)
+  // Runtime：操作取消端点＋console 游标参数。
+  assert.match(runtime, /repro_run_operation_cancel/)
+  assert.match(runtime, /cursors/)
+  // 工作台：在途操作行（增量＋单命令中断，Ask 禁用），整体取消不动。
+  assert.match(ws, /中断该命令/)
+  assert.match(ws, /emit\('interrupt-op'/)
+  assert.match(ws, /activeOpId/)
+  // 父组件：处理函数＋事件绑定＋游标推进。
+  assert.match(page, /requestInterruptOp/)
+  assert.match(page, /@interrupt-op=/)
+  assert.match(page, /opLogCursors/)
 })

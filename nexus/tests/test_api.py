@@ -139,7 +139,12 @@ async def test_chat_endpoints_against_real_graph(monkeypatch: pytest.MonkeyPatch
         checkpointer=InMemorySaver(),
     )
     original_agents = main_module._agents
-    main_module._agents = {("research", "deepseek-chat"): agent, ("general", "deepseek-chat"): agent}
+    # T2 后实例键为 (mode, model, execution)：三个键同指假图（本用例不断言工具面）。
+    main_module._agents = {
+        ("research", "deepseek-chat", "auto"): agent,
+        ("research", "deepseek-chat", "ask"): agent,
+        ("general", "deepseek-chat", "ask"): agent,
+    }
     get_settings.cache_clear()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

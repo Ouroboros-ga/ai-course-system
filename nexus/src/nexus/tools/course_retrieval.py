@@ -22,6 +22,7 @@ from nexus.request_scope import current_course_id, current_user_id
 logger = logging.getLogger(__name__)
 
 _TIMEOUT_S = 15.0
+#: 工具结果回传模型的条目上限（展示层另有 300 字符截断，回源身份不受影响）。
 _MAX_ITEMS = 8
 
 
@@ -91,7 +92,13 @@ async def _call_internal(path: str, params: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "success",
         "authority": (data or {}).get("authority", ""),
+        # 版本与降级随工具结果透传：模型/界面据此知道语料版本与可用通路
+        "release_id": (data or {}).get("release_id", ""),
+        "mode": (data or {}).get("mode", ""),
+        "degraded_reasons": list((data or {}).get("degraded_reasons") or []),
         "items": items[:_MAX_ITEMS],
+        "items_total": len(items),
+        "items_truncated": max(0, len(items) - _MAX_ITEMS),
     }
 
 
@@ -134,13 +141,19 @@ async def search_course_materials(query: str) -> dict[str, Any]:
 
 @tool
 async def search_cs_knowledge(query: str) -> dict[str, Any]:
-    """检索 CS 学科知识库（教材级权威来源，含出处，可追溯）。
+    """检索 CS 语料参考（学科开放语料的原文段落，补充参考）。
 
-    覆盖计算机科学核心概念（数据结构/算法/体系结构等）。返回内容属
-    "权威来源"，但引用时仍需注明条目标题与出处；与问题无关时如实说明。
+    返回条目带 reference_id 与出处（标题/来源/许可/匹配方式），引用答案时
+    必须核对原文引用；正文进入本工具结果供模型使用，界面展示可能截断，
+    但回源入口（reference_id）不受展示截断影响。
+    结果属"补充参考"（未经课程核实）：可追溯不等于正确，不得写成既定事实，
+    不得标"教材级权威"；与问题无关时如实说明未找到相关条目。
     """
     result = await _call_internal("/api/v1/nexus-internal/cs-knowledge", {"q": query})
     if result.get("status") == "success":
-        result["authority_label"] = "CS 知识库（权威来源）"
-        result["is_supplementary"] = False
+        result["authority_label"] = "CS 语料参考（补充，需核对原文）"
+        result["is_supplementary"] = True
+        for item in result.get("items") or []:
+            if isinstance(item, dict):
+                item["is_supplementary"] = True
     return result

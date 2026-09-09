@@ -1,0 +1,34 @@
+# SmartCarb 语料构建 Worker（CR2/CR3 corpus_rag 管线，独立进程）
+# - 只认领 corpus_rag 管线的 embed/fts/validate 工作项；**默认不认领旧
+#   legacy_extraction 抽取任务**（需要时必须人工显式加 --pipeline 参数）。
+# - 预算：构建自带 max_chunks / max_time_seconds / max_disk_bytes，到顶
+#   暂停（可恢复），不伪成功；本单元只做低优先级调度（Nice/IO idle），
+#   在线查询优先，扩量不影响 8000 端口查询延迟。
+# - 向量经 127.0.0.1:8310（smartcarb-corpus-embedding.service）获取；
+#   服务不可用时降级为本地模型直调或失败重试，不静默跳过。
+# - 退出后由 Restart=always 重新拉起（空闲/暂停退出属正常），RestartSec
+#   即轮询间隔；上线前用 corpus-preflight.sh 核对迁移/模型/资源。
+[Unit]
+Description=SmartCarb Corpus Build Worker (corpus_rag pipeline)
+After=network.target smartcarb-corpus-embedding.service
+Wants=smartcarb-corpus-embedding.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/smartcarb/current/backend
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/opt/smartcarb/shared/env/backend.env
+EnvironmentFile=/opt/smartcarb/shared/env/database.env
+EnvironmentFile=/opt/smartcarb/shared/env/runtime-paths.env
+EnvironmentFile=/opt/smartcarb/shared/env/corpus-embedding.env
+ExecStart=/opt/smartcarb/shared/venvs/backend-py312/bin/python /opt/smartcarb/current/backend/scripts/run_discipline_worker.py --pipeline corpus_rag
+Nice=10
+IOSchedulingClass=idle
+Restart=always
+RestartSec=60
+TimeoutStartSec=120
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

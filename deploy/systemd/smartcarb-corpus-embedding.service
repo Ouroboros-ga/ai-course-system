@@ -1,0 +1,29 @@
+# SmartCarb 语料向量服务（CR2 本地 embedding，loopback only）
+# - 只监听 127.0.0.1:8310，绝不暴露公网；Nexus Runtime 不加载模型，
+#   构建 Worker 与 Backend 查询都经本服务取向量。
+# - 代码目录：/opt/smartcarb/current/backend（随 release 切换）；
+#   配置来源：/opt/smartcarb/shared/env/corpus-embedding.env（root:600）：
+#     CORPUS_EMBEDDING_MODEL_PATH=/opt/smartcarb/shared/models/multilingual-e5-small
+#     CORPUS_EMBEDDING_MODEL_CONFIG=/opt/smartcarb/shared/corpus/model-config.json
+#   模型文件必须离线预置（启动时 local_files_only，绝不请求时下载）；
+#   指纹/维度经固定探针前向核验，校验失败退出码 2 拒绝启动（不降级为随机向量）。
+# - 资源：模型常驻内存，部署前用 corpus-preflight.sh 核对内存/端口余量。
+[Unit]
+Description=SmartCarb Corpus Embedding Service (loopback 8310)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/smartcarb/current/backend
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/opt/smartcarb/shared/env/backend.env
+EnvironmentFile=/opt/smartcarb/shared/env/corpus-embedding.env
+ExecStart=/opt/smartcarb/shared/venvs/backend-py312/bin/python /opt/smartcarb/current/backend/scripts/serve_corpus_embedding.py --model-dir ${CORPUS_EMBEDDING_MODEL_PATH} --model-config ${CORPUS_EMBEDDING_MODEL_CONFIG} --host 127.0.0.1 --port 8310
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

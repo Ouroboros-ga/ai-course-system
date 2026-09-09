@@ -75,10 +75,22 @@ def build_report(
     只记录实测值，不做通过判定（comparison 为空，原因写入 metric_note）；
     模型不得自填容差（容差只来自预设声明，exploratory 下无声明可用）。
     无 policy（legacy 直批路径）保持原语义不变。
+    NX-N0/P1-B：basis == "unknown"（linkage 不可读）时 verdict 为
+    INCOMPLETE——不是"未达标"，而是"无法确认应比较的基线"；comparison 为
+    空，原因写入 metric_note；调用方不得回写该判定。
     """
     steps = job.get("steps_result") or []
     metrics = extract_metrics(steps)
     basis = (metric_policy or {}).get("basis", "verified")
+    if basis == "unknown":
+        reason = (metric_policy or {}).get("reason", "配置快照不可读")
+        report = _base_report(job, preset, metrics, [], "INCOMPLETE")
+        report["metric_policy"] = {"basis": "unknown", "reason": reason}
+        report["metric_note"] = (
+            f"配置快照不可读（{reason}）：无法确认应比较的基线，本次不做"
+            "通过判定；实测值见 metrics_observed，不得宣称为复现通过或失败。"
+        )
+        return report
     if basis == "exploratory":
         reason = (metric_policy or {}).get("reason", "配置偏离已验证基线")
         report = _base_report(job, preset, metrics, [], "EXPLORATORY")

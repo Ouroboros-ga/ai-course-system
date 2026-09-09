@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nexus 新增功能界面与按钮体系 · 2026-09-07</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+/* 与启动页 v2 / NexusLab v4/v6 同一视觉词：1px 发丝线、mono 注记、
+   28px 控件、降饱和 accent、去卡片化。本板只画"新增的部分"。 */
+:root {
+  --page:#f7f5ef; --canvas:#fbfaf7; --panel:#fff; --soft:#f0ede6;
+  --ink:#14213d; --text:#172033; --text-2:#4e5969; --muted:#5e6776; --faint:#a7afbc;
+  --line:#e3e6ea; --line-2:#d4d9e0;
+  --accent:#2a6fad; --accent-soft:#eaf1f8; --accent-line:#b9d3ea;
+  --red:#8b3a3a; --red-soft:#faeeee; --red-line:#d9a3a3;
+  --green:#2f5d45; --green-soft:#eaf3ec;
+  --amber:#8a6a1f; --amber-soft:#fdf6e3; --amber-line:#ecd9a4;
+  --sans:"PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"JetBrains Mono","Fira Code",Consolas,monospace;
+  --ease:cubic-bezier(0.16,1,0.3,1);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#e9e6df; font-family:var(--sans); color:var(--text); padding:34px 0 72px; -webkit-font-smoothing:antialiased; }
+.stage { width:1224px; margin:0 auto; }
+.slabel { display:flex; align-items:baseline; gap:12px; margin:0 0 9px 2px; }
+.slabel .n { font-family:var(--mono); font-size:10px; letter-spacing:.14em; color:#8a8577; text-transform:uppercase; }
+.slabel b { font-size:13px; color:#3d3a32; }
+.slabel .hint { font-size:11.5px; color:#8a8577; }
+
+.board { background:var(--page); border:1px solid #d6d2c6; border-radius:8px; overflow:hidden; }
+.bd { padding:22px 24px; }
+.bd + .bd { border-top:1px solid var(--line); }
+.bdh {
+  display:flex; align-items:baseline; justify-content:space-between;
+  padding-bottom:8px; margin-bottom:14px; border-bottom:1px solid var(--line);
+}
+.bdh .t { font-size:12.5px; font-weight:600; color:var(--ink); }
+.bdh .c { font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted); text-transform:uppercase; }
+
+/* ── 审批浮窗 v2 ── */
+.dock {
+  max-width:760px; background:var(--panel);
+  border:1px solid var(--accent-line); border-radius:6px;
+  box-shadow:0 2px 8px rgba(20,33,61,.06); overflow:hidden;
+}
+.dock .h { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--canvas); }
+.dock .h b { font-size:13px; color:var(--ink); font-weight:600; }
+.dock .h .no { font-family:var(--mono); font-size:10.5px; color:var(--muted); }
+.dock .h .sp { flex:1; }
+.pill { font-family:var(--mono); font-size:9.5px; padding:2px 7px; border-radius:3px; letter-spacing:.04em; }
+.pill.pend { color:var(--accent); background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent-line); }
+.pill.exp { color:var(--amber); background:var(--amber-soft); box-shadow:inset 0 0 0 1px var(--amber-line); }
+.pill.ok { color:var(--green); background:var(--green-soft); }
+.pill.no { color:var(--muted); background:var(--soft); }
+.dock .body { padding:12px 14px; }
+.dock .obj { font-size:12.5px; line-height:1.7; color:var(--text); }
+.dock .meta { margin-top:8px; display:flex; flex-wrap:wrap; gap:4px 14px; font-family:var(--mono); font-size:10.5px; color:var(--muted); }
+.diff { margin-top:10px; border-top:1px solid var(--line); }
+.diff .cap { font-family:var(--mono); font-size:9.5px; letter-spacing:.1em; color:var(--muted); text-transform:uppercase; padding:8px 0 4px; }
+.dr { display:grid; grid-template-columns:52px 118px 1fr; gap:8px; padding:5px 0; border-bottom:1px solid var(--line-subtle,#f1f3f5); font-size:12px; align-items:baseline; }
+.dr .k { font-family:var(--mono); font-size:10px; padding:1px 6px; border-radius:3px; text-align:center; }
+.dr .k.mod { color:var(--accent); background:var(--accent-soft); }
+.dr .k.add { color:var(--green); background:var(--green-soft); }
+.dr .k.del { color:var(--red); background:var(--red-soft); }
+.dr .n { font-family:var(--mono); font-size:11px; color:var(--text-2); }
+.dr .v { font-family:var(--mono); font-size:11px; color:var(--text); }
+.dr .v s { color:var(--faint); }
+.dock .warn {
+  margin-top:10px; padding:8px 10px; border-radius:4px;
+  background:var(--amber-soft); box-shadow:inset 0 0 0 1px var(--amber-line);
+  font-size:11.5px; line-height:1.7; color:var(--amber);
+}
+.dock .warn2 { background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent-line); color:var(--accent-deep,#1f5a91); }
+.dock .act { display:flex; align-items:center; gap:8px; margin-top:12px; flex-wrap:wrap; }
+
+/* ── 按钮体系 ── */
+.btn {
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  height:28px; padding:0 12px; border-radius:4px; border:1px solid transparent;
+  font-family:var(--sans); font-size:12px; font-weight:600; cursor:pointer;
+  transition:background .16s ease-out, color .16s ease-out, border-color .16s ease-out;
+}
+.btn.md { height:32px; padding:0 14px; font-size:12.5px; }
+.btn.xs { height:24px; padding:0 9px; font-size:11.5px; }
+.btn.pri { background:var(--ink); color:#f7f5ef; }
+.btn.pri:hover { background:#1d2f52; }
+.btn.sec { background:var(--panel); color:var(--ink); border-color:var(--line-2); }
+.btn.sec:hover { border-color:var(--accent); color:var(--accent); }
+.btn.ter { background:transparent; color:var(--text-2); }
+.btn.ter:hover { background:var(--panel); color:var(--ink); }
+.btn.dgr { background:var(--panel); color:var(--red); border-color:var(--red-line); }
+.btn.dgr:hover { background:var(--red-soft); }
+.btn.dgr.on { background:var(--red); color:#fff; border-color:var(--red); }
+.btn.lnk { height:24px; padding:0 4px; background:transparent; color:var(--accent); font-weight:600; }
+.btn.lnk:hover { text-decoration:underline; }
+.btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.btn[disabled] { background:var(--soft); color:var(--faint); border-color:transparent; cursor:not-allowed; }
+.btn.ld { color:transparent; position:relative; background:var(--ink); }
+.btn.ld::after {
+  content:""; position:absolute; width:12px; height:12px; border-radius:50%;
+  border:2px solid rgba(247,245,239,.35); border-top-color:#f7f5ef;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+.hintline { font-size:11px; color:var(--faint); }
+
+/* ── composer / 分段控件 ── */
+.composer { max-width:760px; margin-top:14px; background:var(--panel); border:1px solid var(--line-2); border-radius:6px; padding:10px 12px; }
+.composer .ph { font-size:13.5px; color:var(--faint); padding:2px 2px 8px; border-bottom:1px solid var(--line); }
+.composer .r { display:flex; align-items:center; gap:8px; margin-top:9px; }
+.composer .sp { flex:1; }
+.seg { display:inline-flex; gap:2px; padding:2px; background:var(--soft); border:1px solid var(--line); border-radius:999px; }
+.seg span {
+  height:24px; padding:0 11px; border-radius:999px; display:inline-flex; align-items:center; gap:6px;
+  font-size:12px; color:var(--text-2); cursor:pointer; user-select:none;
+}
+.seg span.on { background:var(--panel); color:var(--ink); font-weight:600; box-shadow:0 1px 2px rgba(20,33,61,.08); }
+.seg span i { font-family:var(--mono); font-size:9.5px; font-style:normal; color:var(--faint); }
+.seg span.on i { color:var(--accent); }
+.modetip { font-size:11px; color:var(--muted); }
+
+/* ── 头部 / 备注 / 产物 ── */
+.whead { display:flex; align-items:center; gap:10px; }
+.whead .nm { font-size:14px; font-weight:600; color:var(--ink); }
+.whead .no { font-family:var(--mono); font-size:10.5px; color:var(--faint); }
+.whead .sp { flex:1; }
+.rename { display:flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid var(--accent); border-radius:4px; background:var(--panel); }
+.rename input { width:190px; border:0; outline:0; font-family:var(--sans); font-size:13px; color:var(--ink); background:transparent; }
+.rename .mono { font-family:var(--mono); font-size:10px; color:var(--faint); }
+.tabs { display:flex; gap:2px; border-bottom:1px solid var(--line); }
+.tabs span { padding:6px 12px; font-size:12px; color:var(--text-2); border-bottom:2px solid transparent; cursor:pointer; }
+.tabs span.on { color:var(--ink); font-weight:600; border-bottom-color:var(--ink); }
+.tabs .n { font-family:var(--mono); font-size:9.5px; color:var(--faint); }
+.notes { max-width:520px; }
+.note { display:grid; grid-template-columns:64px 1fr; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); font-size:12px; }
+.note .who { font-family:var(--mono); font-size:9.5px; padding:1px 6px; border-radius:3px; height:fit-content; }
+.note .who.me { color:var(--accent); background:var(--accent-soft); }
+.note .who.ag { color:var(--amber); background:var(--amber-soft); }
+.note .tx { line-height:1.7; color:var(--text-2); }
+.note .tx b { display:block; color:var(--text); font-weight:600; margin-bottom:2px; }
+.note .tm { font-family:var(--mono); font-size:9.5px; color:var(--faint); margin-top:3px; }
+.files { max-width:520px; margin-top:14px; }
+.file { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--line); font-size:12px; }
+.file .nm { font-family:var(--mono); font-size:11px; color:var(--text); }
+.file .sp { flex:1; }
+.file .sz { font-family:var(--mono); font-size:10px; color:var(--faint); }
+.file.off .nm { color:var(--faint); }
+
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:26px; }
+.row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+.row .lb { font-family:var(--mono); font-size:10px; color:var(--muted); width:118px; flex-shrink:0; letter-spacing:.06em; text-transform:uppercase; }
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th, td { text-align:left; padding:8px 16px; border-bottom:1px solid var(--line); vertical-align:top; line-height:1.65; }
+th { font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted); text-transform:uppercase; background:var(--soft); }
+td:first-child { font-family:var(--mono); font-size:11px; color:var(--text-2); white-space:nowrap; }
+code { font-family:var(--mono); font-size:11px; background:var(--soft); padding:1px 4px; border-radius:3px; }
+.no { color:#8b3a3a; }
+.yes { color:#2f5d45; }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- ══ Board A ══ -->
+  <div class="slabel">
+    <span class="n">Board A</span>
+    <b>审批浮窗 v2 + Research 的 Ask / Auto</b>
+    <span class="hint">参数 diff 三色行 · 旧票失效 · 基线变更诚实标注 · 模式选择器与视图切换器同语汇</span>
+  </div>
+  <div class="board">
+    <div class="bd">
+      <div class="dock">
+        <div class="h">
+          <b>复现方案待你确认</b>
+          <span class="no">nanoGPT 复现 · #2 · job_7f3a91c4</span>
+          <span class="sp"></span>
+          <span class="pill pend">待批准</span>
+        </div>
+        <div class="body">
+          <p class="obj">在 Shakespeare 字符级数据上复现 nanoGPT 的收敛值，验证 val_loss 是否落在论文给的 1.88 附近。</p>
+          <div class="meta">
+            <span>repo karpathy/nanoGPT @ a1b2c3d</span>
+            <span>MIT</span>
+            <span>预算 5 分钟 / 6 步</span>
+            <span>指纹 9f3c1ab2…</span>
+            <span>有效期 12:40</span>
+          </div>
+
+          <div class="diff">
+            <div class="cap">与上一版的差异 / Diff</div>
+            <div class="dr"><span class="k mod">修改</span><span class="n">max_iters</span><span class="v"><s>5000</s> → <b>2000</b></span></div>
+            <div class="dr"><span class="k mod">修改</span><span class="n">device</span><span class="v"><s>cuda</s> → <b>cpu</b></span></div>
+            <div class="dr"><span class="k add">新增</span><span class="n">compile</span><span class="v"><b>false</b></span></div>
+            <div class="dr"><span class="k del">移除</span><span class="n">wandb_log</span><span class="v"><s>true</s></span></div>
+          </div>
+
+          <p class="warn">参数已改动，与已验证基线（1.88 ± 0.06）不再匹配。本次结果将标记为 <b>exploratory</b>：仍会给出测量值，但不判定复现通过。</p>
+
+          <div class="act">
+            <button class="btn pri">批准执行</button>
+            <button class="btn sec">查看完整方案</button>
+            <button class="btn dgr">拒绝</button>
+            <span class="hintline">↓ 在下面输入框提出修改，改完重新确认</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="ph">输入你的问题…</div>
+        <div class="r">
+          <div class="seg" role="tablist" aria-label="研究执行模式">
+            <span class="on"><i>A</i>研究与写作</span>
+            <span><i>B</i>研究与实验</span>
+          </div>
+          <span class="modetip">自主研究与文档输出，不运行实验。</span>
+          <span class="sp"></span>
+          <span class="modetip" style="font-family:var(--mono)">deepseek-chat</span>
+          <button class="btn sec">发送</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="bd">
+      <div class="bdh"><span class="t">同一枚浮窗的三种状态</span><span class="c">States</span></div>
+      <div class="grid2">
+        <div>
+          <p class="hintline" style="margin-bottom:6px">Ask 模式收到「帮我运行」—— 主按钮改文案，不禁用、不擅自切模式</p>
+          <div class="dock" style="max-width:none">
+            <div class="body" style="padding:12px 14px">
+              <p class="obj">我可以先把可做的部分做完：核对 README 的 CPU 配置、整理执行命令与判定口径。<b>运行需要「研究与实验」。</b></p>
+              <div class="act">
+                <button class="btn pri">切换到研究与实验</button>
+                <button class="btn ter">继续只做研究</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <p class="hintline" style="margin-bottom:6px">改方案后旧票失效 —— 不是"再点一次批准"，而是重新确认</p>
+          <div class="dock" style="max-width:none">
+            <div class="body" style="padding:12px 14px">
+              <p class="obj" style="color:var(--muted)">方案已更新（v3 → v4），此前的批准不再适用。</p>
+              <div class="act">
+                <button class="btn pri">重新确认并执行</button>
+                <button class="btn sec">查看差异</button>
+              </div>
+              <p class="warn warn2" style="margin-top:10px">旧票据不可复用是服务端保证的；前端只负责如实呈现，不缓存"批准过"的按钮态。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Board B ══ -->
+  <div class="slabel" style="margin-top:30px">
+    <span class="n">Board B</span>
+    <b>重命名 · 备注 · 产物</b>
+    <span class="hint">后端 LB1/LB5 已上线、前端 API 已封装但 0 处调用 —— 这是入口长什么样</span>
+  </div>
+  <div class="board">
+    <div class="bd">
+      <div class="whead">
+        <span class="nm">nanoGPT 在 Shakespeare 上的收敛复现</span>
+        <span class="no">#2 · job_7f3a91c4</span>
+        <button class="btn lnk">重命名</button>
+        <span class="sp"></span>
+        <span class="pill ok">已完成</span>
+      </div>
+      <p class="hintline" style="margin-top:8px">显示名优先级：<code>title</code> → 服务端 <code>display_title</code> → 本地回退。<b>重命名不改变执行 hash 或运行配置。</b></p>
+      <div class="row" style="margin-top:12px">
+        <span class="lb">就地编辑态</span>
+        <span class="rename">
+          <input value="nanoGPT 在 Shakespeare 上的收敛复现" />
+          <span class="mono">1–120 · 留空恢复默认名</span>
+        </span>
+        <button class="btn sec xs">保存</button>
+        <button class="btn ter xs">取消</button>
+      </div>
+    </div>
+
+    <div class="bd">
+      <div class="grid2">
+        <div>
+          <div class="tabs"><span class="on">备注 <span class="n">3</span></span><span>日志</span><span>指标</span><span>产物</span></div>
+          <div class="notes" style="margin-top:10px">
+            <div class="note">
+              <span class="who me">用户</span>
+              <span class="tx"><b>为什么最后 200 iter 的 loss 反升？</b>先看是不是过拟合，还是评估窗口的问题。<span class="tm">20:14</span></span>
+            </div>
+            <div class="note">
+              <span class="who ag">Nexus</span>
+              <span class="tx">torch.compile 在 CPU 不可用已回退 eager，<b>不影响数值判定</b>；loss 末段回升与 val 评估窗口重叠有关。<span class="tm">20:15 · 解释或建议，不改结果</span></span>
+            </div>
+            <div class="note">
+              <span class="who me">用户</span>
+              <span class="tx">下次把 max_iters 降到 2000 再跑一次。<span class="tm">20:16</span></span>
+            </div>
+          </div>
+          <p class="hintline" style="margin-top:8px">追加式，不可编辑/删除；≤4000 字符；request_id 幂等，重复提交不产生第二条。</p>
+        </div>
+        <div>
+          <div class="bdh"><span class="t">产物</span><span class="c">Artifacts</span></div>
+          <div class="files">
+            <div class="file"><span class="nm">val_loss_curve.csv</span><span class="sp"></span><span class="sz">12.4 KB</span><button class="btn lnk">下载</button></div>
+            <div class="file"><span class="nm">train_log.txt</span><span class="sp"></span><span class="sz">208 KB</span><button class="btn lnk">下载</button></div>
+            <div class="file off"><span class="nm">out-shakespeare-char/ckpt.pt</span><span class="sp"></span><span class="pill no">未收集</span></div>
+            <div class="file off"><span class="nm">sample.png</span><span class="sp"></span><span class="pill no">已过期</span></div>
+          </div>
+          <p class="hintline" style="margin-top:8px">只列<b>已授权 Artifact 引用</b>；未收集 / 已过期如实不可用，不把 Worker 工作目录清单当下载链接。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Board C ══ -->
+  <div class="slabel" style="margin-top:30px">
+    <span class="n">Board C</span>
+    <b>按钮设计体系</b>
+    <span class="hint">变体 · 尺寸 · 八种状态 · 危险动作三级确认</span>
+  </div>
+  <div class="board">
+    <div class="bd">
+      <div class="row"><span class="lb">变体</span>
+        <button class="btn pri">primary</button>
+        <button class="btn sec">secondary</button>
+        <button class="btn ter">tertiary</button>
+        <button class="btn dgr">danger</button>
+        <button class="btn lnk">文字按钮</button>
+        <span class="hintline">primary 一屏唯一；danger 红描边不用实心红</span>
+      </div>
+      <div class="row"><span class="lb">尺寸</span>
+        <button class="btn pri md">md 32 · 主动作</button>
+        <button class="btn sec">sm 28 · 行内</button>
+        <button class="btn sec xs">xs 24 · 面板密集行</button>
+      </div>
+      <div class="row"><span class="lb">状态</span>
+        <button class="btn sec">默认</button>
+        <button class="btn sec" style="border-color:var(--accent);color:var(--accent)">悬停</button>
+        <button class="btn sec" style="outline:2px solid var(--accent);outline-offset:2px">聚焦</button>
+        <button class="btn sec" disabled title="Ask 模式不运行实验，切换到「研究与实验」后可用">禁用·带原因</button>
+        <button class="btn pri ld">批准执行</button>
+        <span class="hintline">loading 保留原文案宽度，只换指示器，防止按钮跳动</span>
+      </div>
+      <div class="row"><span class="lb">危险二级确认</span>
+        <button class="btn dgr">取消运行</button>
+        <span class="hintline">→ 点击后</span>
+        <button class="btn dgr on">确认取消？</button>
+        <span class="hintline">就地变文案，5 秒无操作自动退回；不弹窗</span>
+      </div>
+      <div class="row"><span class="lb">禁用必须给原因</span>
+        <button class="btn sec" disabled title="另一个请求正在进行，结束后可用">加载更早的运行</button>
+        <button class="btn sec" disabled title="输入为空">添加备注</button>
+        <span class="hintline">只变灰不给 title 的禁用态，一律退回</span>
+      </div>
+    </div>
+    <div class="bd">
+      <table>
+        <tr><th>位置</th><th>动作</th><th>变体 / 尺寸</th><th>约束</th></tr>
+        <tr><td>审批浮窗</td><td>批准执行</td><td>primary / sm</td><td>一屏唯一；Ask 下改「切换 Auto 并批准执行」</td></tr>
+        <tr><td>审批浮窗</td><td>查看完整方案</td><td>secondary / sm</td><td>滚动到消息流原卡，不开新层</td></tr>
+        <tr><td>审批浮窗</td><td>拒绝</td><td>danger / sm</td><td>二级就地确认</td></tr>
+        <tr><td>工作台头部</td><td>重命名</td><td>文字按钮 / xs</td><td>就地编辑，Esc 取消；409 拉最新不覆盖输入</td></tr>
+        <tr><td>工作台头部</td><td>取消运行</td><td>danger / sm</td><td><span class="no">先签 cancel-grant</span>；二级确认；失败原样映射</td></tr>
+        <tr><td>工作台结果区</td><td>分析本次结果</td><td>primary / sm</td><td>预填<b>不发送</b>，用户点发送才算</td></tr>
+        <tr><td>工作台结果区</td><td>调整方案再运行</td><td>secondary / sm</td><td>新提案 → 展示差异 → 重新审批 → 新 run</td></tr>
+        <tr><td>浮窗确认条</td><td>确认取消 / 忽略</td><td>danger + secondary / xs</td><td>仅模型未获 grant 时出现；歧义必须让用户指定 run</td></tr>
+        <tr><td>上下文面板</td><td>绑定课程 / 更换</td><td>secondary / xs</td><td>—</td></tr>
+        <tr><td>Research composer</td><td>Ask / Auto</td><td><b>分段控件（非按钮）</b></td><td>与视图切换器同语汇；General 不渲染</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══ 接线状态 ══ -->
+  <div class="board" style="margin-top:30px">
+    <div class="bd">
+      <div class="bdh"><span class="t">接线状态（2026-09-07 实测）</span><span class="c">Wiring</span></div>
+      <table>
+        <tr><th>功能</th><th>后端</th><th>前端封装</th><th>调用</th><th>界面</th></tr>
+        <tr><td>会话 runs 列表 / 恢复</td><td class="yes">✅</td><td>listNexusRuns</td><td>2</td><td class="yes">✅ 已接</td></tr>
+        <tr><td>运行详情（display_title / run_number / 冻结配置）</td><td class="yes">✅</td><td>getNexusRunDetail</td><td class="no">0</td><td class="no">未建</td></tr>
+        <tr><td>运行重命名</td><td class="yes">✅</td><td>renameNexusRun</td><td class="no">0</td><td class="no">未建</td></tr>
+        <tr><td>取消授权签发</td><td class="yes">✅</td><td>requestNexusRunCancelGrant</td><td class="no">0</td><td class="no">未建</td></tr>
+        <tr><td>运行备注</td><td class="yes">✅</td><td>list / createNexusRunNotes</td><td class="no">0</td><td class="no">未建</td></tr>
+        <tr><td>preset 投影</td><td class="yes">✅</td><td class="no">未封装</td><td>—</td><td class="no">未建</td></tr>
+        <tr><td>提案 创建 / 读取 / 改参 / 请求审批</td><td class="yes">✅</td><td class="no">未封装</td><td>—</td><td class="no">未建</td></tr>
+        <tr><td>Research Ask / Auto</td><td class="no">❌ 未实现</td><td>—</td><td>—</td><td class="no">未建</td></tr>
+      </table>
+      <p class="hintline" style="margin-top:10px">"已封装 0 调用"是最该警惕的状态：接口写好了但没有入口，等于功能不存在。参数白名单只能来自 <code>GET /repro/presets</code>，前端禁止硬编码参数列表。</p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

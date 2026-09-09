@@ -70,6 +70,9 @@ def build_evidence(
         "source_kind": "upload_label",
         "locator": locator,
         "excerpt": excerpt,
+        # NX-N0/R3：块级截断如实标记（超长块只取前 1200 字符，消费方不得
+        # 把 excerpt 当全文）。
+        "truncated": len(text.strip()) > EVIDENCE_EXCERPT_MAX,
         "coverage": coverage,
         "is_supplementary": True,
     }

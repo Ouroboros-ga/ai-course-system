@@ -1,6 +1,13 @@
 """学科语料层 FTS + 向量混合检索（RAG 检索白名单接入，2026-09-01）。
 
-语料层（``knowledge_data/.corpus_cache/corpus_*.jsonl``，3.26GB）由
+CR3 补充：版本化统一检索的新权威入口是
+``app.services.discipline_knowledge.corpus_search.CorpusSearchService``
+（同版本 FTS + 向量融合、引用回读、撤回过滤）。本模块保留旧索引
+（FTS 文件 + ``discipline_corpus_embedding`` 中文子集）直连路径作为
+legacy 回退；``search_corpus_unified`` 为兼容门面，有版本上下文时委托
+新服务，无版本时走旧路径（行为与历史一致）。
+
+旧索引说明：语料层（``knowledge_data/.corpus_cache/corpus_*.jsonl``）由
 ``knowledge_data/corpus/build_corpus_index.py`` 预构建为 SQLite FTS5 索引；
 中文高权威子集（教材 + 中文维基 CS）另由 ``build_corpus_embeddings.py``
 用本地 BGE 离线嵌入写入 pgvector 表 ``discipline_corpus_embedding``。
@@ -371,6 +378,58 @@ __all__ = [
     "close_corpus_connection",
     "corpus_index_available",
     "search_corpus",
+    "search_corpus_unified",
     "strip_query_noise",
     "tokenize_for_fts",
 ]
+
+
+def search_corpus_unified(
+    session,
+    query: str,
+    *,
+    release_id: str | None = None,
+    top_k: int = 6,
+    filters=None,
+    embed_client=None,
+) -> dict[str, Any]:
+    """统一检索门面：有版本上下文走 CR3 新服务，无版本走旧路径。
+
+    - ``release_id`` 非空（或已发布 head 存在）→ ``CorpusSearchService``
+      （同版本融合 + 引用 + 撤回过滤）；
+    - 无版本（含 head 读取失败，如表不存在的旧库）→ 旧 ``search_corpus``
+      行为（legacy 回退；结果无 release 语义，调用方不得冒充版本化引用）。
+    """
+    from app.services.discipline_knowledge.corpus_index import read_head
+
+    head_release: str | None = None
+    if release_id is None:
+        try:
+            head_release = read_head(session).get("release_id") or None
+        except Exception:  # noqa: BLE001 - head 不可读即无版本，走旧路径
+            head_release = None
+        if not head_release:
+            rows = [
+                {**row, "result_type": "corpus_chunk"}
+                for row in search_corpus(query, top_k=top_k)
+            ]
+            return {
+                "schema_version": "discipline-corpus/2",
+                "release_id": "",
+                "status": "ok",
+                "mode": "legacy",
+                "degraded_reasons": ["NO_PUBLISHED_RELEASE"],
+                "coverage": {},
+                "results": rows,
+                "match": "hit" if rows else "none",
+            }
+    from app.services.discipline_knowledge.corpus_search import (
+        CorpusSearchService,
+    )
+
+    result = CorpusSearchService().search(
+        session, query, top_k=top_k, release_id=release_id or head_release,
+        filters=filters, embed_client=embed_client)
+    for item in result.get("results") or []:
+        item.setdefault("result_type", "corpus_chunk")
+    return result

@@ -39,6 +39,9 @@ class TeachingState(TypedDict, total=False):
     # 2026-08-30（R14）：学科垂类知识库补充参考。is_supplementary=True，
     # 只进入回答上下文；无 evidence_id，不进入引用闭包/掌握度/图谱。
     discipline_kb_results: list[dict[str, Any]]
+    # CR4：模型声明实际使用的语料引用（validate_response 已过滤为本次
+    # 返回的子集；伪造/过期引用剔除并告警）。
+    used_discipline_reference_ids: list[str]
     sandbox_result: dict[str, Any] | None
     code_diagnosis: dict[str, Any] | None
     coding_diagnosis: dict[str, Any] | None

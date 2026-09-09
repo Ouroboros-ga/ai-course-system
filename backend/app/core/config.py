@@ -233,6 +233,50 @@ class Settings(BaseSettings):
     DISCIPLINE_CORPUS_VECTOR_MODEL_PATH: str = ""
     # 向量召回深度（RRF 融合前的 top-n）。
     DISCIPLINE_CORPUS_VECTOR_TOP_K: int = 8
+    # CR1 语料正文对象存储根（规范化正文 .txt，chunk 按偏移回读）。
+    # 空 = 默认 backend/media/discipline_texts；测试用环境变量隔离。
+    DISCIPLINE_TEXT_STORE_ROOT: str = ""
+    # CR1 语料来源根（五类 JSONL 所在目录）；--source-set 模式需要。
+    DISCIPLINE_SOURCE_ROOT: str = ""
+    # CR3 FTS 文件根（按 release 的确定性 object_key 存放，只读打开）。
+    # 空 = 默认 backend/media/discipline_fts；测试用环境变量隔离。
+    DISCIPLINE_FTS_ROOT: str = ""
+    # CR2 学科 embedding（独立于 GRAPHRAG_*；换学科模型不动课程模型）。
+    # 模型 ID/版本/文件哈希/tokenizer/维度/长度共同生成 model_fingerprint；
+    # 未冻结（revision/files_hash 为空）时拒绝构建。
+    # 模型族：e5（attention-mask mean＋query/passage 前缀）| bge-zh（CLS＋中文查询指令）。
+    # 池化与前缀由族注册表决定（corpus_embedding.MODEL_FAMILIES），配置声明不一致即拒绝。
+    CORPUS_EMBEDDING_FAMILY: str = "e5"
+    CORPUS_EMBEDDING_MODEL_ID: str = "intfloat/multilingual-e5-small"
+    CORPUS_EMBEDDING_MODEL_PATH: str = ""
+    CORPUS_EMBEDDING_MODEL_REVISION: str = ""
+    CORPUS_EMBEDDING_FILES_HASH: str = ""
+    CORPUS_EMBEDDING_TOKENIZER: str = "intfloat/multilingual-e5-small"
+    CORPUS_EMBEDDING_DIMENSION: int = 384
+    CORPUS_EMBEDDING_MAX_LENGTH: int = 512
+    # loopback embedding 服务地址；空 = worker 本地直调模型。
+    CORPUS_EMBEDDING_URL: str = ""
+    CORPUS_EMBEDDING_QUERY_BATCH_MAX: int = 8
+    CORPUS_EMBEDDING_DOC_BATCH: int = 16
+    CORPUS_EMBEDDING_MAX_INFLIGHT: int = 4
+    CORPUS_EMBEDDING_QUERY_RESERVE: int = 1
+    # CR2 corpus 预算默认：时间/磁盘（token/片段沿用上方 BUDGET 默认）。
+    DISCIPLINE_BUILD_MAX_TIME_SECONDS: int = 0
+    DISCIPLINE_BUILD_MAX_DISK_BYTES: int = 0
+    # 学科知识库构建 Worker（DK4）：独立进程 run_discipline_worker.py 消费。
+    # 抽取计算不在用户请求中运行。租约续期口径：每批推理结束后用独立短连接
+    # 续租一次（run_corpus_batch），**不是**周期心跳——推理超租约只会导致
+    # 他 worker 重认领重算，提交时的 lease_token 校验保证不会双写。
+    # 2026-09-08 全量审核 P2-14：删除 4 个从未被读取的配置项
+    # （WORKER_PIPELINE/EMBED_BATCH_SIZE/WORKER_CONCURRENCY/RENEW_SECONDS），
+    # 避免"有 30 秒心跳开关"的错觉；周期心跳列为 V2 候选（触发条件：实测
+    # 单批推理时长接近租约）。
+    DISCIPLINE_WORKER_LEASE_SECONDS: int = 180
+    DISCIPLINE_BUILD_MAX_CHUNKS: int = 1000
+    DISCIPLINE_BUILD_MAX_INPUT_TOKENS: int = 2000000
+    DISCIPLINE_BUILD_MAX_OUTPUT_TOKENS: int = 200000
+    DISCIPLINE_BUILD_TIMEOUT_SECONDS: int = 600
+    DISCIPLINE_BUILD_MAX_RETRIES: int = 2
 
     # 豆包配置
     DOUBAO_API_KEY: str = ""

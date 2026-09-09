@@ -71,6 +71,18 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
             frozen = json.loads(frozen)
         except ValueError:
             frozen = []
+    frozen_scope = row.get("frozen_scope", {})
+    if isinstance(frozen_scope, str):
+        try:
+            frozen_scope = json.loads(frozen_scope)
+        except ValueError:
+            frozen_scope = {}
+    frozen_license = row.get("frozen_license", {})
+    if isinstance(frozen_license, str):
+        try:
+            frozen_license = json.loads(frozen_license)
+        except ValueError:
+            frozen_license = {}
     return {
         "approval_id": row["approval_id"],
         "user_id": row["user_id"],
@@ -89,19 +101,27 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "proposal_version": row.get("proposal_version", 0),
         "proposal_hash": row.get("proposal_hash", ""),
         "frozen_steps": frozen if isinstance(frozen, list) else [],
+        # T2 自主绑定（preset 行缺省为空）。
+        "proposal_kind": row.get("proposal_kind", "") or "",
+        "scope_hash": row.get("scope_hash", "") or "",
+        "frozen_scope": frozen_scope if isinstance(frozen_scope, dict) else {},
+        # T7：冻结 License 快照（执行前核验门消费；旧票据缺省空→unknown）。
+        "frozen_license": frozen_license if isinstance(frozen_license, dict) else {},
     }
 
 
 _APPROVAL_SELECT = (
     "approval_id, user_id, session_id, tool, preset_id, "
     "plan_hash, budget, status, job_id, detail, created_at, expires_at, "
-    "proposal_id, proposal_version, proposal_hash, frozen_steps"
+    "proposal_id, proposal_version, proposal_hash, frozen_steps, "
+    "proposal_kind, scope_hash, frozen_scope, frozen_license"
 )
 
 _APPROVAL_KEYS = ("approval_id", "user_id", "session_id", "tool", "preset_id",
                   "plan_hash", "budget", "status", "job_id", "detail",
                   "created_at", "expires_at", "proposal_id", "proposal_version",
-                  "proposal_hash", "frozen_steps")
+                  "proposal_hash", "frozen_steps", "proposal_kind",
+                  "scope_hash", "frozen_scope", "frozen_license")
 
 
 def _row_from_pg_values(found: Any) -> dict[str, Any]:
@@ -115,27 +135,6 @@ def _is_expired(row: dict[str, Any], now: float | None = None) -> bool:
     return (now if now is not None else _now()) >= float(row["expires_at"])
 
 
-APPROVALS_DDL = """
-CREATE SCHEMA IF NOT EXISTS {schema};
-CREATE TABLE IF NOT EXISTS {schema}.nexus_approvals (
-    approval_id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT '',
-    session_id TEXT NOT NULL DEFAULT '',
-    tool TEXT NOT NULL DEFAULT '',
-    preset_id TEXT NOT NULL DEFAULT '',
-    plan_hash TEXT NOT NULL DEFAULT '',
-    budget JSONB NOT NULL DEFAULT '{{}}',
-    status TEXT NOT NULL DEFAULT 'pending',
-    job_id TEXT NOT NULL DEFAULT '',
-    detail TEXT NOT NULL DEFAULT '',
-    created_at DOUBLE PRECISION NOT NULL DEFAULT 0,
-    expires_at DOUBLE PRECISION NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_nexus_approvals_user
-    ON {schema}.nexus_approvals (user_id, created_at DESC);
-"""
-
-
 def _pg_settings() -> tuple[str, str] | None:
     """PG 可用返回 (dsn, schema)，否则 None（调用方走内存）。"""
     from nexus.config import get_settings
@@ -145,29 +144,6 @@ def _pg_settings() -> tuple[str, str] | None:
     if not dsn:
         return None
     return dsn, settings.postgres_schema
-
-
-def ensure_approvals_table(dsn: str, schema: str) -> None:
-    """幂等建表（lifespan/首次写入前调用；失败抛异常由调用方降级）。
-
-    NX-LB2：老表缺提案绑定列时逐列补（PG ADD COLUMN IF NOT EXISTS，
-    可重入；回退见提案验收记录——旧代码忽略新列）。
-    """
-    import psycopg
-
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        with conn.cursor() as cur:
-            cur.execute(APPROVALS_DDL.format(schema=schema))
-            for column, ddl in (
-                ("proposal_id", "TEXT NOT NULL DEFAULT ''"),
-                ("proposal_version", "INTEGER NOT NULL DEFAULT 0"),
-                ("proposal_hash", "TEXT NOT NULL DEFAULT ''"),
-                ("frozen_steps", "TEXT NOT NULL DEFAULT '[]'"),
-            ):
-                cur.execute(
-                    f"ALTER TABLE {schema}.nexus_approvals "
-                    f"ADD COLUMN IF NOT EXISTS {column} {ddl}"
-                )
 
 
 def create_approval(
@@ -184,9 +160,54 @@ def create_approval(
     proposal_binding（NX-LB2，可选）：{"proposal_id", "proposal_version",
     "proposal_hash", "frozen_steps"}——request-approval 路径绑定，执行时
     按版本+hash 重验提案，未绑定即 legacy preset 直批路径。
+    T2 自主绑定追加：{"proposal_kind": "autonomous_experiment",
+    "scope_hash", "frozen_scope"}——此时 preset 可为空，plan_hash 取
+    scope_hash，预算由 scope 资源派生。
+    T7 追加 frozen_license（提案 License 快照；旧票据缺省空→unknown）。
     """
     now = _now()
     binding = proposal_binding or {}
+    kind = str(binding.get("proposal_kind", "") or "")
+    if kind == "autonomous_experiment":
+        from nexus.proposals import budget_for_scope, scope_hash_for
+
+        frozen_scope = binding.get("frozen_scope") or {}
+        if not isinstance(frozen_scope, dict) or not frozen_scope:
+            raise ApprovalError(
+                "APPROVAL_SCOPE_MISSING", "自主审批须绑定冻结 scope")
+        scope_hash = str(binding.get("scope_hash", "") or "")
+        if not scope_hash:
+            scope_hash = scope_hash_for(frozen_scope)
+        frozen_license = binding.get("frozen_license") or {}
+        if not isinstance(frozen_license, dict):
+            frozen_license = {}
+        row = {
+            "approval_id": new_approval_id(),
+            "user_id": user_id or "",
+            "session_id": session_id or "",
+            "tool": tool,
+            "preset_id": "",
+            "plan_hash": scope_hash,
+            "budget": budget_for_scope(frozen_scope),
+            "status": "pending",
+            "job_id": "",
+            "detail": "",
+            "created_at": now,
+            "expires_at": now + max(1, int(ttl_s)),
+            "proposal_id": str(binding.get("proposal_id", "")),
+            "proposal_version": int(binding.get("proposal_version", 0) or 0),
+            "proposal_hash": str(binding.get("proposal_hash", "") or scope_hash),
+            "frozen_steps": [],
+            "proposal_kind": "autonomous_experiment",
+            "scope_hash": scope_hash,
+            "frozen_scope": dict(frozen_scope),
+            "frozen_license": {
+                "spdx": str(frozen_license.get("spdx") or ""),
+                "status": str(frozen_license.get("status") or "unknown") or "unknown",
+            },
+        }
+        _insert_approval_row(row)
+        return _row_to_dict(row)
     row = {
         "approval_id": new_approval_id(),
         "user_id": user_id or "",
@@ -204,12 +225,21 @@ def create_approval(
         "proposal_version": int(binding.get("proposal_version", 0) or 0),
         "proposal_hash": str(binding.get("proposal_hash", "")),
         "frozen_steps": list(binding.get("frozen_steps") or []),
+        "proposal_kind": "",
+        "scope_hash": "",
+        "frozen_scope": {},
+        "frozen_license": {},
     }
+    _insert_approval_row(row)
+    return _row_to_dict(row)
+
+
+def _insert_approval_row(row: dict[str, Any]) -> None:
+    """插入审批行（PG 可用进 PG，异常回退内存；与旧路径同失败语义）。"""
     pg = _pg_settings()
     if pg is not None:
         dsn, schema = pg
         try:
-            ensure_approvals_table(dsn, schema)
             import psycopg
 
             with psycopg.connect(dsn, autocommit=True) as conn:
@@ -218,8 +248,9 @@ def create_approval(
                         f"INSERT INTO {schema}.nexus_approvals "
                         "(approval_id, user_id, session_id, tool, preset_id, plan_hash, "
                         "budget, status, job_id, detail, created_at, expires_at, "
-                        "proposal_id, proposal_version, proposal_hash, frozen_steps) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        "proposal_id, proposal_version, proposal_hash, frozen_steps, "
+                        "proposal_kind, scope_hash, frozen_scope, frozen_license) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (
                             row["approval_id"], row["user_id"], row["session_id"],
                             row["tool"], row["preset_id"], row["plan_hash"],
@@ -229,13 +260,15 @@ def create_approval(
                             row["proposal_id"], row["proposal_version"],
                             row["proposal_hash"],
                             json.dumps(row["frozen_steps"], ensure_ascii=False),
+                            row["proposal_kind"], row["scope_hash"],
+                            json.dumps(row["frozen_scope"], ensure_ascii=False),
+                            json.dumps(row.get("frozen_license", {}), ensure_ascii=False),
                         ),
                     )
-            return _row_to_dict(row)
+            return
         except Exception as error:  # noqa: BLE001 - PG 故障降级内存，不阻断提案
             logger.warning("approval pg insert failed, memory fallback: %s", error)
     _memory_approvals[row["approval_id"]] = dict(row)
-    return _row_to_dict(row)
 
 
 def get_approval(approval_id: str) -> dict[str, Any] | None:
@@ -366,8 +399,45 @@ def consume_approval(
         )
     if _is_expired(current):
         raise ApprovalError("APPROVAL_EXPIRED", "审批已过期，请重新提案")
+    # NX-N0/P1-A：提案绑定票据在核验通过后立即 CAS 锁定原提案，并把锁定
+    # 行的完整执行体冻结进本次核销返回值。后续提交/登记/报告只消费该快照，
+    # 不再读取可变现行提案——核销后任何 PATCH 都进不了执行载荷。
+    frozen_proposal: dict[str, Any] | None = None
     if current.get("proposal_id"):
-        _verify_proposal_binding(current)
+        verified = _verify_proposal_binding(current)
+        from nexus import proposals as proposals_module
+
+        locked = proposals_module.lock_proposal_for_execution(
+            verified["proposal_id"], user_id=user_id,
+            expected_version=int(verified["version"]),
+            expected_hash=verified["plan_hash"],
+        )
+        if locked is None:
+            raise ApprovalError(
+                "APPROVAL_PROPOSAL_CHANGED",
+                "提案在核销时被修改或锁定，旧批准失效，请重新走审批",
+            )
+        frozen_proposal = {
+            "proposal_id": locked["proposal_id"],
+            "version": locked["version"],
+            "kind": locked.get("kind", "") or "",
+            "preset_id": locked["preset_id"],
+            "parent_run_id": locked.get("parent_run_id", ""),
+            "objective": locked.get("objective", ""),
+            "parameters": locked["parameters"],
+            "environment": locked["environment"],
+            "repo_revision": locked.get("repo_revision", ""),
+            "revision_status": locked.get("revision_status", ""),
+            "data": locked["data"],
+            "steps": list(locked["steps"]),
+            "budget": locked["budget"],
+            "metric_policy": locked["metric_policy"],
+            "plan_hash": locked["plan_hash"],
+            "scope": dict(locked.get("scope") or {}),
+            "scope_hash": locked.get("scope_hash", "") or "",
+            # T7：冻结 License 快照（核销时锁定行；旧行缺省 unknown）。
+            "license": dict(locked.get("license") or {"spdx": "", "status": "unknown"}),
+        }
     elif plan_hash_for(preset) != current["plan_hash"]:
         raise ApprovalError(
             "APPROVAL_PLAN_CHANGED",
@@ -377,17 +447,22 @@ def consume_approval(
         approval_id, "approved", "status = 'consumed'", ()
     )
     if transitioned is not None:
-        return transitioned
-    stored = _memory_approvals.get(approval_id)
-    if stored is None:
-        raise ApprovalError("APPROVAL_NOT_FOUND", "审批已不可恢复")
-    if stored["status"] == "consumed":
-        return _row_to_dict(stored)
-    if stored["status"] != "approved":
-        # 并发竞争：重读裁决。
-        return consume_approval(approval_id, user_id=user_id, session_id=session_id, preset=preset)
-    stored["status"] = "consumed"
-    return _row_to_dict(stored)
+        consumed = transitioned
+    else:
+        stored = _memory_approvals.get(approval_id)
+        if stored is None:
+            raise ApprovalError("APPROVAL_NOT_FOUND", "审批已不可恢复")
+        if stored["status"] == "consumed":
+            consumed = _row_to_dict(stored)
+        elif stored["status"] != "approved":
+            # 并发竞争：重读裁决。
+            return consume_approval(approval_id, user_id=user_id, session_id=session_id, preset=preset)
+        else:
+            stored["status"] = "consumed"
+            consumed = _row_to_dict(stored)
+    if frozen_proposal is not None:
+        consumed["frozen_proposal"] = frozen_proposal
+    return consumed
 
 
 def _verify_proposal_binding(approval: dict[str, Any]) -> dict[str, Any]:
@@ -410,6 +485,14 @@ def _verify_proposal_binding(approval: dict[str, Any]) -> dict[str, Any]:
             "APPROVAL_PROPOSAL_CHANGED",
             f"提案已变更（现版本 v{proposal['version']}），旧批准失效，请重新走审批",
         )
+    # T2：自主票据追加 scope_hash 交叉核验（plan_hash 即 scope_hash 的
+    # 纵深防御；任一漂移都拒绝）。
+    if approval.get("scope_hash"):
+        if (proposal.get("scope_hash", "") or "") != approval["scope_hash"]:
+            raise ApprovalError(
+                "APPROVAL_PROPOSAL_CHANGED",
+                "自主 scope 已变更，旧批准失效，请重新走审批",
+            )
     if proposal["status"] != "draft":
         raise ApprovalError(
             "APPROVAL_PROPOSAL_CHANGED",
