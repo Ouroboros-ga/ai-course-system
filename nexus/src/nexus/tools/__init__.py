@@ -1,5 +1,11 @@
 from nexus.tools.artifact import create_document_output, write_artifact
 from nexus.tools.attachments import read_attachment
+from nexus.tools.compare import (
+    cancel_compare,
+    get_compare,
+    link_compare_run,
+    plan_compare,
+)
 from nexus.tools.course_retrieval import search_course_materials, search_cs_knowledge
 from nexus.tools.paper_research import collect_paper_evidence, read_paper_more, write_research_report
 from nexus.tools.paper_search import search_arxiv_papers
@@ -57,6 +63,11 @@ NEXUS_TOOLS = [
     link_experiment_run,
     cancel_research_task,
     get_research_task,
+    # F8：受控对照（Research-only；只关联终态运行、不执行）。
+    plan_compare,
+    link_compare_run,
+    get_compare,
+    cancel_compare,
 ]
 
 __all__ = [
@@ -87,4 +98,8 @@ __all__ = [
     "link_experiment_run",
     "cancel_research_task",
     "get_research_task",
+    "plan_compare",
+    "link_compare_run",
+    "get_compare",
+    "cancel_compare",
 ]

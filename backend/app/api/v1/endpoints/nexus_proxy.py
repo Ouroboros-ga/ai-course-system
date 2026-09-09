@@ -2170,6 +2170,111 @@ async def nexus_research_task_cancel(
     )
 
 
+class NexusCompareCreate(BaseModel):
+    """F8 受控对照创建代理体：对照说明＋两组冻结配方引用。
+
+    extra=allow：容忍签名键 time/enc；未声明字段由 _reject_unknown_fields
+    422；转发上游时只带声明字段（Runtime 侧 extra=forbid 仍兜底）。
+    """
+
+    objective: str = Field(min_length=1, max_length=500)
+    common: dict[str, Any] = Field(default_factory=dict)
+    allowed_varied: list[str] = Field(default_factory=list, max_length=16)
+    arms: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+    approval_ref: str = Field(default="", max_length=64)
+
+    model_config = {"extra": "allow"}
+
+
+class NexusCompareLink(BaseModel):
+    """F8 对照组关联运行代理体：只关联终态运行。"""
+
+    arm_name: str = Field(min_length=1, max_length=64)
+    run_id: str = Field(min_length=1, max_length=64)
+
+    model_config = {"extra": "allow"}
+
+
+@router.post("/compares")
+async def nexus_compare_create(
+    payload: NexusCompareCreate,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F8：受控对照创建代理（只建对照、不执行；归属由 Runtime 登记）。"""
+    _reject_unknown_fields(NexusCompareCreate, payload.model_dump())
+    return await _proxy_json(
+        request, current_user, "POST",
+        "/api/v1/nexus/compares",
+        body={
+            "objective": payload.objective,
+            "common": dict(payload.common or {}),
+            "allowed_varied": [str(item) for item in (payload.allowed_varied or [])][:16],
+            "arms": [item for item in (payload.arms or [])
+                     if isinstance(item, dict)][:8],
+            "approval_ref": payload.approval_ref,
+        },
+    )
+
+
+@router.get("/compares")
+async def nexus_compare_list(
+    request: Request,
+    session_id: str = "",
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F8：受控对照列表代理（本人；中断恢复查看入口）。"""
+    from urllib.parse import quote as _quote
+
+    suffix = f"?session_id={_quote(session_id[:128], safe='')}" if session_id else ""
+    return await _proxy_json(
+        request, current_user, "GET",
+        f"/api/v1/nexus/compares{suffix}",
+    )
+
+
+@router.get("/compares/{compare_id}")
+async def nexus_compare_get(
+    compare_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F8：受控对照详情代理（本人；含并列报告）。"""
+    return await _proxy_json(
+        request, current_user, "GET",
+        f"/api/v1/nexus/compares/{compare_id.strip()[:64]}",
+    )
+
+
+@router.post("/compares/{compare_id}/cancel")
+async def nexus_compare_cancel(
+    compare_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F8：受控对照取消代理（置终态；已关联结果保留）。"""
+    return await _proxy_json(
+        request, current_user, "POST",
+        f"/api/v1/nexus/compares/{compare_id.strip()[:64]}/cancel",
+    )
+
+
+@router.post("/compares/{compare_id}/link-run")
+async def nexus_compare_link_run(
+    compare_id: str,
+    payload: NexusCompareLink,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F8：对照组关联运行代理（只关联终态；配方不一致即拒绝）。"""
+    _reject_unknown_fields(NexusCompareLink, payload.model_dump())
+    return await _proxy_json(
+        request, current_user, "POST",
+        f"/api/v1/nexus/compares/{compare_id.strip()[:64]}/link-run",
+        body={"arm_name": payload.arm_name, "run_id": payload.run_id},
+    )
+
+
 class NexusRunResume(BaseModel):
     """F2 恢复认领代理体：只透传执行模式（未知值 400，由门裁决）。
 

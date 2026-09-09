@@ -1709,6 +1709,11 @@ function applyRunDetail(turn, detail) {
   // F2：恢复状态随详情直通（UI 不做新枚举分支，只读展示）。
   if (typeof detail.live?.recovery_status === 'string') run.recoveryStatus = detail.live.recovery_status
   if (typeof detail.live?.completion_reason === 'string') run.completionReason = detail.live.completion_reason
+  // F9：冻结配方身份随详情直通（空=未冻结/历史未验证；工作台只读展示短 hash）。
+  if (typeof detail.recipe_hash === 'string') run.recipeHash = detail.recipe_hash
+  if (typeof detail.live?.recipe_hash === 'string') run.recipeHash = detail.live.recipe_hash
+  if (typeof detail.recipe_status === 'string') run.recipeStatus = detail.recipe_status
+  if (typeof detail.live?.recipe_status === 'string') run.recipeStatus = detail.live.recipe_status
   // F3：在途增量合并（游标按 op 推进；reset 即替换缓冲）。
   const increments = detail.live?.log_increments
   if (increments && typeof increments === 'object') {

@@ -1897,6 +1897,27 @@ class ResearchTaskCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class CompareCreate(BaseModel):
+    """F8 受控对照创建体（对照说明＋两组冻结配方引用；只建对照、不执行）。"""
+
+    objective: str = Field(min_length=1, max_length=500)
+    common: dict[str, Any] = Field(default_factory=dict)
+    allowed_varied: list[str] = Field(default_factory=list, max_length=16)
+    arms: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+    approval_ref: str = Field(default="", max_length=64)
+
+    model_config = {"extra": "forbid"}
+
+
+class CompareLink(BaseModel):
+    """F8 对照组关联运行体（只关联终态运行；排错改方案即拒绝）。"""
+
+    arm_name: str = Field(min_length=1, max_length=64)
+    run_id: str = Field(min_length=1, max_length=64)
+
+    model_config = {"extra": "forbid"}
+
+
 def _research_error_status(code: str) -> int:
     return {
         "TASK_NOT_FOUND": 404,
@@ -1914,6 +1935,29 @@ def _research_error_status(code: str) -> int:
         "RUN_NOT_FOUND": 404,
         "RUN_KIND_MISMATCH": 400,
     }.get(code, 409)
+
+
+def _compare_error_status(code: str) -> int:
+    return {
+        "COMPARE_NOT_FOUND": 404,
+        "COMPARE_FORBIDDEN": 403,
+        "COMPARE_OWNER_EMPTY": 400,
+        "COMPARE_OBJECTIVE_EMPTY": 400,
+        "COMPARE_ARMS_TOO_FEW": 400,
+        "COMPARE_ARMS_TOO_MANY": 400,
+        "COMPARE_ARM_NAME_DUP": 400,
+        "COMPARE_RECIPE_UNPINNED": 400,
+        "COMPARE_PARAM_UNDECLARED": 400,
+        "COMPARE_PARAM_VALUE": 400,
+        "COMPARE_ARMS_INDISTINGUISHABLE": 400,
+        "COMPARE_COMMON_INCOMPLETE": 400,
+        "COMPARE_TERMINAL": 409,
+        "COMPARE_ARM_UNKNOWN": 404,
+        "COMPARE_RUN_NOT_FOUND": 404,
+        "COMPARE_RUN_NOT_TERMINAL": 409,
+        "COMPARE_RUN_UNFROZEN": 409,
+        "COMPARE_RECIPE_MISMATCH": 409,
+    }.get(code, 400)
 
 
 @app.post(
@@ -2010,6 +2054,122 @@ async def nexus_research_task_cancel(
             status_code=_research_error_status(error.code),
             detail=error.code) from error
     return {"task": loop_module.public_task_view(task)}
+
+
+@app.post(
+    "/api/v1/nexus/compares",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_compare_create(
+    body: CompareCreate,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    x_nexus_session_id: str | None = Header(default=None, alias="X-Nexus-Session-Id"),
+) -> dict[str, Any]:
+    """F8：创建受控对照（对照说明＋两组冻结配方引用；只建对照、不执行）。"""
+    from nexus import experiment_compare as compare_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    session_id = sanitize_session_id(x_nexus_session_id or "default")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="USER_IDENTITY_MISSING")
+    try:
+        compare = compare_module.create_compare(
+            owner=user_id, session_id=session_id,
+            objective=body.objective, common=dict(body.common or {}),
+            allowed_varied=[str(item) for item in (body.allowed_varied or [])],
+            arms=[item for item in (body.arms or []) if isinstance(item, dict)],
+            approval_ref=(body.approval_ref or "").strip())
+    except compare_module.CompareError as error:
+        raise HTTPException(
+            status_code=_compare_error_status(error.code),
+            detail=error.code) from error
+    return {"compare": compare_module.public_compare_view(compare)}
+
+
+@app.get(
+    "/api/v1/nexus/compares",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_compare_list(
+    session_id: str = "",
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F8：列本人的受控对照（中断恢复查看入口；跨用户不可见）。"""
+    from nexus import experiment_compare as compare_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="USER_IDENTITY_MISSING")
+    compares = compare_module.list_compares(
+        user_id, sanitize_session_id(session_id) if session_id else "")
+    return {"compares": [compare_module.public_compare_view(item)
+                         for item in compares]}
+
+
+@app.get(
+    "/api/v1/nexus/compares/{compare_id}",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_compare_get(
+    compare_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F8：读受控对照（含并列报告；本人；他人 404）。"""
+    from nexus import experiment_compare as compare_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    compare = compare_module.get_compare(sanitize_session_id(compare_id))
+    if compare is None or (user_id or "") != compare.get("owner", ""):
+        raise HTTPException(status_code=404, detail="COMPARE_NOT_FOUND")
+    return {"compare": compare_module.public_compare_view(compare)}
+
+
+@app.post(
+    "/api/v1/nexus/compares/{compare_id}/cancel",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_compare_cancel(
+    compare_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F8：取消受控对照（置终态；已关联结果保留）。"""
+    from nexus import experiment_compare as compare_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    try:
+        compare = compare_module.request_cancel(
+            sanitize_session_id(compare_id), user_id or "")
+    except compare_module.CompareError as error:
+        raise HTTPException(
+            status_code=_compare_error_status(error.code),
+            detail=error.code) from error
+    return {"compare": compare_module.public_compare_view(compare)}
+
+
+@app.post(
+    "/api/v1/nexus/compares/{compare_id}/link-run",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_compare_link_run(
+    compare_id: str,
+    body: CompareLink,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F8：关联对照组的终态运行（只关联终态；配方不一致即拒绝）。"""
+    from nexus import experiment_compare as compare_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="USER_IDENTITY_MISSING")
+    try:
+        compare = await compare_module.link_arm_run(
+            compare_id=sanitize_session_id(compare_id), owner=user_id or "",
+            arm_name=body.arm_name, run_id=body.run_id)
+    except compare_module.CompareError as error:
+        raise HTTPException(
+            status_code=_compare_error_status(error.code),
+            detail=error.code) from error
+    return {"compare": compare_module.public_compare_view(compare)}
 
 
 @app.post(

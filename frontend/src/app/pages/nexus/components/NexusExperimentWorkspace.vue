@@ -547,6 +547,9 @@ const isReportable = computed(() => {
               干净验证
             </SfxButton>
             <span v-if="run?.cleanStatus" class="nxw-note">干净验证：{{ run.cleanStatus === 'verifying' ? '运行中' : run.cleanStatus }}</span>
+            <!-- F9：冻结配方身份（只读展示；空=未冻结/历史未验证，不反推执行事实）。 -->
+            <span v-if="run?.recipeHash" class="nxw-note">配方：{{ String(run.recipeHash).slice(0, 12) }} · {{ run.recipeStatus || '未知状态' }}</span>
+            <span v-else class="nxw-note">配方：未冻结（历史未验证）</span>
             <!-- F6：文档作业身份＋分格式引擎/状态（只读展示，源：服务端作业视图）。 -->
             <span v-if="run?.formatsJobId" class="nxw-note">文档作业：{{ run.formatsJobId }} · {{ run.formatsJobStatus || '—' }}</span>
             <span v-if="run?.formatsByKind?.word" class="nxw-note">Word：{{ run.formatsByKind.word.status || '—' }}（{{ run.formatsByKind.word.engine || '未知引擎' }}）</span>

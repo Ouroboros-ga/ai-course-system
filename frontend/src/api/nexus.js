@@ -452,6 +452,65 @@ export function cancelNexusResearchTask(taskId) {
 }
 
 /**
+ * 受控对照创建（F8）：对照说明＋两组冻结配方引用；只建对照、不执行。
+ */
+export function createNexusCompare(payload) {
+  return request.post('/nexus/compares', {
+    objective: payload?.objective || '',
+    common: payload?.common || {},
+    allowed_varied: payload?.allowed_varied || [],
+    arms: payload?.arms || [],
+    approval_ref: payload?.approval_ref || '',
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 受控对照列表（F8）：本人；中断恢复查看入口。
+ */
+export function listNexusCompares(sessionId) {
+  const params = {}
+  if (sessionId) params.session_id = sessionId
+  return request.get('/nexus/compares', {
+    params,
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 受控对照详情（F8）：含并列报告。
+ */
+export function getNexusCompare(compareId) {
+  return request.get(`/nexus/compares/${encodeURIComponent(compareId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 受控对照取消（F8）：置终态；已关联结果保留。
+ */
+export function cancelNexusCompare(compareId) {
+  return request.post(`/nexus/compares/${encodeURIComponent(compareId)}/cancel`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 对照组关联运行（F8）：只关联终态；配方不一致即拒绝。
+ */
+export function linkNexusCompareRun(compareId, armName, runId) {
+  return request.post(`/nexus/compares/${encodeURIComponent(compareId)}/link-run`, {
+    arm_name: armName,
+    run_id: runId,
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
  * 追加运行备注（NX-LB5）：requestId 幂等；content ≤4000 字符。
  */
 export function createNexusRunNote(runId, content, requestId = '') {

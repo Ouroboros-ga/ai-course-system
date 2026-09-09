@@ -89,6 +89,11 @@ RESEARCH_ONLY_TOOLS = frozenset(
         "link_experiment_run",
         "cancel_research_task",
         "get_research_task",
+        # F8：受控对照（只关联终态运行、不执行；Ask/Auto 均可见）。
+        "plan_compare",
+        "link_compare_run",
+        "get_compare",
+        "cancel_compare",
     }
 )
 

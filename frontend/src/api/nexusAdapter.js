@@ -45,7 +45,9 @@ export const NEXUS_MODE_CONFIG = {
     // T3：+ prepare_experiment（无 preset 入口，只准备不执行；Ask 保留）。
     // F6：+ create_document_output（双模式，此处同步声明）。
     // F7：+ read_paper_more / 持续研究循环七工具（Research-only）。
-    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'create_document_output', 'search_arxiv_papers', 'plan_reproduction', 'run_reproduction', 'read_attachment', 'collect_paper_evidence', 'read_paper_more', 'write_research_report', 'get_reproduction_run', 'cancel_reproduction_run', 'add_reproduction_note', 'create_reproduction_proposal', 'update_reproduction_proposal', 'request_reproduction_approval', 'prepare_experiment', 'plan_research_task', 'advance_research_task', 'submit_research_result', 'complete_research_task', 'link_experiment_run', 'cancel_research_task', 'get_research_task'],
+    // F8：+ plan_compare / link_compare_run / get_compare / cancel_compare
+    // （受控对照，只关联不执行；Research-only）。
+    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'create_document_output', 'search_arxiv_papers', 'plan_reproduction', 'run_reproduction', 'read_attachment', 'collect_paper_evidence', 'read_paper_more', 'write_research_report', 'get_reproduction_run', 'cancel_reproduction_run', 'add_reproduction_note', 'create_reproduction_proposal', 'update_reproduction_proposal', 'request_reproduction_approval', 'prepare_experiment', 'plan_research_task', 'advance_research_task', 'submit_research_result', 'complete_research_task', 'link_experiment_run', 'cancel_research_task', 'get_research_task', 'plan_compare', 'link_compare_run', 'get_compare', 'cancel_compare'],
   },
 }
 

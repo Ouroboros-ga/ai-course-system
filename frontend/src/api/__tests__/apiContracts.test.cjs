@@ -1142,12 +1142,14 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   // T3：再 +1（prepare_experiment 无 preset 入口，只准备不执行；Ask 保留）。
   // F6/F7：+ create_document_output（双模式）不在此集合；+ read_paper_more /
   // 持续研究循环七工具（Research-only）。
-  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",[\s\S]*?"collect_paper_evidence",[\s\S]*?"read_paper_more",[\s\S]*?"write_research_report",[\s\S]*?"get_reproduction_run",[\s\S]*?"cancel_reproduction_run",[\s\S]*?"add_reproduction_note",[\s\S]*?"create_reproduction_proposal",[\s\S]*?"update_reproduction_proposal",[\s\S]*?"request_reproduction_approval",[\s\S]*?"prepare_experiment",[\s\S]*?"plan_research_task",[\s\S]*?"advance_research_task",[\s\S]*?"submit_research_result",[\s\S]*?"complete_research_task",[\s\S]*?"link_experiment_run",[\s\S]*?"cancel_research_task",[\s\S]*?"get_research_task",\s*\}\s*\)/)
+  // F8：+ plan_compare / link_compare_run / get_compare / cancel_compare
+  // （受控对照，只关联不执行；Research-only）。
+  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",[\s\S]*?"collect_paper_evidence",[\s\S]*?"read_paper_more",[\s\S]*?"write_research_report",[\s\S]*?"get_reproduction_run",[\s\S]*?"cancel_reproduction_run",[\s\S]*?"add_reproduction_note",[\s\S]*?"create_reproduction_proposal",[\s\S]*?"update_reproduction_proposal",[\s\S]*?"request_reproduction_approval",[\s\S]*?"prepare_experiment",[\s\S]*?"plan_research_task",[\s\S]*?"advance_research_task",[\s\S]*?"submit_research_result",[\s\S]*?"complete_research_task",[\s\S]*?"link_experiment_run",[\s\S]*?"cancel_research_task",[\s\S]*?"get_research_task",[\s\S]*?"plan_compare",[\s\S]*?"link_compare_run",[\s\S]*?"get_compare",[\s\S]*?"cancel_compare",\s*\}\s*\)/)
   const cfgSrc = read('frontend/src/api/nexusAdapter.js')
   assert.match(cfgSrc, /model = null,/)
   assert.match(cfgSrc, /model,/)
   assert.match(cfgSrc, /\[NEXUS_MODES\.GENERAL\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'create_document_output',\s*'read_attachment'\]/)
-  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'create_document_output',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment',\s*'collect_paper_evidence',\s*'read_paper_more',\s*'write_research_report',\s*'get_reproduction_run',\s*'cancel_reproduction_run',\s*'add_reproduction_note',\s*'create_reproduction_proposal',\s*'update_reproduction_proposal',\s*'request_reproduction_approval',\s*'prepare_experiment',\s*'plan_research_task',\s*'advance_research_task',\s*'submit_research_result',\s*'complete_research_task',\s*'link_experiment_run',\s*'cancel_research_task',\s*'get_research_task'\]/)
+  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'create_document_output',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment',\s*'collect_paper_evidence',\s*'read_paper_more',\s*'write_research_report',\s*'get_reproduction_run',\s*'cancel_reproduction_run',\s*'add_reproduction_note',\s*'create_reproduction_proposal',\s*'update_reproduction_proposal',\s*'request_reproduction_approval',\s*'prepare_experiment',\s*'plan_research_task',\s*'advance_research_task',\s*'submit_research_result',\s*'complete_research_task',\s*'link_experiment_run',\s*'cancel_research_task',\s*'get_research_task',\s*'plan_compare',\s*'link_compare_run',\s*'get_compare',\s*'cancel_compare'\]/)
 
   assert.match(main, /nexus_proxy\.router, prefix="\/api\/v1\/nexus"/)
 })
@@ -1228,7 +1230,8 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // F3：+runs/{id}/operations/{op}/cancel 操作级取消 → 40 个。
   // F6：+documents/jobs 创建/查询/取消/重试 → 44 个。
   // F7：+research/tasks 创建/列表/详情/取消 → 48 个。
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 48)
+  // F8：+compares 创建/列表/详情/取消/关联运行 → 53 个。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 53)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })
@@ -1461,4 +1464,42 @@ test('F7 持续研究：任务＋预算＋取消（Ask/Auto 对等，实验为�
   // 主管装配只读 researcher（受限角色，不解除全局收敛）。
   assert.match(agent, /build_researcher_subagent/)
   assert.match(agent, /RESEARCHER_TOOL_NAMES/)
+})
+test('F8 受控对照：共同条件＋两组冻结配方＋只关联终态运行', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const runtime = read('nexus/src/nexus/main.py')
+  const state = read('nexus/src/nexus/experiment_compare.py')
+  const tool = read('nexus/src/nexus/tools/compare.py')
+  // 客户端：创建/列表/详情/取消/关联运行，与任务链同形状。
+  assert.match(client, /export function createNexusCompare\(payload\)/)
+  assert.match(client, /\/nexus\/compares/)
+  assert.match(client, /export function listNexusCompares\(sessionId\)/)
+  assert.match(client, /export function getNexusCompare\(compareId\)/)
+  assert.match(client, /export function cancelNexusCompare\(compareId\)/)
+  assert.match(client, /export function linkNexusCompareRun\(compareId, armName, runId\)/)
+  // 后端：五反代路由（D10 门数 53 另行锁定）。
+  assert.match(backend, /@router\.post\("\/compares"\)/)
+  assert.match(backend, /@router\.get\("\/compares"\)/)
+  assert.match(backend, /@router\.get\("\/compares\/\{compare_id\}"\)/)
+  assert.match(backend, /@router\.post\("\/compares\/\{compare_id\}\/cancel"\)/)
+  assert.match(backend, /@router\.post\("\/compares\/\{compare_id\}\/link-run"\)/)
+  // Runtime：创建/列表/详情/取消/关联端点。
+  assert.match(runtime, /nexus_compare_create/)
+  assert.match(runtime, /nexus_compare_list/)
+  assert.match(runtime, /nexus_compare_get/)
+  assert.match(runtime, /nexus_compare_cancel/)
+  assert.match(runtime, /nexus_compare_link_run/)
+  // 状态域：只关联终态＋配方一致门（排错改方案即拒绝）。
+  assert.match(state, /COMPARE_RECIPE_MISMATCH/)
+  assert.match(state, /COMPARE_RUN_NOT_TERMINAL/)
+  assert.match(state, /COMPARE_RUN_UNFROZEN/)
+  // 报告只做描述性并列，永不声称显著提升。
+  assert.match(state, /descriptive_ready/)
+  assert.match(state, /SIGNIFICANCE_DISCLAIMER/)
+  // 循环工具：建对照/关联/读取/取消（Research-only，只关联不执行）。
+  assert.match(tool, /plan_compare/)
+  assert.match(tool, /link_compare_run/)
+  assert.match(tool, /get_compare/)
+  assert.match(tool, /cancel_compare/)
 })

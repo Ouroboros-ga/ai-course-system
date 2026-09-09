@@ -72,6 +72,8 @@ NEXUS_TABLES = (
     # F7：研究任务＋证据持久化（见 0005 迁移）。
     "nexus_research_tasks",
     "nexus_research_evidence",
+    # F8：受控对照（对照说明＋两组配方引用＋关联结果，见 0006 迁移）。
+    "nexus_compares",
 )
 
 
