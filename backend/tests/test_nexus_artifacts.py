@@ -215,3 +215,92 @@ def test_list_and_download_owner_scoped(client, session, nexus_student_token, st
     # 未登录 401
     response = client.get(f"/api/v1/nexus/artifacts/{created['artifact_id']}/download")
     assert response.status_code in (401, 403)
+
+
+def test_internal_read_json_roundtrip_owner_scoped(
+        client, session, internal_configured, monkeypatch):
+    """F5 内部读：json 类型可写可读；owner 校验；他人物品 404；二进制 415。"""
+    _skip_if_sqlite(session)
+
+    class _FakeStorage:
+        def __init__(self):
+            self.objects: dict[str, bytes] = {}
+
+        def put(self, object_key, content, *, mime_type=""):
+            data = bytes(content) if isinstance(content, (bytes, bytearray)) else bytes(content)
+            self.objects[object_key] = data
+            return "b" * 64
+
+        def get(self, object_key):
+            return self.objects[object_key]
+
+    fake = _FakeStorage()
+    monkeypatch.setattr(nexus_artifact_service, "get_object_storage", lambda: fake)
+
+    def _headers(user="77"):
+        return {"Authorization": "Bearer internal-token-1", "X-Nexus-User-Id": user}
+
+    written = client.post(
+        "/api/v1/nexus-internal/artifacts",
+        json={"artifact_type": "json", "title": "recipe rcp-1",
+              "content": '{"recipe_hash": "abc"}', "run_id": "run-f5"},
+        headers=_headers(),
+    )
+    assert written.status_code == 200, written.text
+    artifact_id = written.json()["data"]["artifact_id"]
+
+    read = client.get(f"/api/v1/nexus-internal/artifacts/{artifact_id}",
+                      headers=_headers())
+    assert read.status_code == 200, read.text
+    data = read.json()["data"]
+    assert data["content"] == '{"recipe_hash": "abc"}'
+    assert data["truncated"] is False
+    assert data["artifact_type"] == "json"
+
+    # 非 owner 与不存在同等 404。
+    stranger = client.get(f"/api/v1/nexus-internal/artifacts/{artifact_id}",
+                          headers=_headers("78"))
+    assert stranger.status_code == 404
+    missing = client.get("/api/v1/nexus-internal/artifacts/nope1234",
+                         headers=_headers())
+    assert missing.status_code == 404
+
+    # 无 token 401。
+    assert client.get(
+        f"/api/v1/nexus-internal/artifacts/{artifact_id}").status_code == 401
+
+
+def test_internal_read_rejects_binary_as_text(
+        client, session, internal_configured, monkeypatch):
+    """F5 内部读：word 二进制拒绝文本解读（415，不猜测）。"""
+    _skip_if_sqlite(session)
+
+    class _FakeStorage:
+        def __init__(self):
+            self.objects: dict[str, bytes] = {}
+
+        def put(self, object_key, content, *, mime_type=""):
+            self.objects[object_key] = bytes(content)
+            return "c" * 64
+
+        def get(self, object_key):
+            return self.objects[object_key]
+
+    monkeypatch.setattr(nexus_artifact_service, "get_object_storage",
+                        lambda: _FakeStorage())
+    import base64 as _base64
+
+    written = client.post(
+        "/api/v1/nexus-internal/artifacts",
+        json={"artifact_type": "word", "title": "doc",
+              "content": "", "content_b64": _base64.b64encode(b"PKdoc").decode(),
+              "run_id": "run-f5"},
+        headers={"Authorization": "Bearer internal-token-1",
+                 "X-Nexus-User-Id": "77"},
+    )
+    assert written.status_code == 200, written.text
+    artifact_id = written.json()["data"]["artifact_id"]
+    read = client.get(f"/api/v1/nexus-internal/artifacts/{artifact_id}",
+                      headers={"Authorization": "Bearer internal-token-1",
+                               "X-Nexus-User-Id": "77"})
+    assert read.status_code == 415

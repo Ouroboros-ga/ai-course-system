@@ -414,12 +414,13 @@ async def nexus_internal_write_artifact(
     """产物写入（M3）：对象存储 + Nexus 域元数据，一次成功才返回 artifact_id。
 
     SR6：word 类型走 content_b64 二进制分支（base64 非法/超限 422）。
+    F6：pdf 同理走二进制分支（工具链真实编译字节）。
     """
     import base64
 
     _require_service_token(authorization)
     user_id = str(_require_user_identity(x_nexus_user_id))
-    if payload.artifact_type == "word":
+    if payload.artifact_type in ("word", "pdf"):
         try:
             raw = base64.b64decode(payload.content_b64, validate=True)
         except Exception:
@@ -457,6 +458,54 @@ async def nexus_internal_write_artifact(
         message="产物已写入",
         data=artifact,
     )
+
+
+_INTERNAL_READ_MAX_BYTES = 512 * 1024
+
+
+@router.get("/artifacts/{artifact_id}")
+async def nexus_internal_read_artifact(
+    artifact_id: str,
+    authorization: str | None = Header(default=None),
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    session: Session = Depends(get_session),
+):
+    """F5 产物读取（干净B消费冻结配方/补丁）：owner 校验＋有界返回。
+
+    非 owner/不存在一律 404（列表不可见即不存在，防枚举）；超限截断并
+    置 truncated（调用方不得把截断内容当完整配方）。二进制类型拒绝文本
+    解读（415，不猜测）。
+    """
+    from app.services.object_storage import get_object_storage
+
+    _require_service_token(authorization)
+    user_id = str(_require_user_identity(x_nexus_user_id))
+    artifact = nexus_artifact_service.get_owned_artifact(
+        session, user_id=user_id, artifact_id=(artifact_id or "")[:64]
+    )
+    if artifact is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="产物不存在")
+    if str(artifact.get("artifact_type") or "") not in ("markdown", "json", "latex", "text"):
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                            detail="仅文本类产物可经内部端点读取")
+    storage = get_object_storage()
+    try:
+        raw = storage.get(str(artifact.get("object_key") or ""))
+    except Exception as error:  # noqa: BLE001 - fail-closed
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"对象读取失败（{type(error).__name__}）") from error
+    truncated = len(raw) > _INTERNAL_READ_MAX_BYTES
+    text = bytes(raw[:_INTERNAL_READ_MAX_BYTES]).decode("utf-8", errors="replace")
+    return unified_response(code=200, message="ok", data={
+        "artifact_id": artifact["artifact_id"],
+        "artifact_type": artifact.get("artifact_type", ""),
+        "title": artifact.get("title", ""),
+        "size_bytes": artifact.get("size_bytes", 0),
+        "sha256": artifact.get("sha256", ""),
+        "content": text,
+        "truncated": truncated,
+    })
 
 
 @router.get("/attachments/{attachment_id}/content")

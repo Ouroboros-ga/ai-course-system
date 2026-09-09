@@ -109,13 +109,16 @@ def _rank_blocks(
 
 
 @tool
-async def collect_paper_evidence(question: str, attachment_ids: list[str]) -> dict[str, Any]:
+async def collect_paper_evidence(question: str, attachment_ids: list[str],
+                                 task_id: str = "") -> dict[str, Any]:
     """读取用户上传的论文 PDF（≤3 篇）全文块，建立带可核对定位的证据清单。
 
     参数：
     - question：当前研究问题（参与证据排序：问题相关块优先；不改变读取
       预算与范围，无命中时保持原文顺序）；
     - attachment_ids：要读取的附件 id（仅本次对话已绑定的上传 PDF 可用）。
+    - task_id：所属研究任务（可选；在任务预算内计数，证据同步持久化，
+      重启可恢复；缺省用请求上下文的当前任务）。
 
     返回 evidences（每条含 evidence_id/locator/excerpt/coverage，超长块带
     truncated 标记），后续 write_research_report 只能引用这些 evidence_id；
@@ -123,6 +126,7 @@ async def collect_paper_evidence(question: str, attachment_ids: list[str]) -> di
     不会冒充读过全文。
     """
     from nexus.request_scope import current_attachments as scope_ids
+    from nexus.request_scope import current_research_task_id
 
     q = (question or "").strip()[:300]
     if not q:
@@ -149,6 +153,33 @@ async def collect_paper_evidence(question: str, attachment_ids: list[str]) -> di
         return {"status": "unavailable", "code": "EVIDENCE_UNAVAILABLE",
                 "detail": "附件服务未配置；不得编造论文内容。", "evidences": []}
     url, token = ready
+    # F7：任务预算预检（失败不收费；成功后扣 evidence_calls）。
+    resolved_task = (task_id or "").strip()[:64]
+    if not resolved_task:
+        try:
+            from nexus.request_scope import current_research_task_id as _current_task
+
+            resolved_task = _current_task() or ""
+        except Exception:  # noqa: BLE001
+            resolved_task = ""
+    if resolved_task:
+        try:
+            from nexus import research_state as research_state_module
+
+            _task = research_state_module.get_task(resolved_task)
+            if _task is None or (_task.get("owner") or "") != (current_user_id() or ""):
+                return {"status": "rejected", "code": "TASK_NOT_FOUND",
+                        "detail": "研究任务不存在或无权使用。", "evidences": []}
+            _exhausted = research_state_module.check_budget(_task)
+            if _exhausted:
+                return {"status": "rejected", "code": "RESEARCH_BUDGET_EXHAUSTED",
+                        "detail": f"研究预算已用尽（{_exhausted}）；不再派生新工作。",
+                        "evidences": []}
+        except Exception as error:  # noqa: BLE001 - 预检失败 fail-closed
+            code = getattr(error, "code", "")
+            if code in ("TASK_NOT_FOUND",):
+                return {"status": "rejected", "code": code, "detail": str(error),
+                        "evidences": []}
 
     evidences: list[dict[str, Any]] = []
     attachment_errors: list[dict[str, str]] = []
@@ -208,6 +239,32 @@ async def collect_paper_evidence(question: str, attachment_ids: list[str]) -> di
 
     if evidences:
         get_registry().register(current_user_id() or "", current_session_id() or "", evidences)
+        # F7：任务预算记账＋证据持久化（重启可恢复；持久化失败不阻断本次返回）。
+        if resolved_task:
+            try:
+                from nexus import research_state as research_state_module
+
+                research_state_module.consume_budget(
+                    resolved_task, current_user_id() or "", "evidence_calls")
+            except Exception as error:  # noqa: BLE001 - 记账失败只记日志
+                logger.warning("research budget consume failed: %s",
+                               type(error).__name__)
+            try:
+                from nexus import paper_evidence as evidence_module
+
+                by_attachment: dict[str, list[dict[str, Any]]] = {}
+                for evidence in evidences:
+                    by_attachment.setdefault(
+                        str(evidence.get("attachment_id") or ""), []).append(evidence)
+                for aid, items in by_attachment.items():
+                    evidence_module.persist_evidences(
+                        user_id=current_user_id() or "",
+                        session_id=current_session_id() or "",
+                        task_id=resolved_task, attachment_id=aid,
+                        source_title=str(items[0].get("source_title") or ""),
+                        evidences=items)
+            except Exception as error:  # noqa: BLE001 - 持久化失败只记日志
+                logger.warning("evidence persist failed: %s", type(error).__name__)
         return {
             "status": "success",
             "question": q,
@@ -238,6 +295,7 @@ async def write_research_report(
     question: str,
     body_markdown: str,
     cited_evidence_ids: list[str],
+    task_id: str = "",
 ) -> dict[str, Any]:
     """把研究综合写成带可核对引用的 Markdown 报告 Artifact（真实落盘）。
 
@@ -249,6 +307,8 @@ async def write_research_report(
       cited_evidence_ids 渲染）；
     - cited_evidence_ids：正文实际引用的 evidence_id（只能来自
       collect_paper_evidence 返回；服务端渲染来源与 locator，不接受编造）。
+    - task_id：所属研究任务（可选；引用解析含持久化回读，成功后登记
+      报告产物，交付核对可见）。
 
     引用校验失败时返回可修复错误（invalid_ids）——最多修正一次，仍失败
     应如实输出证据缺口，不得输出带伪引用的报告。
@@ -272,6 +332,12 @@ async def write_research_report(
         if not eid or any(eid == e for e, _ in resolved):
             continue
         evidence = registry.resolve(eid, user_id=user_id, session_id=session_id)
+        if evidence is None:
+            # F7：持久化回读（重启后内存登记丢失时的恢复路径；归属一致才认）。
+            from nexus import paper_evidence as evidence_module
+
+            evidence = evidence_module.resolve_persisted(
+                eid, user_id=user_id, session_id=session_id)
         if evidence is None:
             invalid.append(eid[:32])
         else:
@@ -376,6 +442,24 @@ async def write_research_report(
             "code": "ARTIFACT_UNAVAILABLE",
             "detail": str(written.get("detail") or "报告写入失败；未生成任何文件。")[:200],
         }
+    # F7：报告产物回链到研究任务（交付核对可见；失败只记日志）。
+    resolved_task = (task_id or "").strip()[:64]
+    if not resolved_task:
+        try:
+            from nexus.request_scope import current_research_task_id as _current_task
+
+            resolved_task = _current_task() or ""
+        except Exception:  # noqa: BLE001
+            resolved_task = ""
+    if resolved_task:
+        try:
+            from nexus import research_state as research_state_module
+
+            research_state_module.set_report(
+                resolved_task, user_id,
+                str((written.get("artifact") or {}).get("artifact_id") or ""))
+        except Exception as error:  # noqa: BLE001
+            logger.warning("research report link failed: %s", type(error).__name__)
     return {
         "status": "success",
         "detail": "报告已真实写入存储，引用由服务端按证据登记渲染，可在产物面板下载。",
@@ -391,3 +475,135 @@ async def write_research_report(
         ],
         "is_supplementary": True,
     }
+
+
+@tool
+async def read_paper_more(question: str, attachment_id: str, offset: int = 0,
+                          limit: int = 6, task_id: str = "") -> dict[str, Any]:
+    """按问题补读论文后续块（表格/图/长块后半段；块偏移分页）。
+
+    参数：
+    - question：当前研究问题（仅参与排序说明，不改变预算与范围）；
+    - attachment_id：已绑定本次对话的附件 id；
+    - offset/limit：块索引分页（limit≤12；未见≠不存在，has_more 为真时
+      继续用 next_offset 续读）；
+    - task_id：所属研究任务（可选；在任务预算内计数，新证据同步持久化）。
+
+    只返回本次新证据（已知 id 去重）；覆盖范围沿机械判定，
+    abstract_only 不得冒充全文综述。
+    """
+    from nexus.request_scope import current_attachments as scope_ids
+
+    aid = (attachment_id or "").strip()[:16]
+    if not aid:
+        return {"status": "rejected", "code": "ATTACHMENT_ID_INVALID",
+                "detail": "未提供附件 id。", "evidences": []}
+    allowed = set(scope_ids())
+    if allowed and aid not in allowed:
+        return {"status": "rejected", "code": "ATTACHMENT_NOT_IN_SCOPE",
+                "detail": f"附件未绑定到本次对话：{aid}。",
+                "evidences": []}
+    try:
+        offset = max(0, int(offset or 0))
+        limit = max(1, min(int(limit or 6), 12))
+    except (TypeError, ValueError):
+        return {"status": "rejected", "code": "READ_RANGE_INVALID",
+                "detail": "非法分段参数。", "evidences": []}
+    resolved_task = (task_id or "").strip()[:64]
+    if not resolved_task:
+        try:
+            from nexus.request_scope import current_research_task_id as _current_task
+
+            resolved_task = _current_task() or ""
+        except Exception:  # noqa: BLE001
+            resolved_task = ""
+    if resolved_task:
+        try:
+            from nexus import research_state as research_state_module
+
+            _task = research_state_module.get_task(resolved_task)
+            if _task is None or (_task.get("owner") or "") != (current_user_id() or ""):
+                return {"status": "rejected", "code": "TASK_NOT_FOUND",
+                        "detail": "研究任务不存在或无权使用。", "evidences": []}
+            _exhausted = research_state_module.check_budget(_task)
+            if _exhausted:
+                return {"status": "rejected", "code": "RESEARCH_BUDGET_EXHAUSTED",
+                        "detail": f"研究预算已用尽（{_exhausted}）。",
+                        "evidences": []}
+        except Exception as error:  # noqa: BLE001
+            code = getattr(error, "code", "")
+            if code in ("TASK_NOT_FOUND",):
+                return {"status": "rejected", "code": code, "detail": str(error),
+                        "evidences": []}
+    ready = _backend_ready()
+    if ready is None:
+        return {"status": "unavailable", "code": "EVIDENCE_UNAVAILABLE",
+                "detail": "附件服务未配置；不得编造论文内容。", "evidences": []}
+    url, token = ready
+
+    async def _fetch(inner_aid: str) -> tuple[list[dict[str, Any]], int, bool]:
+        data, error_code = await _fetch_blocks(url, token, inner_aid)
+        if data is None:
+            raise LookupError(error_code or "ATTACHMENT_UNAVAILABLE")
+        blocks = [block for block in (data.get("blocks") or [])
+                  if isinstance(block, dict)]
+        total = sum(len(str(block.get("text") or "")) for block in blocks)
+        return blocks, total, bool(data.get("truncated"))
+
+    try:
+        from nexus import research_reading as reading_module
+
+        try:
+            known: list[str] = []
+            if resolved_task:
+                try:
+                    from nexus import research_state as research_state_module
+
+                    _task = research_state_module.get_task(resolved_task)
+                    known = list((_task or {}).get("evidence_ids") or [])
+                except Exception:  # noqa: BLE001
+                    known = []
+            result = await reading_module.read_more_blocks(
+                attachment_id=aid, filename="", offset=offset, limit=limit,
+                question=question or "", known_evidence_ids=known,
+                fetch_blocks=_fetch)
+        except LookupError as error:
+            return {"status": "failed", "code": "ATTACHMENT_UNAVAILABLE",
+                    "detail": f"附件读取失败（{error}）。", "evidences": []}
+        except ValueError as error:
+            return {"status": "rejected", "code": "READ_RANGE_INVALID",
+                    "detail": str(error), "evidences": []}
+    except Exception as error:  # noqa: BLE001
+        logger.warning("read more failed: %s", type(error).__name__)
+        return {"status": "failed", "code": "EVIDENCE_UNAVAILABLE",
+                "detail": "补读失败；不得编造论文内容。", "evidences": []}
+    evidences = result.get("evidences") or []
+    if evidences:
+        get_registry().register(current_user_id() or "", current_session_id() or "",
+                                evidences)
+        if resolved_task:
+            try:
+                from nexus import research_state as research_state_module
+
+                research_state_module.consume_budget(
+                    resolved_task, current_user_id() or "", "evidence_calls")
+            except Exception as error:  # noqa: BLE001
+                logger.warning("research budget consume failed: %s",
+                               type(error).__name__)
+            try:
+                from nexus import paper_evidence as evidence_module
+
+                evidence_module.persist_evidences(
+                    user_id=current_user_id() or "",
+                    session_id=current_session_id() or "",
+                    task_id=resolved_task, attachment_id=aid,
+                    source_title=str(evidences[0].get("source_title") or ""),
+                    evidences=evidences)
+            except Exception as error:  # noqa: BLE001
+                logger.warning("evidence persist failed: %s", type(error).__name__)
+    return {"status": "success", "question": (question or "").strip()[:300],
+            "attachment_id": aid, "evidences": evidences,
+            "next_offset": result.get("next_offset", offset + limit),
+            "has_more": bool(result.get("has_more", False)),
+            "reading_state": result.get("reading_state") or {},
+            "is_supplementary": True}

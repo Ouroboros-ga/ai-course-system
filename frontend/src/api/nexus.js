@@ -355,6 +355,103 @@ export function cancelNexusRunOperation(runId, operationId) {
 }
 
 /**
+ * 文档作业创建（F6）：一份冻结内容，多格式正式输出。
+ * 不要求先有实验 run（Ask 下可用）；同幂等键同内容去重。
+ */
+export function createNexusDocumentJob(payload) {
+  return request.post('/nexus/documents/jobs', {
+    source_kind: payload?.source_kind || 'markdown',
+    run_id: payload?.run_id || '',
+    artifact_id: payload?.artifact_id || '',
+    markdown: payload?.markdown || '',
+    title: payload?.title || '',
+    template: payload?.template || 'tech_doc',
+    formats: payload?.formats || ['markdown', 'word', 'latex'],
+    idempotency_key: payload?.idempotency_key || '',
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 文档作业查询（F6）：本人；含每格式独立状态/引擎/产物。
+ */
+export function getNexusDocumentJob(jobId) {
+  return request.get(`/nexus/documents/jobs/${encodeURIComponent(jobId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 文档作业取消（F6）：仅非终态有效。
+ */
+export function cancelNexusDocumentJob(jobId) {
+  return request.post(`/nexus/documents/jobs/${encodeURIComponent(jobId)}/cancel`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 文档作业重试（F6）：只跑失败格式；成功格式保留不重写。
+ */
+export function retryNexusDocumentJob(jobId) {
+  return request.post(`/nexus/documents/jobs/${encodeURIComponent(jobId)}/retry`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 研究任务创建（F7）：Brief＋子问题＋预算；只建任务、不执行。
+ */
+export function createNexusResearchTask(payload) {
+  return request.post('/nexus/research/tasks', {
+    objective: payload?.objective || '',
+    dimensions: payload?.dimensions || '',
+    data_range: payload?.data_range || '',
+    time_range: payload?.time_range || '',
+    delivery_format: payload?.delivery_format || '',
+    questions: payload?.questions || [],
+    budget: payload?.budget || {},
+    parent_task_id: payload?.parent_task_id || '',
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 研究任务列表（F7）：本人；中断恢复查看入口。
+ */
+export function listNexusResearchTasks(sessionId) {
+  const params = {}
+  if (sessionId) params.session_id = sessionId
+  return request.get('/nexus/research/tasks', {
+    params,
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 研究任务详情（F7）：含预算余量＋交付核对。
+ */
+export function getNexusResearchTask(taskId) {
+  return request.get(`/nexus/research/tasks/${encodeURIComponent(taskId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 研究任务取消（F7）：置旗即停；已保存材料保留。
+ */
+export function cancelNexusResearchTask(taskId) {
+  return request.post(`/nexus/research/tasks/${encodeURIComponent(taskId)}/cancel`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
  * 追加运行备注（NX-LB5）：requestId 幂等；content ≤4000 字符。
  */
 export function createNexusRunNote(runId, content, requestId = '') {

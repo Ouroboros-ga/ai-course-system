@@ -29,7 +29,8 @@ export const NEXUS_MODE_CONFIG = {
     // NX-G1：与 Runtime _tools_for_mode("general") 同源（4 产品工具 + 内部
     // read_file 不向用户展示）。此前只写 web_search 一个，已过时。
     // NX-A1：read_attachment 为双模式共用入口，随 NEXUS_TOOLS 进入两模式。
-    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'read_attachment'],
+    // F6：+ create_document_output（正式文档输出，双模式可用）。
+    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'create_document_output', 'read_attachment'],
   },
   [NEXUS_MODES.RESEARCH]: {
     label: 'Nexus Research',
@@ -42,7 +43,9 @@ export const NEXUS_MODE_CONFIG = {
     // 全文证据薄链，Research-only）。
     // NX-LB4/LB5：+ 运行操作与提案工具（Research-only）。
     // T3：+ prepare_experiment（无 preset 入口，只准备不执行；Ask 保留）。
-    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'search_arxiv_papers', 'plan_reproduction', 'run_reproduction', 'read_attachment', 'collect_paper_evidence', 'write_research_report', 'get_reproduction_run', 'cancel_reproduction_run', 'add_reproduction_note', 'create_reproduction_proposal', 'update_reproduction_proposal', 'request_reproduction_approval', 'prepare_experiment'],
+    // F6：+ create_document_output（双模式，此处同步声明）。
+    // F7：+ read_paper_more / 持续研究循环七工具（Research-only）。
+    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'create_document_output', 'search_arxiv_papers', 'plan_reproduction', 'run_reproduction', 'read_attachment', 'collect_paper_evidence', 'read_paper_more', 'write_research_report', 'get_reproduction_run', 'cancel_reproduction_run', 'add_reproduction_note', 'create_reproduction_proposal', 'update_reproduction_proposal', 'request_reproduction_approval', 'prepare_experiment', 'plan_research_task', 'advance_research_task', 'submit_research_result', 'complete_research_task', 'link_experiment_run', 'cancel_research_task', 'get_research_task'],
   },
 }
 

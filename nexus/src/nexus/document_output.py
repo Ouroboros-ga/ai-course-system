@@ -556,6 +556,9 @@ def verify_latex(tex: str) -> dict[str, Any]:
     stripped = "\n".join(
         line for line in stripped.split("\n")
         if not re.match(r"^\s*%", line))
+    # F6：原生数学区（$…$）是合法 LaTeX，内容不受裸字符检查约束；
+    # 先剥离（数学存在性由调用方 math_spans 记录），只查正文转义。
+    stripped = re.sub(r"\$[^$\n]+\$", "", stripped)
     # tabular 的 & 列分隔与 \\ 行结束是合法结构：只在该环境内剔除分隔符，
     # 单元格文本保留，继续接受转义检查（转义失败仍会被揪出）。
     chunks = re.split(r"(\\begin\{tabular\}.*?\\end\{tabular\})",
@@ -646,3 +649,424 @@ def build_formats(report_md: str, recipe_md: str,
             "compile": try_compile_latex(tex),
         },
     }
+
+
+def build_formats(report_md: str, recipe_md: str,
+                  title_base: str) -> dict[str, Any]:
+    """由冻结报告＋配方 Markdown 构建正式格式产物（纯函数，可单测）。
+
+    返回 {"docx_bytes", "tex", "checks": {"docx": …, "tex": …, "compile": …}}；
+    Word 为单文档（报告＋分页＋配方附录），LaTeX 同理 main.tex。
+    """
+    combined = (
+        f"{report_md.rstrip()}\n\n---\n\n"
+        f"# 附录：实验配方\n\n{recipe_md.strip()}\n")
+    title = (title_base or "自主实验报告").strip()[:100]
+    docx_bytes = markdown_to_docx_bytes(combined, title=title)
+    tex = markdown_to_latex(combined, title=title)
+    return {
+        "docx_bytes": docx_bytes,
+        "tex": tex,
+        "derived_from": FORMATS_CONTENT_VERSION,
+        "checks": {
+            "docx": validate_docx_bytes(docx_bytes),
+            "tex": verify_latex(tex),
+            "compile": try_compile_latex(tex),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# F6：一份冻结内容，多格式正式输出（Markdown / Word / LaTeX / PDF）
+# ---------------------------------------------------------------------------
+# - freeze_document：同一快照（hash＋引用/图表/数值清单）供三格式消费，
+#   不让模型分别重写三遍；转换不改写事实。
+# - 引擎：pandoc 优先（严格白名单参数，无 shell/filter/宏/外网），缺席或
+#   失败时回退标准库实现；每格式如实记录 engine（绝不谎称 pandoc）。
+# - 数学：pandoc 路径为原生 OMML（math_native=True）；标准库路径为可编辑
+#   文本 run（math_editable=True、可编辑、非截图），math_native=False。
+# - PDF：仅当本机工具链真实编译出 main.pdf 才交付字节；缺工具链如实
+#   TOOLCHAIN_MISSING（partial，不伪装预览）。
+
+DOCUMENT_TEMPLATES: dict[str, dict[str, Any]] = {
+    "experiment_report": {
+        "version": "tpl-experiment/1",
+        "reference_docx": "builtin-minimal/1",
+        "tex_template": "ctexart-xelatex/1",
+        "scope": "实验报告：中英混排、表格、公式、图题、引用",
+    },
+    "research_review": {
+        "version": "tpl-review/1",
+        "reference_docx": "builtin-minimal/1",
+        "tex_template": "ctexart-xelatex/1",
+        "scope": "研究综述：中英混排、表格、公式、图题、引用",
+    },
+    "tech_doc": {
+        "version": "tpl-techdoc/1",
+        "reference_docx": "builtin-minimal/1",
+        "tex_template": "ctexart-xelatex/1",
+        "scope": "技术说明：中英混排、表格、公式、图题、引用",
+    },
+}
+
+SUPPORTED_FORMATS = ("markdown", "word", "latex", "pdf")
+
+_MATH_RE = re.compile(r"\$(.+?)\$")
+_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
+_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+_CITE_RE = re.compile(r"\[@([A-Za-z0-9_\-:]+)\]")
+_FENCE_COUNT_RE = re.compile(r"^```", re.MULTILINE)
+
+
+class DocumentRenderError(Exception):
+    """文档渲染域失败：携带机器可读 code（fail-closed 语义）。"""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+
+
+def normalize_markdown(md: str) -> str:
+    """冻结归一化（换行统一＋行尾空格清理＋末尾单空行；纯函数）。"""
+    text = (md or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.rstrip() for line in text.split("\n")]
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def freeze_document(*, markdown: str, title: str = "",
+                    template: str = "tech_doc",
+                    source: dict[str, Any] | None = None) -> dict[str, Any]:
+    """冻结一份文档内容（纯函数，可单测）。
+
+    返回 FrozenDocument{version/document_id/title/template/template_version/
+    content_hash/markdown/inventory}；三种格式只读此快照。
+    """
+    import hashlib as _hashlib
+
+    if template not in DOCUMENT_TEMPLATES:
+        raise DocumentRenderError("TEMPLATE_UNKNOWN", f"未知模板：{template}")
+    normalized = normalize_markdown(markdown)
+    if not normalized.strip():
+        raise DocumentRenderError("DOCUMENT_EMPTY", "文档内容为空，不得冻结。")
+    if len(normalized.encode("utf-8")) > 512 * 1024:
+        raise DocumentRenderError("DOCUMENT_TOO_LARGE", "文档超 512KB 上限。")
+    blocks = parse_markdown_blocks(normalized)
+    math_spans = _MATH_RE.findall(normalized)[:50]
+    figures = [{"alt": alt[:120], "src": src[:500]}
+               for alt, src in _IMAGE_RE.findall(normalized)][:50]
+    links = [{"text": text[:120], "href": href[:500]}
+             for text, href in _LINK_RE.findall(normalized)
+             if not href.startswith("!")][:100]
+    citations = sorted(set(_CITE_RE.findall(normalized)))[:100]
+    tables = sum(1 for b in blocks if b.get("kind") == "table")
+    code_blocks = sum(1 for b in blocks if b.get("kind") == "code")
+    content_hash = _hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return {
+        "version": "frozen-document/1",
+        "document_id": f"doc-{content_hash[:12]}",
+        "title": (title or "").strip()[:120],
+        "template": template,
+        "template_version": DOCUMENT_TEMPLATES[template]["version"],
+        "content_hash": content_hash,
+        "markdown": normalized,
+        "inventory": {
+            "tables": tables,
+            "code_blocks": code_blocks,
+            "math_spans": len(math_spans),
+            "math_sample": [m[:120] for m in math_spans[:5]],
+            "figures": figures,
+            "links": links,
+            "citations": citations,
+            "blocks": len(blocks),
+        },
+        "source": dict(source or {}),
+    }
+
+
+def select_engine() -> str:
+    """渲染引擎选择（诚实记录用；pandoc 存在即优先，否则标准库）。"""
+    if shutil.which("pandoc"):
+        return "pandoc"
+    return "stdlib/1"
+
+
+def _mask_math_for_stdlib(md: str) -> tuple[str, list[str]]:
+    """把 $…$ 遮罩为行内代码段（标准库路径：可编辑文本 run，非截图）。
+
+    返回 (masked, spans)；调用方渲染后无需还原（代码 run 即承载体）。
+    """
+    spans: list[str] = []
+
+    def _hold(match: re.Match[str]) -> str:
+        spans.append(match.group(1))
+        return f"`{match.group(1)}`"
+
+    return _MATH_RE.sub(_hold, md or ""), spans
+
+
+def _mask_math_for_tex(md: str) -> tuple[str, list[str]]:
+    """把 $…$ 遮罩为占位符（tex 路径：躲过整体转义，渲染后还原原生数学）。"""
+    spans: list[str] = []
+
+    def _hold(match: re.Match[str]) -> str:
+        spans.append(match.group(0))
+        return f"ZZMATH{len(spans) - 1}ZZ"
+
+    return _MATH_RE.sub(_hold, md or ""), spans
+
+
+def markdown_to_docx_bytes_stdlib(md: str, title: str = "") -> tuple[bytes, dict[str, Any]]:
+    """标准库 docx 渲染（含数学可编辑承载；返回字节＋数学诊断）。"""
+    masked, spans = _mask_math_for_stdlib(md)
+    data = markdown_to_docx_bytes(masked, title=title)
+    check = validate_docx_bytes(data)
+    check["checks"]["math_editable"] = True
+    check["checks"]["math_native"] = False
+    check["checks"]["math_spans"] = len(spans)
+    return data, check
+
+
+def markdown_to_latex_stdlib(md: str, title: str = "") -> tuple[str, dict[str, Any]]:
+    """标准库 tex 渲染（数学还原为原生 $…$；返回文本＋数学诊断）。"""
+    masked, spans = _mask_math_for_tex(md)
+    tex = markdown_to_latex(masked, title=title)
+    for index, original in enumerate(spans):
+        tex = tex.replace(f"ZZMATH{index}ZZ", original)
+    check = verify_latex(tex)
+    check["checks"]["math_editable"] = True
+    check["checks"]["math_native"] = False
+    check["checks"]["math_spans"] = len(spans)
+    return tex, check
+
+
+def _pandoc_convert(md: str, title: str, to: str,
+                    template: str) -> tuple[bytes, bool]:
+    """pandoc 严格调用（无 shell、无 filter、无 pdf-engine；返回字节＋是否原生数学）。
+
+    失败抛 DocumentRenderError（PANDOC_FAILED / PANDOC_TIMEOUT），调用方
+    据此回退标准库并如实记录，不得谎称 pandoc。
+    """
+    import shlex as _shlex
+
+    if not shutil.which("pandoc"):
+        raise DocumentRenderError("PANDOC_MISSING", "本机无 pandoc。")
+    safe_title = (title or "")[:120]
+    if to == "docx":
+        args = ["pandoc", "--from", "markdown", "--to", "docx",
+                "--standalone", "--metadata", f"title={safe_title}"]
+        math_native = True  # docx writer math 为 OMML
+    elif to == "latex":
+        args = ["pandoc", "--from", "markdown", "--to", "latex",
+                "--standalone", "--listings",
+                "--metadata", f"title={safe_title}"]
+        math_native = True
+    else:  # pragma: no cover - 调用方限定 to 取值
+        raise DocumentRenderError("FORMAT_UNKNOWN", f"未知 pandoc 目标：{to}")
+    _ = (_shlex, template)  # 模板只用内置版本标识，不拼路径（防路径逃逸）
+    try:
+        completed = subprocess.run(
+            args, input=(md or "").encode("utf-8"), capture_output=True,
+            timeout=60)
+    except subprocess.TimeoutExpired as error:
+        raise DocumentRenderError("PANDOC_TIMEOUT", "pandoc 渲染超时（60s）。") from error
+    except Exception as error:  # noqa: BLE001
+        raise DocumentRenderError(
+            "PANDOC_FAILED",
+            f"pandoc 调用失败（{type(error).__name__}）。") from error
+    if completed.returncode != 0:
+        raise DocumentRenderError(
+            "PANDOC_FAILED",
+            f"pandoc 返回非零（{(completed.stderr or b'')[:200]!r}）。")
+    if not completed.stdout:
+        raise DocumentRenderError("PANDOC_FAILED", "pandoc 输出为空。")
+    return bytes(completed.stdout), math_native
+
+
+def render_format(*, frozen: dict[str, Any], fmt: str) -> dict[str, Any]:
+    """渲染单个格式（纯函数＋受控子进程；返回 per-format 结果字典）。
+
+    返回 {"format","status","engine","engine_fallback","artifact_type",
+    "bytes"|"text","checks","detail"}；status ∈ succeeded/failed。
+    """
+    if fmt not in SUPPORTED_FORMATS:
+        raise DocumentRenderError("FORMAT_UNKNOWN", f"不支持的格式：{fmt}")
+    title = str(frozen.get("title") or "")
+    template = str(frozen.get("template") or "tech_doc")
+    markdown = str(frozen.get("markdown") or "")
+    if fmt == "markdown":
+        return {"format": "markdown", "status": "succeeded",
+                "engine": "none", "engine_fallback": "",
+                "artifact_type": "markdown", "text": markdown,
+                "checks": {"ok": True}, "detail": "冻结原文直出"}
+    engine = ""
+    fallback = ""
+    math_editable = True
+    math_native = False
+    try:
+        if select_engine() == "pandoc" and fmt in ("word", "latex"):
+            try:
+                raw, math_native = _pandoc_convert(
+                    markdown, title, "docx" if fmt == "word" else "latex",
+                    template)
+                engine = "pandoc"
+            except DocumentRenderError as error:
+                fallback = error.code
+                raise
+            if fmt == "word":
+                check = validate_docx_bytes(raw)
+                check["checks"]["math_editable"] = True
+                check["checks"]["math_native"] = bool(math_native)
+                if not check.get("ok"):
+                    return {"format": "word", "status": "failed",
+                            "engine": engine, "engine_fallback": fallback,
+                            "artifact_type": "word", "bytes": b"",
+                            "checks": check, "detail": "pandoc 产物结构自检失败"}
+                return {"format": "word", "status": "succeeded",
+                        "engine": engine, "engine_fallback": fallback,
+                        "artifact_type": "word", "bytes": raw,
+                        "checks": check, "detail": "pandoc 原生转换（含 OMML 数学）"}
+            check = verify_latex(raw.decode("utf-8", errors="replace"))
+            check["checks"]["math_editable"] = True
+            check["checks"]["math_native"] = bool(math_native)
+            if not check.get("ok"):
+                return {"format": "latex", "status": "failed",
+                        "engine": engine, "engine_fallback": fallback,
+                        "artifact_type": "latex", "text": "",
+                        "checks": check, "detail": "pandoc 产物结构自检失败"}
+            return {"format": "latex", "status": "succeeded",
+                    "engine": engine, "engine_fallback": fallback,
+                    "artifact_type": "latex",
+                    "text": raw.decode("utf-8", errors="replace"),
+                    "checks": check, "detail": "pandoc 原生转换"}
+    except DocumentRenderError:
+        pass  # 回退标准库（fallback 已记录）
+    if fmt == "word":
+        raw, check = markdown_to_docx_bytes_stdlib(markdown, title=title)
+        engine = "stdlib/1"
+        if not check.get("ok"):
+            return {"format": "word", "status": "failed", "engine": engine,
+                    "engine_fallback": fallback, "artifact_type": "word",
+                    "bytes": b"", "checks": check,
+                    "detail": "标准库产物结构自检失败"}
+        return {"format": "word", "status": "succeeded", "engine": engine,
+                "engine_fallback": fallback, "artifact_type": "word",
+                "bytes": raw, "checks": check,
+                "detail": "标准库渲染（数学为可编辑文本 run，非 OMML）"
+                          + (f"；{fallback} 后回退" if fallback else "")}
+    if fmt == "latex":
+        tex, check = markdown_to_latex_stdlib(markdown, title=title)
+        engine = "stdlib/1"
+        if not check.get("ok"):
+            return {"format": "latex", "status": "failed", "engine": engine,
+                    "engine_fallback": fallback, "artifact_type": "latex",
+                    "text": "", "checks": check,
+                    "detail": "标准库产物结构自检失败"}
+        return {"format": "latex", "status": "succeeded", "engine": engine,
+                "engine_fallback": fallback, "artifact_type": "latex",
+                "text": tex, "checks": check,
+                "detail": "标准库渲染（数学为原生 $…$）"
+                          + (f"；{fallback} 后回退" if fallback else "")}
+    # pdf：仅当本机工具链真实编译出 main.pdf 才交付字节。
+    _ = (math_editable, math_native)
+    compiled = compile_latex_pdf(markdown_to_latex_stdlib(markdown, title=title)[0])
+    if not compiled.get("compiled"):
+        return {"format": "pdf", "status": "failed", "engine": "toolchain",
+                "engine_fallback": "", "artifact_type": "pdf", "bytes": b"",
+                "checks": {"ok": False, "code": compiled.get("code", "")},
+                "detail": str(compiled.get("detail") or "")}
+    return {"format": "pdf", "status": "succeeded", "engine": "toolchain",
+            "engine_fallback": "", "artifact_type": "pdf",
+            "bytes": compiled.get("pdf_bytes") or b"",
+            "checks": {"ok": True, "code": "COMPILED"},
+            "detail": "工具链编译成功（main.pdf 真实字节）"}
+
+
+def compile_latex_pdf(tex: str) -> dict[str, Any]:
+    """编译 tex 并带回 PDF 字节（缺工具链如实 TOOLCHAIN_MISSING）。
+
+    与 try_compile_latex 不同：成功时返回 pdf_bytes（上限 8MB，超限即
+    COMPILE_TOO_LARGE）；临时目录内 PDF 保留到读取后由系统回收——返回
+    前已读入内存，不存在“删了还称已交付”。
+    """
+    import os as _os
+
+    latexmk = shutil.which("latexmk")
+    engine = shutil.which("xelatex") or shutil.which("pdflatex")
+    if latexmk is not None and engine is not None:
+        # latexmk 自动处理引用/目录的多轮编译；-no-shell-escape 透传。
+        cmd = [latexmk, "-xelatex" if "xelatex" in (engine or "") else "-pdf",
+               "-interaction=nonstopmode", "-halt-on-error",
+               "-no-shell-escape", "main.tex"]
+        engine_name = f"latexmk+{engine.split('/')[-1]}"
+    elif engine is None:
+        return {"compiled": False, "code": "TOOLCHAIN_MISSING",
+                "detail": "本机无 xelatex/pdflatex；PDF 未生成（partial 保留其余格式）。"}
+    else:
+        cmd = [engine, "-interaction=nonstopmode", "-halt-on-error",
+               "-no-shell-escape", "main.tex"]
+        engine_name = engine.split("/")[-1]
+    try:
+        with tempfile.TemporaryDirectory(prefix="f6-tex-") as tmp:
+            with open(f"{tmp}/main.tex", "w", encoding="utf-8") as handle:
+                handle.write(tex or "")
+            completed = subprocess.run(
+                cmd, cwd=tmp, capture_output=True, text=True, timeout=180)
+            pdf_path = f"{tmp}/main.pdf"
+            if completed.returncode == 0 and _os.path.exists(pdf_path):
+                with open(pdf_path, "rb") as handle:
+                    pdf_bytes = handle.read()
+                if len(pdf_bytes) > 8 * 1024 * 1024:
+                    return {"compiled": False, "code": "COMPILE_TOO_LARGE",
+                            "detail": "PDF 超 8MB 上限，未交付。"}
+                return {"compiled": True, "code": "COMPILED",
+                        "detail": f"工具链编译成功（{engine_name}，main.pdf 真实字节）。",
+                        "pdf_bytes": pdf_bytes}
+            return {"compiled": False, "code": "COMPILE_FAILED",
+                    "detail": f"编译器（{engine_name}）返回非零或缺 main.pdf。",
+                    "log_tail": (completed.stdout or "")[-2000:]}
+    except subprocess.TimeoutExpired:
+        return {"compiled": False, "code": "COMPILE_TIMEOUT",
+                "detail": "编译超时（180s），未产出结论。"}
+    except Exception as error:  # noqa: BLE001
+        return {"compiled": False, "code": "COMPILE_UNAVAILABLE",
+                "detail": f"编译不可用（{type(error).__name__}）。"}
+
+
+def build_document_formats(*, frozen: dict[str, Any],
+                           formats: list[str]) -> dict[str, Any]:
+    """由冻结快照构建多格式（每格式独立状态；返回 overall＋per-format）。
+
+    overall ∈ succeeded（全成）/ partial（部分成）/ failed（全败）；
+    成功格式产物保留，失败格式可单独重试。转换不改写事实（同一快照）。
+    """
+    wanted: list[str] = []
+    for fmt in formats or []:
+        cleaned = str(fmt or "").strip().lower()
+        if cleaned and cleaned not in wanted:
+            wanted.append(cleaned)
+    for cleaned in wanted:
+        if cleaned not in SUPPORTED_FORMATS:
+            raise DocumentRenderError("FORMAT_UNKNOWN", f"不支持的格式：{cleaned}")
+    if not wanted:
+        raise DocumentRenderError("FORMAT_EMPTY", "未指定任何格式。")
+    per_format: dict[str, Any] = {}
+    for fmt in wanted:
+        try:
+            per_format[fmt] = render_format(frozen=frozen, fmt=fmt)
+        except DocumentRenderError as error:
+            per_format[fmt] = {"format": fmt, "status": "failed",
+                               "engine": "none", "engine_fallback": "",
+                               "artifact_type": fmt, "bytes": b"", "text": "",
+                               "checks": {"ok": False},
+                               "detail": f"{error.code}：{error}"}
+    succeeded = [k for k, v in per_format.items() if v.get("status") == "succeeded"]
+    if len(succeeded) == len(wanted):
+        overall = "succeeded"
+    elif succeeded:
+        overall = "partial"
+    else:
+        overall = "failed"
+    return {"status": overall, "formats": per_format,
+            "document_id": str(frozen.get("document_id") or ""),
+            "content_hash": str(frozen.get("content_hash") or ""),
+            "template": str(frozen.get("template") or "")}

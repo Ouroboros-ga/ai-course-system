@@ -1,15 +1,14 @@
-"""SR6 干净B：全新沙箱重放冻结配方，比对退出码（确定性，不经 LLM）。
+"""F5 干净B：冻结配方 → B 确定性恢复重放（不经 LLM）。
 
-行为契约：
-- 只重放冻结步骤（与 T6 配方同源同过滤：非空＋排除路由探针），不发明、
-  不修改、不跳过命令；模型不参与；
-- 沙箱 id 与原 run 隔离（`{run}-clean1`，零复用）；用后即回收；
-- 全等→passed，任一不等→failed；超时/中断如实抛错，不持久化 verdict；
-- 结论幂等（已有 passed/failed 直接返回）；只接受本人终态 run；
-- 报告生成自动带出已持久化 clean 结论（无→not_run）。
+行为契约（计划 §10，规则 sr6-clean/3）：
+- B 只重放最终方案（成功的环境安装＋成功的目标命令），不重演失败史；
+- 补丁/依赖按配方恢复；配方缺关键项即 incomplete（可下载，不判 passed）；
+- A 未成功即 failed（同样失败不构成 passed）；环境/目标分别比对；
+- 补丁、配方先写产物后落行；B 沙箱用后即回收；
+- 结论幂等（passed/failed/incomplete 同规则直接返回）；只接受本人终态 run。
 
-全调用真实业务代码；控制服务经 MockTransport 替身（ tracking 确保
-干净 id 隔离与回收调用）。
+全调用真实业务代码；A 容器采集与 B 沙箱经两套替身（ tracking 确保
+隔离与回收调用）；产物存储经内存替身。
 """
 
 import httpx
@@ -52,7 +51,10 @@ def _make_terminal_run(user_id="u-sr6", session_id="s-sr6", commands=(0, 0),
     """建已核验提案→核销→run→按给定退出码追加 attempt→落终态 succeeded。
 
     extra_attempts：[(command, exit_code)]，在落终态前追加（终态后不可追加）。
+    F5：attempt 带服务端操作分类（启发式），最终方案提炼据此过滤。
     """
+    from nexus import experiment_contracts as contracts_module
+
     proposal = proposals_module.create_proposal(
         user_id=user_id, session_id=session_id, preset=None,
         kind="autonomous_experiment", scope=_scope(),
@@ -69,13 +71,19 @@ def _make_terminal_run(user_id="u-sr6", session_id="s-sr6", commands=(0, 0),
         proposal_id=proposal["proposal_id"], proposal_version=1,
         scope_hash=proposal["scope_hash"], approval_id=aid)
     for index, code in enumerate(commands):
+        command = f"step-{index} --do"
         runs_module.record_attempt(
-            run["run_id"], actual_command=f"step-{index} --do",
+            run["run_id"], actual_command=command,
+            config_changes={"kind": "execute",
+                            "op_kind": contracts_module.classify_operation(command)},
             operation_id=f"{run['run_id']}-op-{index + 2:04d}",
             exit_code=code, log_ref="ok")
     for extra_index, (extra_command, extra_code) in enumerate(extra_attempts):
         runs_module.record_attempt(
             run["run_id"], actual_command=extra_command,
+            config_changes={"kind": "execute",
+                            "op_kind": contracts_module.classify_operation(
+                                extra_command)},
             operation_id=f"{run['run_id']}-op-{9000 + extra_index:05d}",
             exit_code=extra_code, log_ref="ok")
     runs_module.set_status(run["run_id"], "succeeded", "")
@@ -170,22 +178,312 @@ def test_file_tool_summaries_skipped_not_counted():
     assert clean_module.is_shell_replayable("") is False
 
 
-async def test_replay_skips_file_tool_summaries():
-    """含 glob 摘要的 run：跳过该步，其余 shell 步骤全等→passed。"""
+class _FakeArtifacts:
+    """F5 产物内存替身（写/读同源；未配置_BACKEND_ 时的确定性替代）。"""
+
+    def __init__(self):
+        self.objects: dict[str, str] = {}
+        self.count = 0
+
+    async def write_artifact_via_backend(self, *, artifact_type, title,
+                                         content, user_id, run_id=""):
+        self.count += 1
+        artifact_id = f"art-{self.count:04d}"
+        self.objects[artifact_id] = content
+        return {"status": "success",
+                "artifact": {"artifact_id": artifact_id,
+                             "artifact_type": artifact_type, "title": title,
+                             "size_bytes": len(content),
+                             "download_path": f"/x/{artifact_id}"}}
+
+    async def read_artifact_via_backend(self, *, artifact_id, user_id):
+        if artifact_id not in self.objects:
+            return {"status": "unavailable", "code": "ARTIFACT_NOT_FOUND",
+                    "detail": "无"}
+        return {"status": "success",
+                "artifact": {"artifact_id": artifact_id},
+                "content": self.objects[artifact_id], "truncated": False}
+
+
+@pytest.fixture()
+def fake_artifacts(monkeypatch):
+    from nexus import artifact_client as artifact_client_module
+
+    store = _FakeArtifacts()
+    monkeypatch.setattr(artifact_client_module, "write_artifact_via_backend",
+                        store.write_artifact_via_backend)
+    monkeypatch.setattr(artifact_client_module, "read_artifact_via_backend",
+                        store.read_artifact_via_backend)
+    return store
+
+
+class _Resp:
+    def __init__(self, output="", exit_code=0):
+        self.output = output
+        self.exit_code = exit_code
+
+
+class _AContainer:
+    """F5 A 容器替身：git 变更＋文件＋pip freeze（采集路径用）。"""
+
+    def __init__(self, sha="deadbeef1234567890"):
+        self.sha = sha
+        self.files = {"/workspace/train.py": b"print(1)\n"}
+        self.calls: list[str] = []
+
+    async def aexecute(self, command, timeout=None):
+        self.calls.append(command)
+        if "git -C /workspace status" in command:
+            return _Resp(" M train.py\n?? new.txt\n", 0)
+        if "git -C /workspace diff" in command:
+            return _Resp("diff --git a/train.py b/train.py\n+print(1)\n", 0)
+        if command == "pip freeze":
+            return _Resp("fakepkg==1.0\n", 0)
+        if command.startswith("conda env export"):
+            return _Resp("", 1)
+        return _Resp("", 0)
+
+    async def adownload_files(self, paths):
+        from nexus.experiment_sandbox import FileDownloadResponse
+
+        out = []
+        for path in paths:
+            if path in self.files:
+                out.append(FileDownloadResponse(path=path,
+                                                content=self.files[path],
+                                                error=None))
+            else:
+                out.append(FileDownloadResponse(path=path, content=None,
+                                                error="file_not_found"))
+        return out
+
+    async def sandbox_status(self):
+        return {"image": "img", "image_digest": "sha256:abc"}
+
+    async def cancel(self):
+        return {"status": "cancelled"}
+
+
+class _BContainer:
+    """F5 B 容器替身：按脚本退出码应答；记录上传与执行序列。"""
+
+    def __init__(self, sha="deadbeef1234567890", exits=None):
+        self.sha = sha
+        self.exits = dict(exits or {})
+        self.files: dict[str, bytes] = {}
+        self.uploads: list[str] = []
+        self.calls: list[str] = []
+        self.cancelled = 0
+
+    async def aexecute(self, command, timeout=None):
+        import hashlib as _hashlib
+
+        self.calls.append(command)
+        if "git -C /workspace rev-parse HEAD" in command:
+            return _Resp(self.sha + "\n", 0)
+        if command.startswith("sha256sum "):
+            path = command.split(None, 1)[1]
+            data = self.files.get(path, b"")
+            return _Resp(f"{_hashlib.sha256(data).hexdigest()}  {path}\n", 0)
+        if command.startswith("rm -f "):
+            return _Resp("", 0)
+        for key, code in self.exits.items():
+            if command == key or command.startswith(key):
+                return _Resp(f"exit={code}\n", code)
+        if command.startswith("git init") or "remote add" in command:
+            return _Resp("", 0)
+        if command.startswith("pip install -r"):
+            return _Resp("", 0)
+        return _Resp("", 0)
+
+    async def aupload_files(self, pairs):
+        from nexus.experiment_sandbox import FileUploadResponse
+
+        out = []
+        for path, content in pairs:
+            self.uploads.append(path)
+            self.files[path] = bytes(content)
+            out.append(FileUploadResponse(path=path, error=None))
+        return out
+
+    async def cancel(self):
+        self.cancelled += 1
+        return {"status": "cancelled"}
+
+
+async def test_freeze_writes_artifacts_before_row(fake_artifacts):
+    """冻结：产物先落盘后落行（行引用与产物一致；缺容器即缺补丁）。"""
     from nexus import experiment_clean as clean_module
 
-    run = _make_terminal_run(
-        extra_attempts=[("glob **/{README*,setup.py}", 0)])
-    container = _ReplayContainer()
-    backend = _backend_for(container, clean_module.clean_sandbox_id(run["run_id"]))
+    run = _make_terminal_run()
+    proposal = proposals_module.get_proposal(run["proposal_id"])
+    frozen = await clean_module.ensure_frozen_recipe(
+        run_id=run["run_id"], user_id="u-sr6", scope=dict(proposal["scope"]),
+        proposal=proposal, backend=_AContainer())
+    assert frozen["deduped"] is False
+    assert frozen["recipe_status"] == "complete"
+    assert fake_artifacts.count == 2, "配方＋补丁双产物先行"
+    stored = runs_module.get_run(run["run_id"])
+    assert stored["recipe_hash"] == frozen["recipe_hash"]
+    assert stored["recipe_status"] == "complete"
+    assert stored["recipe_artifact_id"] and stored["recipe_patch_id"]
+    # 幂等复用：行已有引用即不再重采重写。
+    again = await clean_module.ensure_frozen_recipe(
+        run_id=run["run_id"], user_id="u-sr6", scope=dict(proposal["scope"]),
+        proposal=proposal, backend=None)
+    assert again["deduped"] is True
+    assert fake_artifacts.count == 2
+
+
+async def test_freeze_without_container_marks_incomplete(fake_artifacts):
+    """A 容器已回收即采不到补丁：配方 incomplete（可下载，不判 passed）。"""
+    from nexus import experiment_clean as clean_module
+
+    run = _make_terminal_run()
+    proposal = proposals_module.get_proposal(run["proposal_id"])
+    frozen = await clean_module.ensure_frozen_recipe(
+        run_id=run["run_id"], user_id="u-sr6", scope=dict(proposal["scope"]),
+        proposal=proposal, backend=None)
+    assert frozen["recipe_status"] == "incomplete"
+    assert "patch_or_files" in (frozen["recipe"] or {})["missing"]
+    assert runs_module.get_run(run["run_id"])["recipe_status"] == "incomplete"
+
+
+async def test_clean_passed_on_restored_final_plan(fake_artifacts):
+    """B 按冻结配方恢复＋重放最终方案，全等→passed（带分量与 hash）。"""
+    from nexus import experiment_clean as clean_module
+
+    run = _make_terminal_run()
+    proposal = proposals_module.get_proposal(run["proposal_id"])
+    await clean_module.ensure_frozen_recipe(
+        run_id=run["run_id"], user_id="u-sr6", scope=dict(proposal["scope"]),
+        proposal=proposal, backend=_AContainer())
     outcome = await clean_module.run_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6", backend=backend)
+        run_id=run["run_id"], user_id="u-sr6", backend=_BContainer())
     assert outcome["clean_verification"] == "passed"
-    assert outcome["matched"] == 2 and outcome["total"] == 2
-    assert len(outcome["skipped"]) == 1
+    assert outcome["components"]["target"] == {"matched": 2, "total": 2}
+    assert outcome["recipe_hash"] == runs_module.get_run(run["run_id"])["recipe_hash"]
+    stored = runs_module.get_run(run["run_id"])
+    assert stored["clean_status"] == "passed"
+    assert stored["clean_rule"] == clean_module.CLEAN_RULE_VERSION
     log = clean_module.render_clean_log_markdown(
         runs_module.get_run(run["run_id"]), outcome)
-    assert "未重放" in log and "glob" in log
+    assert "sr6-clean/3" in log and "环境" in log
+
+
+async def test_clean_failed_on_divergence(fake_artifacts):
+    """B 目标退出码不等→failed（环境/目标分别比对）。"""
+    from nexus import experiment_clean as clean_module
+
+    run = _make_terminal_run()
+    proposal = proposals_module.get_proposal(run["proposal_id"])
+    await clean_module.ensure_frozen_recipe(
+        run_id=run["run_id"], user_id="u-sr6", scope=dict(proposal["scope"]),
+        proposal=proposal, backend=_AContainer())
+    b = _BContainer(exits={"step-1 --do": 1})
+    outcome = await clean_module.run_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6", backend=b)
+    assert outcome["clean_verification"] == "failed"
+    assert outcome["components"]["target"] == {"matched": 1, "total": 2}
+    assert runs_module.get_run(run["run_id"])["clean_status"] == "failed"
+
+
+async def test_failed_run_never_passes(fake_artifacts):
+    """A 未成功（目标全败）→ incomplete（同样失败不构成 passed）。"""
+    from nexus import experiment_clean as clean_module
+
+    run = _make_terminal_run(commands=(1, 1))
+    proposal = proposals_module.get_proposal(run["proposal_id"])
+    frozen = await clean_module.ensure_frozen_recipe(
+        run_id=run["run_id"], user_id="u-sr6", scope=dict(proposal["scope"]),
+        proposal=proposal, backend=_AContainer())
+    assert frozen["recipe_status"] == "incomplete"
+    assert "target_commands" in (frozen["recipe"] or {})["missing"]
+    outcome = await clean_module.run_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6", backend=_BContainer())
+    assert outcome["clean_verification"] == "incomplete"
+    assert "不判 passed" in outcome["clean_note"]
+
+
+def test_wall_exhausted_predicate():
+    """wall 预算谓词：到期/未到期/无配置分别判定（纯逻辑）。"""
+    import time as _time
+
+    from nexus import experiment_clean as clean_module
+
+    assert clean_module._wall_exhausted(
+        {"created_at": _time.time() - 100}, {"resources": {"wall_time_s": 10}}) is True
+    assert clean_module._wall_exhausted(
+        {"created_at": _time.time()}, {"resources": {"wall_time_s": 3600}}) is False
+    assert clean_module._wall_exhausted({"created_at": 0}, {}) is False
+
+
+async def test_budget_exhausted_stops_without_running(fake_artifacts):
+    """wall 耗尽即 incomplete 落盘（不建 B 沙箱、不跑命令、不偷偷增配）。"""
+    import time as _time
+
+    from nexus import experiment_clean as clean_module
+
+    run = _make_terminal_run()
+
+    class _SpyBackend(_BContainer):
+        async def aexecute(self, command, timeout=None):
+            raise AssertionError("预算耗尽不得建 B/跑命令")
+
+    # 回拨创建时间模拟耗尽（行提案 wall 1800s 不变，验证谓词走行时间）。
+    runs_module._memory_runs[run["run_id"]]["created_at"] = _time.time() - 100000
+    runs_module._memory_runs[run["run_id"]]["updated_at"] = _time.time() - 100000
+    outcome = await clean_module.run_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6", backend=_SpyBackend())
+    assert outcome["clean_verification"] == "incomplete"
+    assert "预算" in outcome["clean_note"]
+    stored = runs_module.get_run(run["run_id"])
+    assert stored["clean_status"] == "incomplete"
+    assert stored["clean_rule"] == clean_module.CLEAN_RULE_VERSION
+
+
+async def test_step_timeout_resets_without_verdict(fake_artifacts):
+    """B 步骤超时→复位为空（不持久化 passed/failed/incomplete），可重试。"""
+    from nexus import experiment_clean as clean_module
+
+    run = _make_terminal_run()
+    proposal = proposals_module.get_proposal(run["proposal_id"])
+    await clean_module.ensure_frozen_recipe(
+        run_id=run["run_id"], user_id="u-sr6", scope=dict(proposal["scope"]),
+        proposal=proposal, backend=_AContainer())
+
+    class _HangingBackend(_BContainer):
+        async def aexecute(self, command, timeout=None):
+            from nexus.experiment_sandbox import _operation_to_response
+
+            return _operation_to_response({"status": "running",
+                                           "output_tail": "",
+                                           "output_truncated": True})
+
+    with pytest.raises(clean_module.CleanError) as exc:
+        await clean_module.run_clean_verification(
+            run_id=run["run_id"], user_id="u-sr6", backend=_HangingBackend())
+    assert exc.value.code == "CLEAN_STEP_TIMEOUT"
+    assert runs_module.get_run(run["run_id"])["clean_status"] == ""
+
+
+async def test_stale_rule_verdict_reverified(fake_artifacts):
+    """旧规则结论（v2 passed）不直接采信：重验走 v3 链。"""
+    from nexus import experiment_clean as clean_module
+
+    run = _make_terminal_run()
+    runs_module.set_clean_verdict(run["run_id"], "passed", "旧口径 2/2",
+                                  rule="sr6-clean/2")
+    proposal = proposals_module.get_proposal(run["proposal_id"])
+    await clean_module.ensure_frozen_recipe(
+        run_id=run["run_id"], user_id="u-sr6", scope=dict(proposal["scope"]),
+        proposal=proposal, backend=_AContainer())
+    outcome = await clean_module.run_clean_verification(
+        run_id=run["run_id"], user_id="u-sr6", backend=_BContainer())
+    assert outcome["clean_verification"] == "passed"
+    stored = runs_module.get_run(run["run_id"])
+    assert stored["clean_rule"] == clean_module.CLEAN_RULE_VERSION
+    assert stored["clean_rule"] == "sr6-clean/3"
 
 
 def test_clean_sandbox_id_isolated_and_bounded():
@@ -210,105 +508,6 @@ def test_replayable_steps_match_report_recipe():
     assert all(s["exit_code"] == 0 for s in steps)
 
 
-async def test_replay_passed_on_identical_env():
-    run = _make_terminal_run()
-    container = _ReplayContainer()
-    backend = _backend_for(container, clean_module.clean_sandbox_id(run["run_id"]))
-    outcome = await clean_module.run_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6", backend=backend)
-    assert outcome["clean_verification"] == "passed"
-    assert outcome["matched"] == 2 and outcome["total"] == 2
-    assert outcome["deduped"] is False
-    # 隔离：ensure 与提交只走干净 id，原 run id 零触达；用后即回收。
-    assert container.ensure_ids == [clean_module.clean_sandbox_id(run["run_id"])]
-    assert all(pid == container.ensure_ids[0] for pid, _ in container.posts)
-    assert container.cancel_ids == [container.ensure_ids[0]]
-    # 结论落盘。
-    assert runs_module.get_run(run["run_id"])["clean_status"] == "passed"
-
-
-async def test_replay_failed_on_divergence():
-    run = _make_terminal_run()
-    container = _ReplayContainer(exits={"step-1 --do": 1})
-    backend = _backend_for(container, clean_module.clean_sandbox_id(run["run_id"]))
-    outcome = await clean_module.run_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6", backend=backend)
-    assert outcome["clean_verification"] == "failed"
-    assert outcome["matched"] == 1 and outcome["total"] == 2
-    assert runs_module.get_run(run["run_id"])["clean_status"] == "failed"
-
-
-async def test_start_returns_verifying_then_complete_persists():
-    """异步语义：start 即返 verifying；后台 _complete 落盘；再 start 幂等。"""
-    from nexus import experiment_clean as clean_module
-
-    run = _make_terminal_run()
-    container = _ReplayContainer()
-    backend = _backend_for(container, clean_module.clean_sandbox_id(run["run_id"]))
-    started = await clean_module.start_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6")
-    assert started == {"run_id": run["run_id"], "clean_verification": "verifying",
-                       "deduped": False}
-    assert runs_module.get_run(run["run_id"])["clean_status"] == "verifying"
-    # verifying 中重复触发不重复调度。
-    again = await clean_module.start_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6")
-    assert again["clean_verification"] == "verifying"
-    assert again["deduped"] is True
-    assert len(container.posts) == 0
-    # 后台完成（测试内直接 await 确定性驱动）。
-    done = await clean_module._complete_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6", backend=backend)
-    assert done["clean_verification"] == "passed"
-    assert runs_module.get_run(run["run_id"])["clean_status"] == "passed"
-    # 终态结论幂等。
-    final = await clean_module.start_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6")
-    assert final["deduped"] is True
-    assert final["clean_verification"] == "passed"
-
-
-async def test_divergent_replay_persists_failed():
-    """退出码不等→failed 落盘（非复位；复位只发生在超时/中断等未知态）。"""
-    from nexus import experiment_clean as clean_module
-
-    run = _make_terminal_run()
-    container = _ReplayContainer(exits={"step-0 --do": 1, "step-1 --do": 1})
-    backend = _backend_for(container, clean_module.clean_sandbox_id(run["run_id"]))
-    await clean_module.start_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6")
-    done = await clean_module._complete_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6", backend=backend)
-    assert done["clean_verification"] == "failed"
-    assert runs_module.get_run(run["run_id"])["clean_status"] == "failed"
-
-
-async def test_step_timeout_resets_without_verdict():
-    """步骤超时→复位为空（不持久化 passed/failed），可重试。"""
-    from nexus import experiment_clean as clean_module
-
-    run = _make_terminal_run()
-
-    class _HangingBackend:
-        async def aexecute(self, command, timeout=None):
-            from nexus.experiment_sandbox import _operation_to_response
-
-            return _operation_to_response({"status": "running",
-                                           "output_tail": "",
-                                           "output_truncated": True})
-
-        async def cancel(self):
-            return {"status": "cancelled"}
-
-    await clean_module.start_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6")
-    with pytest.raises(clean_module.CleanError) as exc:
-        await clean_module._complete_clean_verification(
-            run_id=run["run_id"], user_id="u-sr6",
-            backend=_HangingBackend(), )
-    assert exc.value.code == "CLEAN_STEP_TIMEOUT"
-    assert runs_module.get_run(run["run_id"])["clean_status"] == ""
-
 
 def test_reset_verifying_to_idle_for_restart():
     """重启自愈：残留 verifying 复位为空并计数；终态结论不受影响。"""
@@ -321,42 +520,22 @@ def test_reset_verifying_to_idle_for_restart():
     assert runs_module.get_run(run["run_id"])["clean_status"] == "passed"
 
 
-async def test_stale_rule_verdict_reverified():
-    """旧规则结论（rule 缺失/过期）不直接采信：重新重放覆盖。"""
-    from nexus import experiment_clean as clean_module
-
-    run = _make_terminal_run()
-    runs_module.set_clean_verdict(run["run_id"], "failed", "旧口径 1/2")
-    assert runs_module.get_run(run["run_id"])["clean_rule"] == ""
-    container = _ReplayContainer()
-    backend = _backend_for(container, clean_module.clean_sandbox_id(run["run_id"]))
-    started = await clean_module.start_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6")
-    assert started["deduped"] is False
-    assert started["clean_verification"] == "verifying"
-    done = await clean_module._complete_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6", backend=backend)
-    assert done["clean_verification"] == "passed"
-    stored = runs_module.get_run(run["run_id"])
-    assert stored["clean_rule"] == clean_module.CLEAN_RULE_VERSION
-    # 同规则下再次触发幂等。
-    again = await clean_module.start_clean_verification(
-        run_id=run["run_id"], user_id="u-sr6")
-    assert again["deduped"] is True
-    assert again["clean_verification"] == "passed"
-
 
 def test_console_snapshot_carries_clean_keys():
-    """console 快照直通 clean_status/clean_note（只读投影）。"""
+    """console 快照直通 clean/recipe 引用（只读投影）。"""
     from nexus import experiment_store as store_module
 
     run = _make_terminal_run()
     snap = store_module.console_snapshot(run["run_id"])
     assert snap["clean_status"] == ""
+    assert snap["recipe_hash"] == ""
     runs_module.set_clean_verdict(run["run_id"], "passed", "2/2 一致")
+    runs_module.set_recipe(run["run_id"], "abc123", "complete", "art-1", "art-2")
     snap2 = store_module.console_snapshot(run["run_id"])
     assert snap2["clean_status"] == "passed"
     assert snap2["clean_note"] == "2/2 一致"
+    assert snap2["recipe_hash"] == "abc123"
+    assert snap2["recipe_status"] == "complete"
 
 
 async def test_gate_rejects_unfinished_cancelled_foreign():
@@ -389,7 +568,11 @@ async def test_gate_rejects_unfinished_cancelled_foreign():
 
 
 async def test_report_picks_up_persisted_clean_verdict(monkeypatch):
-    """报告自动带出干净B结论（无→not_run；有→透出，不重算）。"""
+    """报告自动带出干净B结论（无→not_run；有→透出，不重算）。
+
+    F5：报告生成同时冻结配方（4 产物：报告/配方 Markdown＋配方/补丁 JSON）。
+    """
+    from nexus import experiment_clean as clean_module
     from nexus import experiment_report as report_module
 
     async def _ok_write(*, artifact_type, title, content, user_id, run_id=""):
@@ -401,15 +584,25 @@ async def test_report_picks_up_persisted_clean_verdict(monkeypatch):
     monkeypatch.setattr(report_module.artifact_client,
                         "write_artifact_via_backend", _ok_write)
     run = _make_terminal_run()
-    # 未验证 → not_run。
+    # 未验证 → not_run（冻结同步发生：无容器即 incomplete 配方，可下载）。
     out = await report_module.generate_run_report(
         run_id=run["run_id"], user_id="u-sr6", backend=None)
     assert out["clean_verification"] == "not_run"
-    # 落盘 passed → 报告透出 passed。
-    runs_module.set_clean_verdict(run["run_id"], "passed", "2/2 一致")
+    assert len(out["artifacts"]) == 4
+    assert out["recipe_status"] == "incomplete"
+    assert out["recipe_hash"] == runs_module.get_run(run["run_id"])["recipe_hash"]
+    # 落盘 passed（现规则）→ 报告透出 passed。
+    runs_module.set_clean_verdict(run["run_id"], "passed", "2/2 一致",
+                                  rule=clean_module.CLEAN_RULE_VERSION)
     out2 = await report_module.generate_run_report(
         run_id=run["run_id"], user_id="u-sr6", backend=None)
     assert out2["clean_verification"] == "passed"
+    # 落盘 incomplete → 报告透出 incomplete（非 not_run）。
+    runs_module.set_clean_verdict(run["run_id"], "incomplete", "缺补丁",
+                                  rule=clean_module.CLEAN_RULE_VERSION)
+    out3 = await report_module.generate_run_report(
+        run_id=run["run_id"], user_id="u-sr6", backend=None)
+    assert out3["clean_verification"] == "incomplete"
 
 
 async def test_clean_endpoint_codes(monkeypatch):

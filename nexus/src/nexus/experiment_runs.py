@@ -75,6 +75,11 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         # unrecoverable；完成原因见 completion_reason）。
         "recovery_status": row.get("recovery_status", "") or "",
         "completion_reason": row.get("completion_reason", "") or "",
+        # F5 冻结配方引用（内容见 run 关联的 recipe Artifact）。
+        "recipe_hash": row.get("recipe_hash", "") or "",
+        "recipe_status": row.get("recipe_status", "") or "",
+        "recipe_artifact_id": row.get("recipe_artifact_id", "") or "",
+        "recipe_patch_id": row.get("recipe_patch_id", "") or "",
         "created_at": row.get("created_at", 0),
         "updated_at": row.get("updated_at", 0),
     }
@@ -87,6 +92,7 @@ _RUN_KEYS = (
     "graph_thread_id", "cancel_requested", "detail",
     "clean_status", "clean_note", "clean_checked_at", "clean_rule",
     "recovery_status", "completion_reason",
+    "recipe_hash", "recipe_status", "recipe_artifact_id", "recipe_patch_id",
     "created_at", "updated_at",
 )
 _RUN_SELECT = ", ".join(_RUN_KEYS)
@@ -113,8 +119,9 @@ def _insert_row(row: dict[str, Any]) -> None:
                         "graph_thread_id, cancel_requested, detail, "
                         "clean_status, clean_note, clean_checked_at, "
                         "clean_rule, recovery_status, completion_reason, "
+                        "recipe_hash, recipe_status, recipe_artifact_id, recipe_patch_id, "
                         "created_at, updated_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                         "ON CONFLICT (run_id) DO NOTHING",
                         (
                             row["run_id"], row["owner"], row["session_id"],
@@ -131,6 +138,10 @@ def _insert_row(row: dict[str, Any]) -> None:
                             row.get("clean_rule", ""),
                             row.get("recovery_status", ""),
                             row.get("completion_reason", ""),
+                            row.get("recipe_hash", ""),
+                            row.get("recipe_status", ""),
+                            row.get("recipe_artifact_id", ""),
+                            row.get("recipe_patch_id", ""),
                             row["created_at"], row["updated_at"],
                         ),
                     )
@@ -154,7 +165,9 @@ def _update_row(row: dict[str, Any]) -> None:
                         f"attempt_no=%s, attempts=%s, graph_thread_id=%s, "
                         f"cancel_requested=%s, detail=%s, updated_at=%s, "
                         f"clean_status=%s, clean_note=%s, clean_checked_at=%s, "
-                        f"clean_rule=%s, recovery_status=%s, completion_reason=%s "
+                        f"clean_rule=%s, recovery_status=%s, completion_reason=%s, "
+                        f"recipe_hash=%s, recipe_status=%s, recipe_artifact_id=%s, "
+                        f"recipe_patch_id=%s "
                         f"WHERE run_id=%s",
                         (
                             row["status"], row["attempt_no"],
@@ -169,6 +182,10 @@ def _update_row(row: dict[str, Any]) -> None:
                             row.get("clean_rule", ""),
                             row.get("recovery_status", ""),
                             row.get("completion_reason", ""),
+                            row.get("recipe_hash", ""),
+                            row.get("recipe_status", ""),
+                            row.get("recipe_artifact_id", ""),
+                            row.get("recipe_patch_id", ""),
                             row["run_id"],
                         ),
                     )
@@ -240,6 +257,10 @@ def create_or_get_run(
         "clean_rule": "",
         "recovery_status": "",
         "completion_reason": "",
+        "recipe_hash": "",
+        "recipe_status": "",
+        "recipe_artifact_id": "",
+        "recipe_patch_id": "",
         "created_at": now,
         "updated_at": now,
     }
@@ -326,9 +347,10 @@ def set_status(run_id: str, status: str, detail: str = "") -> dict[str, Any] | N
 
 def set_clean_verdict(run_id: str, status: str, note: str = "",
                       rule: str = "") -> dict[str, Any] | None:
-    """SR6 干净B结论落盘（passed/failed/verifying/""；调用方已做重放比对，
-    此处只持久化；rule 为结论规则版本，口径变化时旧结论视为过期）。
+    """SR6 干净B结论落盘（passed/failed/incomplete/verifying/""；调用方已做
+    重放比对，此处只持久化；rule 为结论规则版本，口径变化时旧结论视为过期）。
 
+    F5：incomplete 为终态结论之一（配方缺关键项；可下载但不得判 passed）。
     结论一旦落盘即稳定（attempt 终态后不可追加）；重复落盘覆盖并刷新时间。
     """
     run = get_run(run_id)
@@ -339,6 +361,29 @@ def set_clean_verdict(run_id: str, status: str, note: str = "",
                     "clean_note": (note or "")[:2000],
                     "clean_checked_at": _now(),
                     "clean_rule": (rule or "")[:32],
+                    "updated_at": _now()})
+    _update_row(updated)
+    _memory_runs[run_id] = dict(updated)
+    return _row_to_dict(updated)
+
+
+def set_recipe(run_id: str, recipe_hash: str, recipe_status: str,
+               recipe_artifact_id: str = "",
+               recipe_patch_id: str = "") -> dict[str, Any] | None:
+    """F5：冻结配方引用落盘（内容见 run 关联的 recipe/patch Artifact）。
+
+    recipe_status ∈ complete/incomplete；hash 为空表示清除引用。
+    """
+    if recipe_status not in ("", "complete", "incomplete"):
+        raise RunError("RECIPE_STATUS_UNKNOWN", f"未知配方状态：{recipe_status}")
+    run = get_run(run_id)
+    if run is None:
+        return None
+    updated = dict(run)
+    updated.update({"recipe_hash": (recipe_hash or "")[:64],
+                    "recipe_status": recipe_status,
+                    "recipe_artifact_id": (recipe_artifact_id or "")[:128],
+                    "recipe_patch_id": (recipe_patch_id or "")[:128],
                     "updated_at": _now()})
     _update_row(updated)
     _memory_runs[run_id] = dict(updated)

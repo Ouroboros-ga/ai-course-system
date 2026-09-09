@@ -547,6 +547,10 @@ const isReportable = computed(() => {
               干净验证
             </SfxButton>
             <span v-if="run?.cleanStatus" class="nxw-note">干净验证：{{ run.cleanStatus === 'verifying' ? '运行中' : run.cleanStatus }}</span>
+            <!-- F6：文档作业身份＋分格式引擎/状态（只读展示，源：服务端作业视图）。 -->
+            <span v-if="run?.formatsJobId" class="nxw-note">文档作业：{{ run.formatsJobId }} · {{ run.formatsJobStatus || '—' }}</span>
+            <span v-if="run?.formatsByKind?.word" class="nxw-note">Word：{{ run.formatsByKind.word.status || '—' }}（{{ run.formatsByKind.word.engine || '未知引擎' }}）</span>
+            <span v-if="run?.formatsByKind?.latex" class="nxw-note">LaTeX：{{ run.formatsByKind.latex.status || '—' }}（{{ run.formatsByKind.latex.engine || '未知引擎' }}）</span>
           </div>
           <table v-if="run.comparison && run.comparison.length" class="nxw-table">
             <thead>

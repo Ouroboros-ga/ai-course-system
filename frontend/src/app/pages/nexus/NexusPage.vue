@@ -562,6 +562,7 @@ async function requestAutoReport(id) {
 }
 
 // ── SR6 正式格式产物：Word .docx＋LaTeX .tex（确定性转换，不经 LLM） ──
+// F6：经 DocumentJob 渲染（同一冻结快照；返回沿用旧形状＋job 字段）。
 async function requestRunFormats(id) {
   const item = sessionRuns.value.find((r) => r.id === id)
   const run = item?.run
@@ -575,6 +576,10 @@ async function requestRunFormats(id) {
         item.turn.artifacts = [...(item.turn.artifacts || []), a]
       }
     }
+    // F6：作业身份＋分格式状态只读存 run（工作台据此展示引擎/partial，不计算）。
+    if (res?.job_id) run.formatsJobId = res.job_id
+    if (res?.job_status) run.formatsJobStatus = res.job_status
+    if (res?.formats && typeof res.formats === 'object') run.formatsByKind = res.formats
     persistSessions()
     showToast(`正式格式已生成：Word ${res?.checks?.docx?.ok ? '通过' : '异常'} · LaTeX ${res?.checks?.tex?.ok ? '通过' : '异常'} · 编译${res?.checks?.compile?.code || '—'}`, 'success')
   } catch (err) {

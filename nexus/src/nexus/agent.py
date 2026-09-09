@@ -70,6 +70,7 @@ RESEARCH_ONLY_TOOLS = frozenset(
         "run_reproduction",
         # NX-R1a：上传论文全文证据薄链（Research-only）。
         "collect_paper_evidence",
+        "read_paper_more",
         "write_research_report",
         # NX-LB4/LB5：运行操作与提案工具（取消需用户一次性授权）。
         "get_reproduction_run",
@@ -80,6 +81,14 @@ RESEARCH_ONLY_TOOLS = frozenset(
         "request_reproduction_approval",
         # T3：无 preset 入口（只准备提案，不执行；Ask 保留）。
         "prepare_experiment",
+        # F7：持续研究循环（模型驱动、平台护栏）。
+        "plan_research_task",
+        "advance_research_task",
+        "submit_research_result",
+        "complete_research_task",
+        "link_experiment_run",
+        "cancel_research_task",
+        "get_research_task",
     }
 )
 
@@ -124,7 +133,13 @@ MODE_PROMPT_APPENDIX = {
     不回答"仅支持 nanoGPT"，不要求用户先提供指标/主张）。
 5. 引用纪律：研究报告中只能引用 collect_paper_evidence 返回的 evidence_id
    （write_research_report 服务端渲染引用，模型不得编造页码或引文）；
-   引用被拒时按返回的修复指引最多修正一次，仍失败则如实输出证据缺口。""",
+   引用被拒时按返回的修复指引最多修正一次，仍失败则如实输出证据缺口。
+6. 持续研究（F7）：多论文比较/综述类任务先用 plan_research_task 建任务
+   （Brief 保留分析维度与交付格式），原子问题经 task researcher 委派只读
+   子任务（只回 findings/evidence_ids/gaps/conflicts），用
+   submit_research_result 回收结果；证据不足用 read_paper_more 补读；
+   预算用尽/取消即停，不无限循环；完成前用 delivery_checklist 逐项核对，
+   而不是看 Todo 全勾。""",
 }
 
 
@@ -137,6 +152,29 @@ def _register_tool_surface_profile() -> None:
             general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
         ),
     )
+    # F7：research 独立 provider（`task` 仅在此放行，供只读 researcher；
+    # 通用子代理仍关闭；General 模式不受影响，沿用 openai 键）。
+    register_harness_profile(
+        "nexus-research",
+        HarnessProfile(
+            excluded_tools=frozenset(tool for tool in NEXUS_EXCLUDED_TOOLS
+                                     if tool != "task"),
+            general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
+        ),
+    )
+
+
+class _ResearchChatOpenAI(ChatOpenAI):
+    """Research 图专用模型：与主聊天同模型同端点，仅 provider 键分流。
+
+    使 research 图命中独立 profile（放行 `task` 给只读 researcher，
+    其余收敛不变）；与实验图的 provider 分流同机制。
+    """
+
+    def _get_ls_params(self, stop=None, **kwargs):
+        params = super()._get_ls_params(stop=stop, **kwargs)
+        params["ls_provider"] = "nexus-research"
+        return params
 
 
 def build_llm(model_name: str | None = None) -> ChatOpenAI | None:
@@ -187,6 +225,53 @@ def _tools_for_mode(mode: str, execution_mode: str | None = None) -> list[Any]:
     if (execution_mode or "ask").strip().lower() != "auto":
         tools = [t for t in tools if t.name not in EXPERIMENT_EXECUTION_TOOLS]
     return tools
+
+
+# F7：只读 researcher 子任务角色（Deep Agents 原生 SubAgent，一个受限角色）。
+# - 只读工具：检索＋附件读取＋证据建立/补读；无审批、无实验执行、无提案写入、
+#   无产物写入——子任务只回 findings/evidence_ids/gaps/conflicts，不直接交付；
+# - 身份由服务端注入（工具读 ContextVar，子任务与父任务同进程同上下文）；
+# - 不全面解除 excluded_tools：全局 openai profile 不动，researcher 经
+#   subagents 声明独立工具面（实例级机制，与实验图 provider 分流同理）。
+RESEARCHER_TOOL_NAMES = frozenset({
+    "web_search",
+    "search_arxiv_papers",
+    "read_attachment",
+    "collect_paper_evidence",
+    "read_paper_more",
+})
+
+RESEARCHER_SYSTEM_PROMPT = """你是 CodeNexus 的只读研究员子任务（researcher），在父任务分配的预算与授权范围内工作。
+
+允许：检索公开资料（web_search、search_arxiv_papers）、读取本次对话已绑定的
+附件（read_attachment）、建立/补读论文证据（collect_paper_evidence、read_paper_more）。
+
+禁止：审批任何事项、执行实验（run_reproduction）、创建/修改提案与审批、
+写入产物与报告、读取宿主路径或他人材料、改写他人会话内容。
+
+返回格式（只回摘要及引用，不贴全文）：
+- findings：每条 {question_id, summary, evidence_ids}；
+- gaps：仍缺的证据/信息（无则空数组）；
+- conflicts：来源冲突（无则空数组）；
+- status：done（本分配完成）/ blocked（缺关键材料，注明缺什么）。
+证据不足时如实说缺什么，不得编造摘录、页码或结论；找不到证据、来源冲突
+或部分工具失败时调整路径继续，不要求父任务逐步指挥，不无限循环。"""
+
+
+def build_researcher_subagent() -> dict[str, Any]:
+    """构建只读 researcher 子任务声明（Research 模式装配；纯声明，可单测）。"""
+    from deepagents import SubAgent
+
+    tools = [t for t in NEXUS_TOOLS if t.name in RESEARCHER_TOOL_NAMES]
+    return SubAgent(
+        name="researcher",
+        description=(
+            "只读论文研究子任务：检索、读附件、建证据。入参给子问题与完成标准；"
+            "只返回 findings/evidence_ids/gaps/conflicts/状态摘要，不直接交付。"
+        ),
+        system_prompt=RESEARCHER_SYSTEM_PROMPT,
+        tools=tools,
+    )
 
 
 class InvalidNexusModel(ValueError):
@@ -282,10 +367,24 @@ def build_agent(
         raise RuntimeError("LLM_NOT_CONFIGURED: NEXUS_DEEPSEEK_API_KEY is empty")
     _register_tool_surface_profile()
     saver = checkpointer if checkpointer is not None else InMemorySaver()
+    # F7：Research 模式显式装配只读 researcher 子任务（Ask/Auto 同形；
+    # General 不装配，结构性不可见）。research 经独立 provider 键分流，
+    # `task` 仅在该 profile 放行（其余收敛与 openai 键一致）。
+    subagents = [build_researcher_subagent()] if mode == "research" else None
+    if mode == "research" and type(llm) is ChatOpenAI:
+        # 仅精确基类实例切换 provider（测试替身子类保持原样；失败则保持
+        # 原键并记日志——task 工具届时不可见，不静默谎称已装配）。
+        try:
+            llm.__class__ = _ResearchChatOpenAI
+        except Exception as error:  # noqa: BLE001
+            logger = __import__("logging").getLogger("nexus.agent")
+            logger.warning("research provider switch failed: %s",
+                           type(error).__name__)
     return create_deep_agent(
         model=llm,
         tools=_tools_for_mode(mode, execution_mode),
         system_prompt=SYSTEM_PROMPT + MODE_PROMPT_APPENDIX[mode],
+        subagents=subagents,
         middleware=[
             FilesystemMiddleware(tools=["read_file"]),
             build_summarization_middleware(llm),

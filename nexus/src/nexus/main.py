@@ -1666,6 +1666,352 @@ async def repro_run_formats(
         ) from error
 
 
+class DocumentJobCreate(BaseModel):
+    """F6 文档作业创建体：成果引用＋格式＋模板＋幂等键。
+
+    source_kind ∈ run_report（`run_id` 必填，需本人终态 run）/
+    artifact（`artifact_id` 必填，需本人可读）/ markdown（`markdown` 必填）。
+    """
+
+    source_kind: str = Field(default="markdown", max_length=16)
+    run_id: str = Field(default="", max_length=64)
+    artifact_id: str = Field(default="", max_length=64)
+    markdown: str = Field(default="", max_length=512 * 1024)
+    title: str = Field(default="", max_length=120)
+    template: str = Field(default="tech_doc", max_length=32)
+    formats: list[str] = Field(default_factory=lambda: ["markdown", "word", "latex"])
+    idempotency_key: str = Field(default="", max_length=128)
+
+    model_config = {"extra": "forbid"}
+
+
+def _document_error_status(code: str) -> int:
+    return {
+        "JOB_NOT_FOUND": 404,
+        "JOB_FORBIDDEN": 403,
+        "SOURCE_NOT_FOUND": 404,
+        "ARTIFACT_NOT_FOUND": 404,
+        "SOURCE_NOT_READY": 409,
+        "DOCUMENT_CONFLICT": 409,
+        "JOB_CANCELLED": 409,
+        "TEMPLATE_UNKNOWN": 400,
+        "FORMAT_UNKNOWN": 400,
+        "FORMAT_EMPTY": 400,
+        "SOURCE_EMPTY": 400,
+        "DOCUMENT_EMPTY": 400,
+        "DOCUMENT_TOO_LARGE": 400,
+        "JOB_FROZEN_MISSING": 410,
+        "SOURCE_TRUNCATED": 502,
+        "ARTIFACT_UNAVAILABLE": 502,
+        "RECIPE_FREEZE_FAILED": 502,
+    }.get(code, 409)
+
+
+async def _resolve_document_source(
+    *, body: DocumentJobCreate, user_id: str,
+) -> tuple[str, str, dict[str, Any]]:
+    """解析成果引用 → (markdown, title, source_ref)；失败抛 DocumentError。
+
+    run_report：本人终态 run 的冻结报告＋配方（与 /formats 同源）；
+    artifact：本人可读文本产物（撤销/删除即 404 拒绝生成新版本）；
+    markdown：直接正文（无外部来源）。
+    """
+    from nexus import document_jobs as jobs_module
+
+    kind = (body.source_kind or "markdown").strip().lower()
+    if kind == "run_report":
+        from nexus import experiment_report as report_module
+        from nexus import experiment_runs as runs_module
+
+        run = runs_module.get_run(body.run_id.strip()[:64])
+        if run is None or (user_id or "") != run.get("owner", ""):
+            raise jobs_module.DocumentError("SOURCE_NOT_FOUND", "实验运行不存在或无权读取。")
+        if run.get("status") not in ("succeeded", "failed"):
+            raise jobs_module.DocumentError(
+                "SOURCE_NOT_READY",
+                f"运行尚未终态（现态 {run.get('status')}），无可冻结的成果。")
+        backend = None
+        try:
+            from nexus.experiment_agent import _backend_from_settings
+
+            backend = _backend_from_settings(run["run_id"])
+        except Exception:  # noqa: BLE001 - 只读 lifecycle，失败即空
+            backend = None
+        try:
+            _report, report_md, recipe_md = await report_module.build_stored_report(
+                run_id=run["run_id"], user_id=user_id, backend=backend)
+        except report_module.ReportError as error:
+            raise jobs_module.DocumentError(error.code, str(error)) from error
+        markdown = (f"{report_md.rstrip()}\n\n---\n\n"
+                    f"# 附录：实验配方\n\n{recipe_md.strip()}\n")
+        title = body.title.strip() or f"自主实验报告 · {run['run_id'][:12]}"
+        return markdown, title, {"kind": "run_report", "run_id": run["run_id"]}
+    if kind == "artifact":
+        from nexus import artifact_client
+
+        read = await artifact_client.read_artifact_via_backend(
+            artifact_id=body.artifact_id.strip()[:64], user_id=user_id)
+        if read.get("status") != "success":
+            raise jobs_module.DocumentError(
+                str(read.get("code") or "SOURCE_NOT_FOUND"),
+                str(read.get("detail") or "产物不可读。"))
+        if read.get("truncated"):
+            raise jobs_module.DocumentError(
+                "SOURCE_TRUNCATED", "产物被截断，不得当完整来源。")
+        title = body.title.strip() or str(
+            (read.get("artifact") or {}).get("title") or "文档")
+        return (str(read.get("content") or ""), title,
+                {"kind": "artifact", "artifact_id": str(
+                    (read.get("artifact") or {}).get("artifact_id") or "")})
+    if kind == "markdown":
+        if not (body.markdown or "").strip():
+            raise jobs_module.DocumentError("SOURCE_EMPTY", "正文为空。")
+        return (body.markdown, body.title.strip() or "文档",
+                {"kind": "markdown"})
+    raise jobs_module.DocumentError("SOURCE_UNKNOWN", f"未知来源：{kind}")
+
+
+@app.post(
+    "/api/v1/nexus/document-jobs",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_document_job_create(
+    body: DocumentJobCreate,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    x_nexus_session_id: str | None = Header(default=None, alias="X-Nexus-Session-Id"),
+) -> dict[str, Any]:
+    """F6：由一份冻结内容创建文档作业（Markdown/Word/LaTeX/PDF）。
+
+    不要求先有实验 run（Ask 下可用，纯渲染不属于实验执行授权）。
+    同幂等键同内容去重，同键不同内容 409；部分成功返回 partial。
+    跨用户/不存在一律按来源语义拒绝（run/产物归属由来源解析核对）。
+    """
+    from nexus import document_jobs as jobs_module
+    from nexus import document_output as output_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    session_id = sanitize_session_id(x_nexus_session_id or "default")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="USER_IDENTITY_MISSING")
+    try:
+        markdown, title, source_ref = await _resolve_document_source(
+            body=body, user_id=user_id)
+        frozen = output_module.freeze_document(
+            markdown=markdown, title=title,
+            template=(body.template or "tech_doc").strip(),
+            source=source_ref)
+        created = await jobs_module.create_and_render(
+            owner=user_id, session_id=session_id, frozen=frozen,
+            formats=list(body.formats or []),
+            template=(body.template or "tech_doc").strip(),
+            idempotency_key=(body.idempotency_key or "").strip(),
+            source=source_ref)
+    except (jobs_module.DocumentError,
+            output_module.DocumentRenderError) as error:
+        raise HTTPException(
+            status_code=_document_error_status(error.code),
+            detail=error.code) from error
+    job = created["job"]
+    return {**jobs_module.public_job_view(job),
+            "deduped": bool(created.get("deduped", False))}
+
+
+@app.get(
+    "/api/v1/nexus/document-jobs/{job_id}",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_document_job_get(
+    job_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F6：查询文档作业（本人；跨用户/不存在一律 404）。"""
+    from nexus import document_jobs as jobs_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    job = jobs_module.get_job(sanitize_session_id(job_id))
+    if job is None or (user_id or "") != job.get("owner", ""):
+        raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
+    return jobs_module.public_job_view(job)
+
+
+@app.post(
+    "/api/v1/nexus/document-jobs/{job_id}/cancel",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_document_job_cancel(
+    job_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F6：取消文档作业（仅非终态有效；终态返回 already_terminal）。"""
+    from nexus import document_jobs as jobs_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    try:
+        result = jobs_module.cancel_job(
+            job_id=sanitize_session_id(job_id), owner=user_id or "")
+    except jobs_module.DocumentError as error:
+        raise HTTPException(
+            status_code=_document_error_status(error.code),
+            detail=error.code) from error
+    return jobs_module.public_job_view(
+        {k: v for k, v in result.items() if k != "already_terminal"}) | {
+        "already_terminal": bool(result.get("already_terminal", False))}
+
+
+@app.post(
+    "/api/v1/nexus/document-jobs/{job_id}/retry",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_document_job_retry(
+    job_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F6：重试作业的失败格式（只跑失败格式；成功格式保留不重写）。"""
+    from nexus import document_jobs as jobs_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    try:
+        result = await jobs_module.retry_failed(
+            job_id=sanitize_session_id(job_id), owner=user_id or "")
+    except jobs_module.DocumentError as error:
+        raise HTTPException(
+            status_code=_document_error_status(error.code),
+            detail=error.code) from error
+    return {**jobs_module.public_job_view(result["job"]),
+            "deduped": bool(result.get("deduped", False)),
+            "retried": list(result.get("retried") or [])}
+
+
+class ResearchTaskCreate(BaseModel):
+    """F6 文档作业创建代理体之后：F7 研究任务创建体（Brief＋子问题＋预算）。"""
+
+    objective: str = Field(min_length=1, max_length=500)
+    dimensions: str = Field(default="", max_length=600)
+    data_range: str = Field(default="", max_length=200)
+    time_range: str = Field(default="", max_length=200)
+    delivery_format: str = Field(default="", max_length=120)
+    questions: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
+    budget: dict[str, Any] = Field(default_factory=dict)
+    parent_task_id: str = Field(default="", max_length=64)
+
+    model_config = {"extra": "forbid"}
+
+
+def _research_error_status(code: str) -> int:
+    return {
+        "TASK_NOT_FOUND": 404,
+        "TASK_FORBIDDEN": 403,
+        "TASK_OWNER_EMPTY": 400,
+        "TASK_OBJECTIVE_EMPTY": 400,
+        "TASK_STATUS_UNKNOWN": 400,
+        "QUESTION_UNKNOWN": 400,
+        "FINDING_EMPTY": 400,
+        "BUDGET_FIELD_UNKNOWN": 400,
+        "TASK_TERMINAL": 409,
+        "TASK_SESSION_MISMATCH": 403,
+        "RESEARCH_BUDGET_EXHAUSTED": 409,
+        "EVIDENCE_ID_INVALID": 409,
+        "RUN_NOT_FOUND": 404,
+        "RUN_KIND_MISMATCH": 400,
+    }.get(code, 409)
+
+
+@app.post(
+    "/api/v1/nexus/research-tasks",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_research_task_create(
+    body: ResearchTaskCreate,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    x_nexus_session_id: str | None = Header(default=None, alias="X-Nexus-Session-Id"),
+) -> dict[str, Any]:
+    """F7：创建研究任务（Brief 解析＋预算；只建任务、不执行）。"""
+    from nexus import research_loop as loop_module
+    from nexus import research_state as state_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    session_id = sanitize_session_id(x_nexus_session_id or "default")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="USER_IDENTITY_MISSING")
+    try:
+        task = state_module.create_task(
+            owner=user_id, session_id=session_id,
+            objective=body.objective, dimensions=body.dimensions,
+            data_range=body.data_range, time_range=body.time_range,
+            delivery_format=body.delivery_format,
+            questions=[item for item in (body.questions or [])
+                       if isinstance(item, dict)],
+            budget=dict(body.budget or {}),
+            parent_task_id=(body.parent_task_id or "").strip())
+    except state_module.ResearchError as error:
+        raise HTTPException(
+            status_code=_research_error_status(error.code),
+            detail=error.code) from error
+    return {"task": loop_module.public_task_view(task)}
+
+
+@app.get(
+    "/api/v1/nexus/research-tasks",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_research_task_list(
+    session_id: str = "",
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F7：列本人的研究任务（中断恢复查看入口；跨用户不可见）。"""
+    from nexus import research_loop as loop_module
+    from nexus import research_state as state_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="USER_IDENTITY_MISSING")
+    tasks = state_module.list_tasks(
+        user_id, sanitize_session_id(session_id) if session_id else "")
+    return {"tasks": [loop_module.public_task_view(task) for task in tasks]}
+
+
+@app.get(
+    "/api/v1/nexus/research-tasks/{task_id}",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_research_task_get(
+    task_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F7：读研究任务（含预算余量＋交付核对；本人；他人 404）。"""
+    from nexus import research_loop as loop_module
+    from nexus import research_state as state_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    task = state_module.get_task(sanitize_session_id(task_id))
+    if task is None or (user_id or "") != task.get("owner", ""):
+        raise HTTPException(status_code=404, detail="TASK_NOT_FOUND")
+    return {"task": loop_module.public_task_view(task)}
+
+
+@app.post(
+    "/api/v1/nexus/research-tasks/{task_id}/cancel",
+    dependencies=[Depends(require_api_key)],
+)
+async def nexus_research_task_cancel(
+    task_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F7：取消研究任务（置旗即停；已保存材料保留）。"""
+    from nexus import research_loop as loop_module
+    from nexus import research_state as state_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    try:
+        task = state_module.request_cancel(
+            sanitize_session_id(task_id), user_id or "")
+    except state_module.ResearchError as error:
+        raise HTTPException(
+            status_code=_research_error_status(error.code),
+            detail=error.code) from error
+    return {"task": loop_module.public_task_view(task)}
+
+
 @app.post(
     "/api/v1/nexus/repro/runs/{run_id}/clean-verify",
     dependencies=[Depends(require_api_key)],

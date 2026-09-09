@@ -26,7 +26,10 @@ from nexus.tools import NEXUS_TOOLS
 
 # NX-H1：TodoListMiddleware 显式启用后，write_todos 进入执行器与模型可见面
 # （两模式同置，使用频率由提示词约束）；execute/task 仍被排除。
+# F7：research 模式另有 `task` 工具（仅调只读 researcher，经独立
+# nexus-research profile 放行；全局 openai 键收敛不变）。
 EXPECTED_SURFACE = sorted(["read_file", "write_todos"] + [t.name for t in NEXUS_TOOLS])
+EXPECTED_RESEARCH_SURFACE = sorted(EXPECTED_SURFACE + ["task"])
 
 
 class _SpyChatOpenAI(ChatOpenAI):
@@ -75,13 +78,17 @@ def test_excluded_set_covers_default_dangerous_tools():
 
 
 async def test_executor_registry_converged(monkeypatch: pytest.MonkeyPatch):
-    """执行器注册表恰为 read_file + 产品工具（结构性移除 + GP 禁用）。"""
+    """执行器注册表恰为 read_file + 产品工具 + task（结构性移除 + GP 禁用）。
+
+    F7：research 模式多 `task` 工具（仅调只读 researcher，经独立
+    nexus-research profile 放行；全局 openai 键仍排除 task）。
+    """
     monkeypatch.setenv("NEXUS_DEEPSEEK_API_KEY", "dummy-key-for-registry")
     # 全工具面收敛测 research profile：默认已是 general，显式指定。
     agent = build_agent(mode="research", execution_mode="auto")
     registry = _registry(agent)
-    assert registry == EXPECTED_SURFACE
-    assert not set(registry) & NEXUS_EXCLUDED_TOOLS
+    assert registry == EXPECTED_RESEARCH_SURFACE
+    assert not (set(registry) & NEXUS_EXCLUDED_TOOLS - {"task"})
 
 
 async def test_model_visible_tools_converged(monkeypatch: pytest.MonkeyPatch):

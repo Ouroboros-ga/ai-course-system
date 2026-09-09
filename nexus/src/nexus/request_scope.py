@@ -97,3 +97,22 @@ def current_request_mode() -> str | None:
 
 def current_execution_mode() -> str | None:
     return _execution_mode_var.get()
+
+
+# F7：当前研究任务（工具链默认 task_id；服务端上下文，非模型可写参数）。
+_research_task_var: ContextVar[str | None] = ContextVar(
+    "nexus_research_task", default=None)
+
+
+def set_research_task(task_id: str | None) -> Token:
+    """F7：注入当前研究任务 id（证据预算/补读默认归属）。"""
+    cleaned = (task_id or "").strip()[:64] or None
+    return _research_task_var.set(cleaned)
+
+
+def reset_research_task(token: Token) -> None:
+    _research_task_var.reset(token)
+
+
+def current_research_task_id() -> str | None:
+    return _research_task_var.get()

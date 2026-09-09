@@ -34,6 +34,10 @@ ARTIFACT_TYPES: dict[str, dict[str, str]] = {
     "word": {"ext": "docx",
              "mime": "application/vnd.openxmlformats-officedocument"
                      ".wordprocessingml.document"},
+    # F5：冻结配方/补丁束（JSON 机读；经内部读端点供干净B消费）。
+    "json": {"ext": "json", "mime": "application/json"},
+    # F6：PDF 预览（工具链真实编译字节经 content_b64 写入；无字节不交付）。
+    "pdf": {"ext": "pdf", "mime": "application/pdf"},
 }
 
 _CONTENT_MAX_BYTES = 512 * 1024
@@ -133,12 +137,12 @@ def _iso(ts: Any) -> str:
 def validate_artifact_input(artifact_type: str, title: str, content: str) -> str | None:
     """返回错误码或 None（通过）。fail-closed 校验，两端同源。
 
-    word 类型走二进制分支（见 validate_binary_input），此处仍拒绝
-    content 形态的 word（字节必须经 base64，不经文本编码）。
+    word/pdf 类型走二进制分支（见 validate_binary_input），此处仍拒绝
+    content 形态的 word/pdf（字节必须经 base64，不经文本编码）。
     """
     if artifact_type not in ARTIFACT_TYPES:
         return "ARTIFACT_TYPE_UNSUPPORTED"
-    if artifact_type == "word":
+    if artifact_type in ("word", "pdf"):
         return "ARTIFACT_CONTENT_INVALID"
     if not title or not title.strip() or len(title) > _TITLE_MAX:
         return "ARTIFACT_TITLE_INVALID"
@@ -150,8 +154,8 @@ def validate_artifact_input(artifact_type: str, title: str, content: str) -> str
 
 
 def validate_binary_input(artifact_type: str, title: str, raw: bytes) -> str | None:
-    """二进制产物校验（SR6 word）：类型必须为 word，字节非空且限大小。"""
-    if artifact_type != "word" or artifact_type not in ARTIFACT_TYPES:
+    """二进制产物校验（SR6 word / F6 pdf）：类型必须为 word/pdf，字节非空且限大小。"""
+    if artifact_type not in ("word", "pdf") or artifact_type not in ARTIFACT_TYPES:
         return "ARTIFACT_TYPE_UNSUPPORTED"
     if not title or not title.strip() or len(title) > _TITLE_MAX:
         return "ARTIFACT_TITLE_INVALID"

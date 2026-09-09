@@ -63,7 +63,8 @@ def console_snapshot(run_id: str, *, control_reachable: bool = True,
                 "console_status": "unknown", "attempt_no": 0,
                 "attempts": [], "active_operation": "", "detail": "",
                 "clean_status": "", "clean_note": "",
-                "recovery_status": "", "completion_reason": ""}
+                "recovery_status": "", "completion_reason": "",
+                "recipe_hash": "", "recipe_status": ""}
     attempts = [_project_attempt(a) for a in run.get("attempts", [])]
     active = ""
     for projected in reversed(attempts):
@@ -97,6 +98,9 @@ def console_snapshot(run_id: str, *, control_reachable: bool = True,
         # 完成原因见 completion_reason；UI 可不消费新枚举）。
         "recovery_status": run.get("recovery_status", "") or "",
         "completion_reason": run.get("completion_reason", "") or "",
+        # F5：冻结配方引用直通（内容见 run 关联产物）。
+        "recipe_hash": run.get("recipe_hash", "") or "",
+        "recipe_status": run.get("recipe_status", "") or "",
     }
 
 
