@@ -108,6 +108,46 @@ def _make_snippet(body: str, query: str, max_chars: int = 260) -> str:
     return prefix + window + suffix
 
 
+def _rank_by_cosine(query_vector: list[float], vectors: list[list[float]],
+                    keys: list[str], k: int) -> list[tuple[float, str]]:
+    """按余弦取 top-k（numpy 矩阵化优先，缺 numpy/维度异常时逐行兜底）。
+
+    - 排序键与旧实现一致：``(-score, key)``（并列时按 chunk_id 稳定）；
+    - 向量已由 provider L2 归一，此处防御性再归一（与 ``_cosine`` 同语义）；
+    - 查询零向量返回空（不硬凑）；numpy 缺失只降速不降级语义。
+    """
+    if not vectors:
+        return []
+    try:
+        import numpy as np
+    except ImportError:  # pragma: no cover - 部署环境随 torch 装有 numpy
+        np = None  # type: ignore[assignment]
+    if np is not None:
+        try:
+            matrix = np.asarray(vectors, dtype=np.float32)
+            query = np.asarray(query_vector, dtype=np.float32)
+            if matrix.ndim == 2 and query.ndim == 1 \
+                    and matrix.shape[1] == query.shape[0]:
+                query_norm = float(np.linalg.norm(query))
+                if query_norm <= 0.0:
+                    return []
+                norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+                sims = (matrix / np.maximum(norms, 1e-12)) @ (query / query_norm)
+                take = min(k, int(sims.shape[0]))
+                if take < int(sims.shape[0]):
+                    idx = np.argpartition(-sims, take - 1)[:take]
+                else:
+                    idx = np.arange(int(sims.shape[0]))
+                return sorted(((float(sims[i]), keys[i]) for i in idx),
+                              key=lambda kv: (-kv[0], kv[1]))[:k]
+        except (TypeError, ValueError):
+            pass  # 形状不一致等 → 逐行兜底
+    scored = [(_cosine(query_vector, vector), key)
+              for vector, key in zip(vectors, keys)]
+    scored.sort(key=lambda kv: (-kv[0], kv[1]))
+    return scored[:k]
+
+
 def _cosine(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
@@ -330,25 +370,29 @@ class CorpusSearchService:
             raise CorpusIndexError("COUNT_MISMATCH", "查询向量数量异常")
         query_vector = list(vectors[0])
         eids = [m.embedding_id for m in live.values() if m.embedding_id]
+        # 只取两列（不 hydrate ORM 行）；矩阵化打分在 _rank_by_cosine。
         rows = session.exec(
-            select(DisciplineCorpusVector).where(
+            select(DisciplineCorpusVector.embedding_id,
+                   DisciplineCorpusVector.embedding).where(
                 DisciplineCorpusVector.embedding_id.in_(eids),
                 DisciplineCorpusVector.model_fingerprint == model_fp,
             )
         ).all() if eids else []
-        by_embedding = {row.embedding_id: row for row in rows}
-        scored: list[tuple[float, str]] = []
+        by_embedding = {eid: vec for eid, vec in rows}
+        chunk_ids: list[str] = []
+        matrix_rows: list[list[float]] = []
         for chunk_id, member in live.items():
             if not member.embedding_id:
                 continue
-            row = by_embedding.get(member.embedding_id)
-            if row is None:
+            vector = by_embedding.get(member.embedding_id)
+            if vector is None:
                 continue
-            scored.append((_cosine(query_vector, list(row.embedding or [])),
-                           chunk_id))
-        scored.sort(key=lambda kv: (-kv[0], kv[1]))
+            chunk_ids.append(chunk_id)
+            matrix_rows.append(list(vector or []))
+        scored = _rank_by_cosine(query_vector, matrix_rows, chunk_ids,
+                                 VECTOR_RECALL)
         # 零相似全部排除（无合适证据返回空，不硬凑 top-k）
-        return [cid for score, cid in scored[:VECTOR_RECALL] if score > 0.0]
+        return [cid for score, cid in scored if score > 0.0]
 
     @staticmethod
     def _apply_filters(session: Session, fused: list[str], live: dict,

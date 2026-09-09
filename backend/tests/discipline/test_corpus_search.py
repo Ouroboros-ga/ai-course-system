@@ -442,3 +442,34 @@ def test_explicit_unready_release_rejected(session, fts_env):
         service.search(session, "页表", release_id=release["release_id"],
                        embed_client=KeywordFakeEmbed())
     assert exc_info.value.error_code == "INDEX_NOT_READY"
+
+
+def test_rank_by_cosine_matches_reference_and_tiebreaks():
+    """numpy 矩阵化与逐行 _cosine 结果一致；并列按 key 稳定排序。"""
+    from app.services.discipline_knowledge.corpus_search import (
+        _cosine,
+        _rank_by_cosine,
+    )
+
+    query = [1.0, 0.0, 0.0]
+    vectors = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.6, 0.8, 0.0],
+               [1.0, 0.0, 0.0]]
+    keys = ["d", "c", "b", "a"]
+    got = _rank_by_cosine(query, vectors, keys, 3)
+    expected = sorted(((_cosine(query, v), k) for v, k in zip(vectors, keys)),
+                      key=lambda kv: (-kv[0], kv[1]))[:3]
+    # float32 与 Python float 有精度差，比较用容差；顺序与 key 必须一致。
+    assert [k for _s, k in got] == [k for _s, k in expected]
+    for (got_score, _gk), (exp_score, _ek) in zip(got, expected):
+        assert abs(got_score - exp_score) < 1e-6
+    assert got[0][1] == "a", "并列满分时按 key 升序"
+
+
+def test_rank_by_cosine_zero_query_and_bad_shape():
+    """零查询向量返回空；形状不一致逐行兜底不抛错。"""
+    from app.services.discipline_knowledge.corpus_search import _rank_by_cosine
+
+    assert _rank_by_cosine([0.0, 0.0], [[1.0, 0.0]], ["x"], 5) == []
+    assert _rank_by_cosine([1.0, 0.0], [], [], 5) == []
+    got = _rank_by_cosine([1.0, 0.0], [[1.0, 0.0], [1.0]], ["a", "b"], 5)
+    assert [k for _score, k in got] == ["a", "b"]
