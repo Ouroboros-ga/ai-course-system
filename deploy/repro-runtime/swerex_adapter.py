@@ -332,3 +332,125 @@ class SwerexDockerAdapter:
                 os.remove(staging_path)
             except OSError:
                 pass
+
+    # -- 会话原语（F3）：run 级受控 shell（pexpect REPL 在任务容器内） ----
+    # 只做上游公开 API 的薄透传：create/run/interrupt/close/probe，不实现
+    # 任何调度、PTY 或输出解析内核。会话按 run 隔离（名含 run_id），同一会
+    # 话内命令天然串行——并发限制由服务层 per-run 会话锁保证，本模块不加锁。
+
+    def _require_deployment(self) -> Any:
+        if self._deployment is None:
+            raise DockerBackendUnavailableError(
+                "NOT_STARTED", "实例未启动；先 start() 再操作会话")
+        return self._deployment
+
+    async def create_session(self, session: str) -> str:
+        """建会话；已存在抛 SESSION_EXISTS（调用方据此幂等）。"""
+        from swerex.exceptions import SessionExistsError
+        from swerex.runtime.abstract import CreateBashSessionRequest
+
+        deployment = self._require_deployment()
+        try:
+            response = await deployment.runtime.create_session(
+                CreateBashSessionRequest(session=session))
+        except SessionExistsError as error:
+            raise DockerBackendUnavailableError(
+                "SESSION_EXISTS", f"会话已存在：{session}") from error
+        except Exception as error:  # noqa: BLE001
+            raise DockerBackendUnavailableError(
+                "SESSION_CREATE_FAILED",
+                f"建会话失败（{type(error).__name__}）：{str(error)[:200]}",
+            ) from error
+        return str(response.output or "")
+
+    async def run_in_session(
+        self, session: str, command: str, timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        """会话内执行；超时抛 SESSION_TIMEOUT（命令仍在跑，未杀）。
+
+        check 固定 silent：非零退出如实返回 exit_code，不抛；返回
+        {"output", "exit_code"}（exit_code 为 None 仅解析失败时）。
+        """
+        from swerex.exceptions import CommandTimeoutError, SessionDoesNotExistError
+        from swerex.runtime.abstract import BashAction
+
+        deployment = self._require_deployment()
+        try:
+            observation = await deployment.runtime.run_in_session(
+                BashAction(command=command, session=session,
+                           timeout=timeout_s, check="silent"))
+        except CommandTimeoutError as error:
+            raise DockerBackendUnavailableError(
+                "SESSION_TIMEOUT",
+                f"会话命令超时未回显（仍在跑）：{str(error)[:160]}",
+            ) from error
+        except SessionDoesNotExistError as error:
+            raise DockerBackendUnavailableError(
+                "SESSION_MISSING", f"会话不存在：{session}") from error
+        except Exception as error:  # noqa: BLE001
+            raise DockerBackendUnavailableError(
+                "SESSION_RUN_FAILED",
+                f"会话执行失败（{type(error).__name__}）：{str(error)[:200]}",
+            ) from error
+        return {"output": str(observation.output or ""),
+                "exit_code": observation.exit_code}
+
+    async def interrupt_session(
+        self, session: str, timeout_s: float = 2.0, n_retry: int = 3,
+    ) -> dict[str, Any]:
+        """中断会话当前命令；返回中断时输出（exit_code 恒 0，无判定意义）。
+
+        中断了什么、停没停由调用方经探活＋标记确认，本原语不做结论。
+        """
+        from swerex.exceptions import SessionDoesNotExistError
+        from swerex.runtime.abstract import BashInterruptAction
+
+        deployment = self._require_deployment()
+        try:
+            observation = await deployment.runtime.run_in_session(
+                BashInterruptAction(session=session, timeout=timeout_s,
+                                    n_retry=n_retry))
+        except SessionDoesNotExistError as error:
+            raise DockerBackendUnavailableError(
+                "SESSION_MISSING", f"会话不存在：{session}") from error
+        except Exception as error:  # noqa: BLE001 - 含中断超时（停不下来）
+            raise DockerBackendUnavailableError(
+                "SESSION_INTERRUPT_FAILED",
+                f"会话中断失败（{type(error).__name__}）：{str(error)[:200]}",
+            ) from error
+        return {"output": str(observation.output or "")}
+
+    async def probe_session(self, session: str, timeout_s: float = 2.0) -> bool:
+        """探活：空命令短超时回显即 shell 空闲 True；超时即仍忙 False。
+
+        shell 串行语义使本探针成为"前序命令已结束"的设施级证明（结合完成
+        标记采信终态，防实验代码伪造成功）。
+        """
+        from swerex.exceptions import CommandTimeoutError, SessionDoesNotExistError
+
+        try:
+            await self.run_in_session(session, ":", timeout_s=timeout_s)
+        except DockerBackendUnavailableError as error:
+            if error.code in ("SESSION_TIMEOUT", "SESSION_MISSING"):
+                return False
+            raise
+        except Exception:  # noqa: BLE001 - 探针失败按不空闲处理，不抛
+            return False
+        return True
+
+    async def close_session(self, session: str) -> None:
+        """关会话；不存在即幂等返回（不抛）。"""
+        from swerex.exceptions import SessionDoesNotExistError
+        from swerex.runtime.abstract import CloseBashSessionRequest
+
+        deployment = self._require_deployment()
+        try:
+            await deployment.runtime.close_session(
+                CloseBashSessionRequest(session=session))
+        except SessionDoesNotExistError:
+            return
+        except Exception as error:  # noqa: BLE001
+            raise DockerBackendUnavailableError(
+                "SESSION_CLOSE_FAILED",
+                f"关会话失败（{type(error).__name__}）：{str(error)[:200]}",
+            ) from error

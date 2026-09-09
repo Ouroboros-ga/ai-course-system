@@ -257,9 +257,15 @@ export function listNexusRuns(sessionId) {
 /**
  * 单个 run 详情（NX-LB1）：含 display_title/run_number/version/冻结配置，
  * NX-LB5 起含已授权 artifacts 引用。非 owner 一律 404。
+ * F3：logCursors 为 {operation_id: 已消费字节}，在途会话操作返回增量。
  */
-export function getNexusRunDetail(runId) {
+export function getNexusRunDetail(runId, logCursors) {
+  const params = {}
+  if (logCursors && typeof logCursors === 'object' && Object.keys(logCursors).length) {
+    params.log_cursors = JSON.stringify(logCursors)
+  }
   return request.get(`/nexus/runs/${encodeURIComponent(runId)}`, {
+    params,
     allowFlatResponse: true,
     skipErrorToast: true,
   })
@@ -334,6 +340,16 @@ export function requestNexusRunResume(runId, executionMode) {
   return request.post(`/nexus/runs/${encodeURIComponent(runId)}/resume`, {
     research_execution_mode: executionMode,
   }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 自主运行操作级取消（F3）：只停卡住的命令，实验继续。
+ * 会话在途 → 中断＋确认；one-shot 在途 → 409（请走 run 级取消）。
+ */
+export function cancelNexusRunOperation(runId, operationId) {
+  return request.post(`/nexus/runs/${encodeURIComponent(runId)}/operations/${encodeURIComponent(operationId)}/cancel`, {}, {
     allowFlatResponse: true,
   })
 }

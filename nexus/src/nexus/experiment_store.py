@@ -150,7 +150,7 @@ async def adopt_running_operation(
 
 
 async def console_snapshot_for(
-    run_id: str, *, backend: Any = None,
+    run_id: str, *, backend: Any = None, cursors: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """控制台快照（生产入口）：running run 先接管查询（只查不交）再投影。
 
@@ -158,6 +158,8 @@ async def console_snapshot_for(
       查询失败/不可达 → console_status=reconciling，存储保持 running；
     - backend 未配置（控制面未接）→ 运行中一律 reconciling，不冒称 running；
     - 终态 run 不触碰控制面。
+    F3：cursors 为 {operation_id: 已消费字节}，对活跃会话操作返回增量
+    （`log_increments`）；探针采信的终态经与工具同一补记路径落盘（去重）。
     """
     from nexus import experiment_runs as runs_module
 
@@ -174,4 +176,43 @@ async def console_snapshot_for(
             except Exception:  # noqa: BLE001 - 接管失败按不可达处理，不改库
                 adopted = None
                 reachable = False
-    return console_snapshot(run_id, control_reachable=reachable, adopted=adopted)
+    snapshot = console_snapshot(run_id, control_reachable=reachable, adopted=adopted)
+    increments: dict[str, Any] = {}
+    active_op = str(snapshot.get("active_operation") or "")
+    if backend is not None and active_op and run is not None \
+            and run.get("status") == "running" and reachable:
+        try:
+            cursor = 0
+            if isinstance(cursors, dict):
+                try:
+                    cursor = max(0, int((cursors or {}).get(active_op) or 0))
+                except (TypeError, ValueError):
+                    cursor = 0
+            observed = await backend.query_operation(
+                active_op, cursor=cursor, probe=True)
+            if str(observed.get("status") or "") in (
+                    "succeeded", "failed", "cancelled"):
+                try:
+                    from nexus import experiment_agent as agent_module
+
+                    agent_module._record_terminal_observation(
+                        run_id, backend, active_op, observed)
+                except Exception:  # noqa: BLE001 - 补记失败不影响快照
+                    pass
+                snapshot = console_snapshot(run_id, control_reachable=reachable,
+                                            adopted={
+                                                "operation_id": active_op,
+                                                "status": str(observed.get("status") or ""),
+                                                "resubmitted": False})
+                active_op = ""
+            else:
+                increments[active_op] = {
+                    "increment": str(observed.get("increment") or ""),
+                    "offset": observed.get("offset", cursor),
+                    "reset": bool(observed.get("reset", False)),
+                    "status": str(observed.get("status") or "running"),
+                }
+        except Exception:  # noqa: BLE001 - 增量失败只记空，不改快照
+            pass
+    snapshot["log_increments"] = increments
+    return snapshot

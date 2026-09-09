@@ -130,6 +130,9 @@ EXPERIMENT_SYSTEM_PROMPT = """你是 CodeNexus 的实验执行器，正在用户
 4. 所有尝试都会被如实记录（命令、退出码、日志引用）；绝不为了得到 PASS 而修改
    指标、数据、随机种子或删除失败记录；没有指标依据时只报运行成功，不宣称复现论文；
 5. 公开数据下载与环境重建属于本次授权，不需要也不得再请求批准。
+6. 长命令可能交还 operation 引用（未出退出码）：用 describe_operation 续查
+   增量输出，卡住用 interrupt_operation 中断后继续；绝不把"未出退出码"
+   当失败原样重发。
 
 环境路线由启动器按仓库声明选定并记录，本轮只在给定路线内工作。"""
 
@@ -155,9 +158,10 @@ def build_experiment_agent(backend: Any, checkpointer: Any = None, model: Any = 
     if llm is None:
         raise RuntimeError("LLM_NOT_CONFIGURED: NEXUS_DEEPSEEK_API_KEY is empty")
     saver = checkpointer if checkpointer is not None else InMemorySaver()
+    run_id = getattr(backend, "_run_id", "") or ""
     return create_deep_agent(
         model=llm,
-        tools=[],
+        tools=_operation_tools(run_id, backend) if run_id else [],
         backend=backend,
         system_prompt=EXPERIMENT_SYSTEM_PROMPT,
         middleware=[
@@ -166,6 +170,131 @@ def build_experiment_agent(backend: Any, checkpointer: Any = None, model: Any = 
         ],
         checkpointer=saver,
     )
+
+
+def _operation_tools(run_id: str, backend: Any) -> list[Any]:
+    """F3：实验图窄范围操作工具（只操作当前 run，不碰他人/宿主）。
+
+    - describe_operation：在途增量续查（探针采信终态即补记 attempt）；
+    - interrupt_operation：中断卡住的命令（确认停止＋尾部输出，实验继续）。
+    归属：operation_id 须属于本 run 意图账本，否则拒绝（防跨 run 操作）。
+    """
+    from langchain_core.tools import tool
+
+    def _belongs(operation_id: str) -> bool:
+        try:
+            from nexus import experiment_operations as operations_module
+
+            for intent in operations_module.list_run_intents(run_id):
+                if str(intent.get("operation_id") or "") == operation_id:
+                    return True
+        except Exception:  # noqa: BLE001 - 账本不可读即拒绝
+            return False
+        return False
+
+    @tool
+    async def describe_operation(operation_id: str, cursor: int = 0) -> str:
+        """续查一个在途操作的增量输出与状态（长命令等待/中断前先看这里）。"""
+        operation_id = (operation_id or "").strip()[:128]
+        if not operation_id or not _belongs(operation_id):
+            return f"拒绝：{operation_id or '空 id'} 不属于当前实验，不可查询他人操作。"
+        try:
+            observed = await backend.query_operation(operation_id, cursor=cursor,
+                                                     probe=True)
+        except Exception as error:  # noqa: BLE001
+            return f"查询失败（{type(error).__name__}）：{error}"[:500]
+        status = str(observed.get("status") or "unknown")
+        if status in ("succeeded", "failed", "cancelled"):
+            _record_terminal_observation(run_id, backend, operation_id, observed)
+        lines = [
+            f"operation {operation_id}：{status}",
+            f"exit={observed.get('exit_code')}",
+        ]
+        increment = str(observed.get("increment") or observed.get("output_tail") or "")
+        if increment:
+            lines.append("增量输出：\n" + increment[-2000:])
+        if observed.get("declared_exit") is not None:
+            lines.append(f"自述 EXIT:{observed.get('declared_exit')}"
+                         f"（设施确认：{observed.get('facility_confirmed')}）")
+        if observed.get("note"):
+            lines.append(f"备注：{observed.get('note')}")
+        return "\n".join(lines)[:3000]
+
+    @tool
+    async def interrupt_operation(operation_id: str) -> str:
+        """中断一个卡住的命令（确认停止后继续排错；实验不终止）。"""
+        operation_id = (operation_id or "").strip()[:128]
+        if not operation_id or not _belongs(operation_id):
+            return f"拒绝：{operation_id or '空 id'} 不属于当前实验，不可中断他人操作。"
+        try:
+            result = await backend.cancel_operation(operation_id)
+        except Exception as error:  # noqa: BLE001
+            code = getattr(error, "code", type(error).__name__)
+            return f"中断失败（{code}）：{error}"[:500]
+        status = str(result.get("status") or "unknown")
+        if status in ("succeeded", "failed", "cancelled"):
+            _record_terminal_observation(run_id, backend, operation_id, result)
+        if result.get("unconfirmed"):
+            return (f"operation {operation_id} 已取消但未确认停止"
+                    f"（{result.get('code')}）：容器已回收待重建，原始原因保留；"
+                    "换命令继续，勿重发原命令。")
+        tail = str(result.get("output_tail") or "")[-1500:]
+        return (f"operation {operation_id} 已中断并确认停止。尾部输出：\n{tail}\n"
+                "继续排错（换依赖/命令/启动方式），不要原样重发被中断的命令。")
+
+    return [describe_operation, interrupt_operation]
+
+
+def _record_terminal_observation(
+    run_id: str, backend: Any, operation_id: str, observed: dict[str, Any],
+) -> None:
+    """F3：工具观测到终态即补记 attempt（与 funnel 落盘互斥，去重守卫）。"""
+    try:
+        from nexus import experiment_runs as runs_module
+
+        run = runs_module.get_run(run_id)
+        if run is None or run.get("status") != "running":
+            return
+        existing = {str(a.get("operation_id") or "")
+                    for a in run.get("attempts", [])}
+        if operation_id in existing:
+            return
+        exit_code = observed.get("exit_code")
+        command = ""
+        try:
+            from nexus import experiment_operations as operations_module
+
+            intent = operations_module.get_intent(run_id, operation_id)
+            command = str((intent or {}).get("command") or operation_id)
+        except Exception:  # noqa: BLE001
+            command = operation_id
+        try:
+            from nexus import experiment_contracts as contracts_module
+
+            op_kind = contracts_module.classify_operation(command)
+        except Exception:  # noqa: BLE001
+            op_kind = "target"
+        tail = str(observed.get("increment")
+                   or observed.get("output_tail") or "")[-2000:]
+        runs_module.record_attempt(
+            run_id, actual_command=command or operation_id,
+            config_changes={"kind": "execute", "op_kind": op_kind,
+                            "observed_via": "operation_tool"},
+            operation_id=operation_id,
+            exit_code=exit_code if isinstance(exit_code, int) else None,
+            log_ref=tail)
+        try:
+            from nexus import experiment_operations as operations_module
+
+            operations_module.set_intent_status(
+                run_id, operation_id, str(observed.get("status") or "failed"),
+                exit_code=exit_code if isinstance(exit_code, int) else None,
+                output_tail=tail)
+        except Exception:  # noqa: BLE001
+            pass
+    except Exception as error:  # noqa: BLE001 - 补记失败只记日志
+        logger.warning("terminal observation backfill failed for %s: %s",
+                       operation_id, type(error).__name__)
 
 
 def select_environment_route(workspace_files: list[str]) -> dict[str, str]:
@@ -577,6 +706,11 @@ async def _execute_under_lock(
                     _op_kind = contracts_module.classify_operation(
                         command or f"[{name}]",
                         "file_tool" if attempt_kind == "file_tool" else "")
+                    # F3：在途会话操作不记完成 attempt（只记终态；终态由
+                    # describe/interrupt 工具或恢复认领补记，此处跳过）。
+                    if attempt_kind == "execute" and _intent_in_flight(
+                            run_id, operation_id):
+                        continue
                     runs_module.record_attempt(
                         run_id, actual_command=command or f"[{name}]",
                         config_changes={"kind": attempt_kind,
@@ -594,10 +728,23 @@ async def _execute_under_lock(
     if executed == 0:
         set_terminal_status(run_id, "failed", "模型未执行任何命令（零尝试）。")
         return {"status": "failed", "run_id": run_id, "code": "NO_COMMANDS"}
-    if last_exit == 0:
+    # F3：仍有在途会话操作 → 不强制终态（交还运行态，可恢复认领/继续观察；
+    # 租约随本调用释放，源码见 execute_bound_run finally）。
+    pending = _inflight_session_ops(run_id)
+    if pending:
+        runs_module.set_status(
+            run_id, "running",
+            f"图执行结束但 {len(pending)} 个操作仍在运行中（已交还；"
+            "describe 续查 / interrupt 中断 / resume 认领）。")
+        return {"status": "running", "run_id": run_id,
+                "attempt_no": executed, "pending_operations": pending}
+    terminal_exit = _last_terminal_exit(run_id)
+    if terminal_exit is None:
+        terminal_exit = last_exit
+    if terminal_exit == 0:
         set_terminal_status(run_id, "succeeded", "末次命令退出码 0（指标 verdict 属 T6）。")
         return {"status": "succeeded", "run_id": run_id, "attempt_no": executed}
-    set_terminal_status(run_id, "failed", f"末次命令退出码 {last_exit}（日志与配方已保留）。")
+    set_terminal_status(run_id, "failed", f"末次命令退出码 {terminal_exit}（日志与配方已保留）。")
     return {"status": "failed", "run_id": run_id, "code": "LAST_COMMAND_FAILED"}
 
 
@@ -607,6 +754,61 @@ async def _list_workspace(backend: Any) -> list[str]:
     names = [line.strip().split()[-1] for line in (result.output or "").splitlines()
              if line.strip()]
     return [n for n in names if n not in (".", "..")]
+
+
+def _intent_in_flight(run_id: str, operation_id: str) -> bool:
+    """F3：意图是否在途（submitted/running/reconciling/prepared 即未终态）。
+
+    账本不可读即按已完成处理（不阻塞旧路径；新路径的意图必已登记）。
+    """
+    try:
+        from nexus import experiment_operations as operations_module
+
+        intent = operations_module.get_intent(run_id, operation_id)
+    except Exception:  # noqa: BLE001
+        return False
+    if intent is None:
+        return False
+    return str(intent.get("status") or "") not in (
+        "succeeded", "failed", "cancelled", "timed_out")
+
+
+def _inflight_session_ops(run_id: str) -> list[str]:
+    """F3：仍在途的操作 id（意图未终态且 attempt 未落盘；图收尾用）。"""
+    try:
+        from nexus import experiment_runs as runs_module
+        from nexus import experiment_operations as operations_module
+
+        run = runs_module.get_run(run_id)
+        if run is None:
+            return []
+        recorded = {str(a.get("operation_id") or "")
+                    for a in run.get("attempts", [])}
+        return [str(i.get("operation_id") or "")
+                for i in operations_module.list_run_intents(run_id)
+                if str(i.get("status") or "") not in (
+                    "succeeded", "failed", "cancelled", "timed_out")
+                and str(i.get("operation_id") or "") not in recorded]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _last_terminal_exit(run_id: str) -> int | None:
+    """F3：已落盘 attempt 的末次目标类退出码（含工具补记；图收尾用）。"""
+    try:
+        from nexus import experiment_runs as runs_module
+
+        run = runs_module.get_run(run_id)
+        if run is None:
+            return None
+        for attempt in reversed(run.get("attempts", [])):
+            if str((attempt.get("config_changes") or {}).get("kind") or "") == "file_tool":
+                continue
+            if attempt.get("exit_code") is not None:
+                return int(attempt["exit_code"])
+    except Exception:  # noqa: BLE001
+        return None
+    return None
 
 
 async def cancel_bound_run(
@@ -814,3 +1016,67 @@ async def resume_bound_run(
                                             str(lease.get("fencing") or ""))
         except Exception:  # noqa: BLE001
             pass
+
+
+class OperationCancelError(Exception):
+    """操作级取消域失败：携带机器可读 code（fail-closed 语义）。"""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+
+
+async def cancel_run_operation(
+    *, run_id: str, operation_id: str, fencing: str = "",
+    backend: Any = None,
+) -> dict[str, Any]:
+    """F3：取消本 run 的单个在途操作（HTTP 端点路径；工具走 backend 直调）。
+
+    - 归属：run 本人 running（跨用户/终态拒绝）；operation 须属本 run 意图
+      账本（未知 id → OPERATION_UNKNOWN，不重放）；
+    - fencing 绑定到 backend 后下传（旧 token 由控制面拒绝）；
+    - 终态观测经与工具同一补记路径落盘（去重）。
+    """
+    from nexus import experiment_runs as runs_module
+
+    run = runs_module.get_run(run_id)
+    if run is None:
+        raise OperationCancelError("RUN_NOT_FOUND", "运行不存在或已不可恢复")
+    if run.get("status") != "running":
+        return {"status": run["status"], "run_id": run_id,
+                "already_terminal": True, "needs_continue": False}
+    try:
+        from nexus import experiment_operations as operations_module
+
+        belongs = any(
+            str(i.get("operation_id") or "") == operation_id
+            for i in operations_module.list_run_intents(run_id))
+    except Exception:  # noqa: BLE001 - 账本不可读即拒绝
+        belongs = False
+    if not belongs:
+        raise OperationCancelError(
+            "OPERATION_UNKNOWN", f"{operation_id} 不属于本运行，不重放。")
+    if backend is None:
+        raise OperationCancelError("CONTROL_UNAVAILABLE", "控制面未配置。")
+    if hasattr(backend, "set_fencing"):
+        try:
+            backend.set_fencing(fencing)
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        result = await backend.cancel_operation(operation_id)
+    except Exception as error:  # noqa: BLE001
+        code = getattr(error, "code", type(error).__name__)
+        if code in ("OPERATION_NOT_INTERRUPTIBLE", "FENCING_REJECTED"):
+            raise OperationCancelError(code, str(error)) from error
+        raise OperationCancelError("CONTROL_UNAVAILABLE",
+                                   f"控制面不可达：{code}") from error
+    status = str(result.get("status") or "unknown")
+    if status in ("succeeded", "failed", "cancelled"):
+        _record_terminal_observation(run_id, backend, operation_id, result)
+    return {"run_id": run_id, "operation_id": operation_id,
+            "status": status,
+            "unconfirmed": bool(result.get("unconfirmed", False)),
+            "code": str(result.get("code") or ""),
+            "output_tail": str(result.get("output_tail") or "")[-2000:],
+            "interrupt_note": str(result.get("interrupt_note") or "")}

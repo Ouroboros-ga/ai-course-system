@@ -60,7 +60,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, requestNexusRunFormats, requestNexusRunCleanVerify, requestNexusRunResume, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, requestNexusRunFormats, requestNexusRunCleanVerify, requestNexusRunResume, cancelNexusRunOperation, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -630,6 +630,29 @@ async function requestResumeRun(id) {
     showToast(err?.message || '恢复认领失败', 'error')
   } finally {
     run.resuming = false
+  }
+}
+
+// ── F3 操作级中断：只停卡住的命令，实验继续 ──
+// 会话在途 → 中断＋确认；one-shot 在途 → 409（请走 run 级取消）。
+async function requestInterruptOp(id, operationId) {
+  const item = sessionRuns.value.find((r) => r.id === id)
+  const run = item?.run
+  const runId = item?.runId
+  if (!run || !runId || !operationId || run.interrupting) return
+  run.interrupting = true
+  try {
+    const res = await cancelNexusRunOperation(runId, operationId)
+    persistSessions()
+    if (res?.unconfirmed) {
+      showToast('中断未确认停止，容器已回收（原因保留），可换命令继续', 'warning')
+    } else {
+      showToast(`已中断 ${operationId}（已确认停止），可继续排错`, 'success')
+    }
+  } catch (err) {
+    showToast(err?.message || '中断失败', 'error')
+  } finally {
+    run.interrupting = false
   }
 }
 
@@ -1681,6 +1704,23 @@ function applyRunDetail(turn, detail) {
   // F2：恢复状态随详情直通（UI 不做新枚举分支，只读展示）。
   if (typeof detail.live?.recovery_status === 'string') run.recoveryStatus = detail.live.recovery_status
   if (typeof detail.live?.completion_reason === 'string') run.completionReason = detail.live.completion_reason
+  // F3：在途增量合并（游标按 op 推进；reset 即替换缓冲）。
+  const increments = detail.live?.log_increments
+  if (increments && typeof increments === 'object') {
+    if (!run.opLogText || typeof run.opLogText !== 'object') run.opLogText = {}
+    if (!run.opLogCursors || typeof run.opLogCursors !== 'object') run.opLogCursors = {}
+    for (const [opId, inc] of Object.entries(increments)) {
+      if (!inc || typeof inc !== 'object') continue
+      const text = typeof inc.increment === 'string' ? inc.increment : ''
+      if (inc.reset) {
+        run.opLogText[opId] = text
+      } else {
+        run.opLogText[opId] = (run.opLogText[opId] || '') + text
+      }
+      if (typeof inc.offset === 'number') run.opLogCursors[opId] = inc.offset
+    }
+  }
+  if (typeof detail.live?.active_operation === 'string') run.activeOperation = detail.live.active_operation || null
   run.detail = detail.live?.detail || detail.live?.note || run.detail || null
   // 自主运行中增量日志：取最后一条有日志尾的 attempt（只读呈现）。
   if (run.status === 'running' && Array.isArray(run.attempts)) {
@@ -1710,7 +1750,8 @@ function startRunDetailPolling(turn, runId) {
     }
     let detail
     try {
-      detail = await getNexusRunDetail(runId)
+      // F3：携带游标轮询在途增量（游标在 applyRunDetail 内推进）。
+      detail = await getNexusRunDetail(runId, turn?.reproRun?.opLogCursors)
     } catch {
       return // 单次失败不终止轮询；上限兜底
     }
@@ -3170,6 +3211,7 @@ const emptySuggestions = computed(() =>
         @formats="requestRunFormats"
         @clean-verify="requestCleanVerify"
         @resume="requestResumeRun"
+        @interrupt-op="({ id, operationId }) => requestInterruptOp(id, operationId)"
         @rerun="rerunFromWorkspace"
         @rename="renameRunFromWorkspace"
         @add-note="addRunNote"

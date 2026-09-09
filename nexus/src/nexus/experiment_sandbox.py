@@ -94,6 +94,22 @@ def _operation_to_response(operation: dict[str, Any]) -> ExecuteResponse:
     )
 
 
+def _operation_ref_note(operation_id: str, elapsed_s: float, session: bool) -> str:
+    """F3：在途 op 引用注记（模型跟进凭据；exit None 不得当失败重跑）。
+
+    会话操作 → 可 describe 续查、可 interrupt 中断；一次性在途 → 只能等
+    待完成（无中断语义），不得重发。
+    """
+    if session:
+        return (
+            f"\n[operation {operation_id} 仍在运行（约 {elapsed_s:.0f}s）。"
+            "用 describe_operation 续查增量输出，或 interrupt_operation 中断后"
+            "继续排错；不要把“未出退出码”当失败重发同一命令。]")
+    return (
+        f"\n[operation {operation_id} 仍在运行（约 {elapsed_s:.0f}s，一次性执行"
+        "无中断语义）。等待其完成，不要重发；完成后退出码以续查为准。]")
+
+
 class HttpSandboxBackend(BaseSandbox):
     """面向独立执行控制服务的 BaseSandbox 实现（薄 Adapter）。
 
@@ -138,6 +154,10 @@ class HttpSandboxBackend(BaseSandbox):
         # T5-1：提交日志（operation_id, command），供执行器把工具结果
         # 精确归因到 control operation（并行调用下 last_operation_id 会错位）。
         self.submitted_ops: list[tuple[str, str]] = []
+        # F3：最近一次提交的运行态（operation_id→ 是否会话在途）。
+        # 图层据此决定 attempt 延迟落盘（在途不记完成）与 op 引用注入。
+        self.last_operation_running = False
+        self.last_operation_session = False
 
     @property
     def id(self) -> str:
@@ -368,8 +388,24 @@ class HttpSandboxBackend(BaseSandbox):
                 "FENCING_ROTATE_MISMATCH", "控制面返回的 fencing 与提交不一致。")
         return data
 
+    @staticmethod
+    def _route_session(command: str) -> bool:
+        """F3：语义路由（安装/下载/实验执行等关联命令走会话）。
+
+        environment/target → 会话（保持 cd/环境状态，串行，可中断）；
+        probe/diagnostic/verification/file_tool → 一次性（独立无状态）。
+        不仅按 timeout 判断；分类失败默认一次性（fail-closed 小 blast）。
+        """
+        try:
+            from nexus import experiment_contracts as contracts_module
+
+            return contracts_module.classify_operation(command or "") in (
+                "environment", "target")
+        except Exception:  # noqa: BLE001 - 分类不可用即一次性
+            return False
+
     def _prepare_submit(
-        self, command: str, timeout: int | None,
+        self, command: str, timeout: int | None, session: bool = False,
     ) -> tuple[str, dict[str, Any], Any | None]:
         """F2：提交前意图登记，返回 (operation_id, payload, 终态缓存)。
 
@@ -377,6 +413,7 @@ class HttpSandboxBackend(BaseSandbox):
         - 同 id 同请求且意图已终态 → 返回缓存响应，不再 submit（不重复执行）；
         - 同 id 不同请求 → OPERATION_ID_CONFLICT（旧进程无退出证明不得重跑，
           调用方先 query 对账）。
+        F3：session 标记随 payload 下传（会话执行＋增量＋可中断）。
         """
         from nexus import experiment_operations as operations_module
 
@@ -394,6 +431,7 @@ class HttpSandboxBackend(BaseSandbox):
             "operation_id": operation_id, "command": command,
             "timeout_s": timeout,
             "request_hash": operations_module.request_hash(command, timeout),
+            "session": bool(session),
         }
         if self._fencing:
             payload["fencing"] = self._fencing
@@ -433,18 +471,26 @@ class HttpSandboxBackend(BaseSandbox):
     ) -> ExecuteResponse:
         """提交命令并等待终态；超时返回当前尾部（exit_code=None），不重发。
 
-        调用方凭 last_operation_id + query_operation() 续查/取消。超时参数
-        即轮询截止（None → 默认截止）；HTTP 超时不等同进程已停止。
+        F3：environment/target 类命令走 run 会话（可中断＋增量）；
+        其余一次性。调用方凭 last_operation_id + query_operation() 续查/
+        取消；在途返回附 op 引用（模型用 describe/interrupt 工具跟进，
+        不得把 exit None 当失败立即重跑）。
         """
         if not isinstance(command, str) or not command.strip():
             raise ValueError("command 不能为空")
         self._ensure_sandbox()
-        operation_id, payload, cached = self._prepare_submit(command, timeout)
+        session = self._route_session(command)
+        operation_id, payload, cached = self._prepare_submit(
+            command, timeout, session=session)
         if cached is not None:
             self.last_operation_id = operation_id
+            self.last_operation_running = False
+            self.last_operation_session = session
             self.submitted_ops.append((operation_id, command))
             return cached
         self.last_operation_id = operation_id
+        self.last_operation_running = True
+        self.last_operation_session = session
         self.submitted_ops.append((operation_id, command))
         self._track_intent(self._run_id, operation_id, "submitted")
         data = self._post(
@@ -459,28 +505,49 @@ class HttpSandboxBackend(BaseSandbox):
             )
         if str(operation.get("status") or "") in TERMINAL_OPERATION_STATUSES:
             response = _operation_to_response(operation)
+            self.last_operation_running = False
             self._track_intent(
                 self._run_id, operation_id, str(operation.get("status") or ""),
                 exit_code=response.exit_code, output_tail=response.output)
             return response
         deadline = timeout if timeout and timeout > 0 else self._default_deadline_s
         end = time.monotonic() + max(deadline, self._poll_interval_s)
+        started = time.monotonic()
         last: dict[str, Any] = operation
+        text = str(operation.get("output_tail") or "")
+        cursor = len(text)
+        polls = 0
         while True:
+            polls += 1
+            probe = session and polls % 6 == 0
             _, current = self._get(
-                f"/sandboxes/{quote(self._run_id, safe='')}/operations/{quote(operation_id, safe='')}")
+                f"/sandboxes/{quote(self._run_id, safe='')}/operations/{quote(operation_id, safe='')}"
+                f"?cursor={cursor}&probe={1 if probe else 0}")
             if current:
                 last = current
+                increment = str(current.get("increment") or "")
+                if current.get("reset"):
+                    text = increment
+                else:
+                    text += increment
+                try:
+                    cursor = int(current.get("offset", cursor))
+                except (TypeError, ValueError):
+                    pass
             if str(last.get("status") or "") in TERMINAL_OPERATION_STATUSES:
                 response = _operation_to_response(last)
+                self.last_operation_running = False
                 self._track_intent(
                     self._run_id, operation_id, str(last.get("status") or ""),
                     exit_code=response.exit_code, output_tail=response.output)
                 return response
             if time.monotonic() >= end:
-                # 超时≠停止：返回当前尾部，调用方用同一 id 续查/取消。
-                tail = _operation_to_response(last)
-                return ExecuteResponse(output=tail.output, exit_code=None, truncated=True)
+                # 超时≠停止：返回当前增量尾部＋op 引用，调用方续查/中断。
+                self._track_intent(self._run_id, operation_id, "running")
+                return ExecuteResponse(
+                    output=text + _operation_ref_note(
+                        operation_id, time.monotonic() - started, session),
+                    exit_code=None, truncated=True)
             time.sleep(self._poll_interval_s)
 
     async def aexecute(
@@ -493,12 +560,18 @@ class HttpSandboxBackend(BaseSandbox):
         if not isinstance(command, str) or not command.strip():
             raise ValueError("command 不能为空")
         await self._aensure_sandbox()
-        operation_id, payload, cached = self._prepare_submit(command, timeout)
+        session = self._route_session(command)
+        operation_id, payload, cached = self._prepare_submit(
+            command, timeout, session=session)
         if cached is not None:
             self.last_operation_id = operation_id
+            self.last_operation_running = False
+            self.last_operation_session = session
             self.submitted_ops.append((operation_id, command))
             return cached
         self.last_operation_id = operation_id
+        self.last_operation_running = True
+        self.last_operation_session = session
         self.submitted_ops.append((operation_id, command))
         self._track_intent(self._run_id, operation_id, "submitted")
         data = await self._apost(
@@ -513,44 +586,86 @@ class HttpSandboxBackend(BaseSandbox):
             )
         if str(operation.get("status") or "") in TERMINAL_OPERATION_STATUSES:
             response = _operation_to_response(operation)
+            self.last_operation_running = False
             self._track_intent(
                 self._run_id, operation_id, str(operation.get("status") or ""),
                 exit_code=response.exit_code, output_tail=response.output)
             return response
         deadline = timeout if timeout and timeout > 0 else self._default_deadline_s
         end = time.monotonic() + max(deadline, self._poll_interval_s)
+        started = time.monotonic()
         last: dict[str, Any] = operation
+        text = str(operation.get("output_tail") or "")
+        cursor = len(text)
+        polls = 0
         while True:
+            polls += 1
+            probe = session and polls % 6 == 0
             _, current = await self._aget(
-                f"/sandboxes/{quote(self._run_id, safe='')}/operations/{quote(operation_id, safe='')}")
+                f"/sandboxes/{quote(self._run_id, safe='')}/operations/{quote(operation_id, safe='')}"
+                f"?cursor={cursor}&probe={1 if probe else 0}")
             if current:
                 last = current
+                increment = str(current.get("increment") or "")
+                if current.get("reset"):
+                    text = increment
+                else:
+                    text += increment
+                try:
+                    cursor = int(current.get("offset", cursor))
+                except (TypeError, ValueError):
+                    pass
             if str(last.get("status") or "") in TERMINAL_OPERATION_STATUSES:
                 response = _operation_to_response(last)
+                self.last_operation_running = False
                 self._track_intent(
                     self._run_id, operation_id, str(last.get("status") or ""),
                     exit_code=response.exit_code, output_tail=response.output)
                 return response
             if time.monotonic() >= end:
-                tail = _operation_to_response(last)
-                return ExecuteResponse(output=tail.output, exit_code=None, truncated=True)
+                self._track_intent(self._run_id, operation_id, "running")
+                return ExecuteResponse(
+                    output=text + _operation_ref_note(
+                        operation_id, time.monotonic() - started, session),
+                    exit_code=None, truncated=True)
             await asyncio.sleep(self._poll_interval_s)
 
-    async def query_operation(self, operation_id: str) -> dict[str, Any]:
-        """按 id 查询操作（结果/日志游标）；供超时续查与 T5 对账。
+    async def query_operation(
+        self, operation_id: str, cursor: int = 0, probe: bool = False,
+    ) -> dict[str, Any]:
+        """按 id 查询操作（结果/日志游标＋可选探针采信）；供超时续查与对账。
 
         控制服务无此操作 → status=unknown（诚实未知，不重放执行）。
         """
         operation_id = (operation_id or "").strip()[:128]
         if not operation_id:
             raise ValueError("operation_id 不能为空")
+        try:
+            cursor = max(0, int(cursor or 0))
+        except (TypeError, ValueError):
+            cursor = 0
         status, data = await self._aget(
-            f"/sandboxes/{quote(self._run_id, safe='')}/operations/{quote(operation_id, safe='')}")
+            f"/sandboxes/{quote(self._run_id, safe='')}/operations/{quote(operation_id, safe='')}"
+            f"?cursor={cursor}&probe={1 if probe else 0}")
         if status == 404 or not data:
             return {"operation_id": operation_id, "status": "unknown",
-                    "exit_code": None, "output_tail": "", "output_truncated": False}
+                    "exit_code": None, "output_tail": "", "output_truncated": False,
+                    "increment": "", "offset": cursor, "reset": True}
         data.setdefault("operation_id", operation_id)
         return data
+
+    async def cancel_operation(self, operation_id: str) -> dict[str, Any]:
+        """F3：操作级取消（只停该命令；整体取消仍走 cancel()）。
+
+        one-shot 在途 → 控制面 409（无中断语义，不伪装）；fencing 过期
+        → FENCING_REJECTED。调用方（中断工具）据此如实转述。
+        """
+        operation_id = (operation_id or "").strip()[:128]
+        if not operation_id:
+            raise ValueError("operation_id 不能为空")
+        return await self._apost(
+            f"/sandboxes/{quote(self._run_id, safe='')}/operations/{quote(operation_id, safe='')}/cancel",
+            {"fencing": self._fencing or ""})
 
     async def cancel(self) -> dict[str, Any]:
         """取消运行操作并回收实例（run 级；重复返回同一终态由服务端保证）。"""

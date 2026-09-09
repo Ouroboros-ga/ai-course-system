@@ -55,7 +55,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['switch', 'cancel', 'ask', 'analyze', 'rerun', 'rename', 'add-note',
-  'report', 'formats', 'clean-verify', 'resume'])
+  'report', 'formats', 'clean-verify', 'resume', 'interrupt-op'])
 
 const tab = ref('logs')
 
@@ -260,6 +260,13 @@ const hasReport = computed(() => !!run.value?.verdict)
 const reportErr = computed(() => run.value?.reportError || '')
 /** F1：自主 run 四分量报告（服务端 report 原样展示，不合成单一成功）。 */
 const hasAutoReport = computed(() => !!run.value?.autoReport)
+/** F3：在途活跃操作及其增量文本（游标缓冲由父组件随轮询推进）。 */
+const activeOpId = computed(() => run.value?.activeOperation || '')
+const activeOpText = computed(() => {
+  const id = activeOpId.value
+  if (!id) return ''
+  return (run.value?.opLogText || {})[id] || ''
+})
 
 /** T6：自主 run 终态（succeeded/failed）且尚未生成报告 → 可生成。 */
 const isReportable = computed(() => {
@@ -471,9 +478,29 @@ const isReportable = computed(() => {
         </div>
 
         <!-- 日志：唯一深色语境 -->
-        <div v-if="tab === 'logs'" class="nxw-term" :class="{ 'is-empty': !logText }">
+        <div v-if="tab === 'logs'" class="nxw-term" :class="{ 'is-empty': !logText && !activeOpId }">
+          <!-- F3：在途活跃操作（增量输出＋单命令中断；整体取消仍走头部取消）。 -->
+          <div v-if="activeOpId" class="nxw-activeop">
+            <div class="nxw-activeop-head">
+              <span class="nxw-mono">{{ activeOpId }}</span>
+              <span class="nxw-runbadge">进行中</span>
+              <span class="nxw-spacer" />
+              <SfxButton
+                variant="tertiary"
+                size="sm"
+                :loading="!!run?.interrupting"
+                :disabled="isAsk || !!run?.interrupting"
+                :title="isAsk ? '中断后可能继续执行，Ask 模式不可用，切换到 Auto 后可用' : '只停止该命令（确认停止后可继续排错）'"
+                @click="emit('interrupt-op', { id: active.id, operationId: activeOpId })"
+              >
+                中断该命令
+              </SfxButton>
+            </div>
+            <pre v-if="activeOpText" class="nxw-log">{{ activeOpText }}</pre>
+            <p v-else class="nxw-empty">暂无增量输出（长命令输出可能缓冲，见说明）。</p>
+          </div>
           <pre v-if="logText" class="nxw-log">{{ logText }}</pre>
-          <p v-else class="nxw-empty">暂无日志输出。</p>
+          <p v-else-if="!activeOpId" class="nxw-empty">暂无日志输出。</p>
         </div>
 
         <!-- 指标：只渲染服务端 report，绝不自行计算 -->

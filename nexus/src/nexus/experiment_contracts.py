@@ -100,6 +100,14 @@ def classify_operation(command: str, kind_hint: str = "") -> str:
     if text.startswith("ls /workspace"):
         return "probe"
     low = text.lower()
+    # 文件工具摘要形（`write_file <单token>` 等，无 shell 同名物）归 probe
+    # 类一次性——与 experiment_clean._NON_SHELL_TOOL_RE 同形（注释同步，
+    # 判别逻辑各自保留，避免跨模块导入环）。
+    if _re.match(
+        r"^(write_file|read_file|edit_file|delete|glob|grep)\s+[^\s|&;]+\s*$",
+        text,
+    ):
+        return "probe"
     if _re.match(
         r"^(ls|pwd|cat|head|tail|find|git\s+(rev-parse|status|log)|"
         r"grep\s+\S+\s*$|ls\s+-a\s+/workspace)", text):

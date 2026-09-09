@@ -62,6 +62,69 @@ class _FakeAdapter:
         self.executed.append(command)
         return {"output": f"ran:{command[:60]}", "exit_code": 0, "truncated": False}
 
+    # -- F3 会话替身（行为脚本化；容器侧 pexpect 语义由适配器单测覆盖） --
+    async def read_text(self, path):
+        from swerex_adapter import DockerBackendUnavailableError
+
+        if path not in self.files:
+            raise DockerBackendUnavailableError("READ_FAILED",
+                                               f"file_not_found: {path}")
+        data = self.files[path]
+        return data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data)
+
+    async def create_session(self, session):
+        from swerex_adapter import DockerBackendUnavailableError
+
+        sessions = self.__dict__.setdefault("sessions", {})
+        if session in sessions:
+            raise DockerBackendUnavailableError("SESSION_EXISTS", "exists")
+        sessions[session] = {"created": True}
+        return ""
+
+    async def run_in_session(self, session, command, timeout_s=None):
+        from swerex_adapter import DockerBackendUnavailableError
+
+        sessions = self.__dict__.setdefault("sessions", {})
+        if session not in sessions:
+            raise DockerBackendUnavailableError("SESSION_MISSING", "missing")
+        if (command or "").strip() == ":":
+            # 探针：空闲即回显，忙即超时。
+            if getattr(self, "probe_free", True):
+                return {"output": "", "exit_code": 0}
+            raise DockerBackendUnavailableError("SESSION_TIMEOUT", "busy")
+        if getattr(self, "session_hang", False):
+            # 长命令：首窗超时（仍在跑，文件不动）。
+            raise DockerBackendUnavailableError("SESSION_TIMEOUT", "running")
+        exit_code = getattr(self, "session_fixed_exit", 0)
+        # 落标记＋日志（脚本化终态；伪造标记场景由调用方直接写 files）。
+        for path, content in self.__dict__.get("session_writes", {}).items():
+            self.files[path] = content
+        return {"output": getattr(self, "session_output", "done"),
+                "exit_code": exit_code}
+
+    async def interrupt_session(self, session, timeout_s=2.0, n_retry=3):
+        from swerex_adapter import DockerBackendUnavailableError
+
+        self.__dict__.setdefault("interrupts", []).append(session)
+        if not getattr(self, "interruptible", True):
+            raise DockerBackendUnavailableError("SESSION_INTERRUPT_FAILED",
+                                               "stuck")
+        self.probe_free = True
+        return {"output": getattr(self, "interrupt_output", "interrupted")}
+
+    async def probe_session(self, session, timeout_s=2.0):
+        from swerex_adapter import DockerBackendUnavailableError
+
+        sessions = self.__dict__.setdefault("sessions", {})
+        if session not in sessions:
+            return False
+        if getattr(self, "probe_free", True):
+            return True
+        raise DockerBackendUnavailableError("SESSION_TIMEOUT", "busy")
+
+    async def close_session(self, session):
+        self.__dict__.setdefault("sessions", {}).pop(session, None)
+
     async def upload_bytes(self, target_path, data):
         self.files[target_path] = bytes(data)
 
@@ -258,6 +321,207 @@ async def test_fencing_rejects_stale_holder(api):
                            json={"operation_id": "op-3", "command": "echo 3",
                                  "fencing": "token-B"})
     assert fresh.status_code == 200
+
+
+# ── F3：会话执行＋操作级取消＋日志游标＋在途时限 ──
+
+def _op_paths(operation_id):
+    import service as service_module
+
+    return service_module._op_state_paths(operation_id)
+
+
+async def test_session_submit_completes_in_first_window(api):
+    """会话提交首窗完成：设施退出码权威＋标记交叉注记。"""
+    await api.put("/sandboxes/run-s1")
+    fake = _FakeAdapter.instances[0]
+    fake.session_writes = {_op_paths("op-1")["done"]: b"EXIT:0",
+                           _op_paths("op-1")["log"]: b"hello-log"}
+    first = await api.post("/sandboxes/run-s1/operations",
+                           json={"operation_id": "op-1", "command": "echo hi",
+                                 "session": True})
+    assert first.status_code == 200
+    body = first.json()
+    assert body["status"] == "succeeded"
+    assert body["exit_code"] == 0
+    assert body["session"] is True
+    assert body["facility_confirmed"] is True
+    assert body["declared_exit"] == 0
+    assert "hello-log" in body["output_tail"]
+
+
+async def test_session_long_op_running_probe_adopt_and_cursor(api):
+    """长操作：首窗超时即返 running；增量游标；探针采信终态。"""
+    await api.put("/sandboxes/run-s2")
+    fake = _FakeAdapter.instances[0]
+    fake.session_hang = True
+    first = await api.post("/sandboxes/run-s2/operations",
+                           json={"operation_id": "op-1", "command": "sleep 600",
+                                 "timeout_s": 600, "session": True})
+    assert first.json()["status"] == "running"
+    # 在途增量：日志文件渐进可读。
+    fake.files[_op_paths("op-1")["log"]] = b"line1\nline2\n"
+    running = await api.get("/sandboxes/run-s2/operations/op-1?cursor=0")
+    assert running.json()["status"] == "running"
+    assert running.json()["increment"] == "line1\nline2\n"
+    assert running.json()["offset"] == 12
+    again = await api.get("/sandboxes/run-s2/operations/op-1?cursor=12")
+    assert again.json()["increment"] == ""
+    # 命令结束＋探针空闲 → 采信终态（设施序列化证明）。
+    fake.session_hang = False
+    fake.files[_op_paths("op-1")["done"]] = b"EXIT:0"
+    fake.files[_op_paths("op-1")["log"]] = b"line1\nline2\ndone\n"
+    probed = await api.get("/sandboxes/run-s2/operations/op-1?probe=1")
+    assert probed.json()["status"] == "succeeded"
+    assert probed.json()["facility_confirmed"] is True
+    tailed = await api.get("/sandboxes/run-s2/operations/op-1?cursor=0")
+    assert tailed.json()["reset"] is True
+    assert "done" in tailed.json()["increment"]
+
+
+async def test_session_marker_mismatch_facility_wins(api):
+    """自述与设施不一致 → 设施为准＋注记（自述不可伪造成功）。"""
+    await api.put("/sandboxes/run-s3")
+    fake = _FakeAdapter.instances[0]
+    fake.session_fixed_exit = 1
+    fake.session_writes = {_op_paths("op-1")["done"]: b"EXIT:0",
+                           _op_paths("op-1")["log"]: b"traceback"}
+    first = await api.post("/sandboxes/run-s3/operations",
+                           json={"operation_id": "op-1", "command": "exit 1",
+                                 "session": True})
+    body = first.json()
+    assert body["status"] == "failed"
+    assert body["exit_code"] == 1
+    assert "不一致" in body["note"]
+
+
+async def test_cancel_session_op_confirmed(api):
+    """操作级取消：中断＋确认停止，实验继续（不回收容器）。"""
+    await api.put("/sandboxes/run-s4")
+    fake = _FakeAdapter.instances[0]
+    fake.session_hang = True
+    await api.post("/sandboxes/run-s4/operations",
+                   json={"operation_id": "op-1", "command": "sleep 600",
+                         "timeout_s": 600, "session": True})
+    fake.files[_op_paths("op-1")["log"]] = b"partial\n"
+    cancelled = await api.post("/sandboxes/run-s4/operations/op-1/cancel", json={})
+    body = cancelled.json()
+    assert cancelled.status_code == 200
+    assert body["status"] == "cancelled"
+    assert body.get("unconfirmed", False) is False
+    assert "partial" in body["output_tail"]
+    # 容器未回收：新会话提交不重建实例。
+    before = len(_FakeAdapter.instances)
+    await api.post("/sandboxes/run-s4/operations",
+                   json={"operation_id": "op-2", "command": "echo next",
+                         "session": True})
+    assert len(_FakeAdapter.instances) == before
+
+
+async def test_cancel_unconfirmed_recycles_and_rebuilds(api):
+    """中断未确认 → INTERRUPT_UNCONFIRMED＋回收；下次会话提交重建。"""
+    await api.put("/sandboxes/run-s5")
+    fake = _FakeAdapter.instances[0]
+    fake.session_hang = True
+    fake.interruptible = False
+    fake.probe_free = False
+    await api.post("/sandboxes/run-s5/operations",
+                   json={"operation_id": "op-1", "command": "sleep 600",
+                         "timeout_s": 600, "session": True})
+    cancelled = await api.post("/sandboxes/run-s5/operations/op-1/cancel", json={})
+    body = cancelled.json()
+    assert body["status"] == "cancelled"
+    assert body.get("unconfirmed", False) is True
+    assert body.get("code") == "INTERRUPT_UNCONFIRMED"
+    before = len(_FakeAdapter.instances)
+    second = await api.post("/sandboxes/run-s5/operations",
+                            json={"operation_id": "op-2", "command": "echo ok",
+                                  "session": True})
+    assert len(_FakeAdapter.instances) == before + 1, "回收后重建新实例"
+    assert second.json()["status"] == "succeeded"
+
+
+async def test_cancel_oneshot_not_interruptible(api):
+    """one-shot 运行中操作无会话中断语义 → 409（请走 run 级取消）。"""
+    import asyncio as _asyncio
+
+    await api.put("/sandboxes/run-s6")
+    gate = _asyncio.Event()
+    fake = _FakeAdapter.instances[0]
+    orig_execute = _FakeAdapter.execute
+
+    async def _gated(command, timeout_s=None):
+        await gate.wait()
+        return await orig_execute(fake, command, timeout_s)
+
+    fake.execute = _gated
+    await api.post("/sandboxes/run-s6/operations",
+                   json={"operation_id": "op-1", "command": "echo hi"})
+    # 事件未放行：操作仍 running → 操作级取消必须 409，不伪装。
+    refused = await api.post("/sandboxes/run-s6/operations/op-1/cancel", json={})
+    assert refused.status_code == 409
+    assert "OPERATION_NOT_INTERRUPTIBLE" in refused.json()["detail"]
+    gate.set()
+    # 放行后终态 → 幂等返回现态。
+    for _ in range(100):
+        done = await api.post("/sandboxes/run-s6/operations/op-1/cancel", json={})
+        if done.json().get("status") in ("succeeded", "failed", "cancelled"):
+            break
+        await _asyncio.sleep(0.02)
+    assert done.json()["status"] == "succeeded"
+    assert done.json()["deduped"] is True
+
+
+async def test_cancel_op_fencing_and_unknown(api):
+    """操作取消同样受 fencing 约束；未知 id 诚实 unknown。"""
+    await api.put("/sandboxes/run-s7")
+    await api.post("/sandboxes/run-s7/operations",
+                   json={"operation_id": "op-1", "command": "echo hi",
+                         "fencing": "token-A"})
+    stale = await api.post("/sandboxes/run-s7/operations/op-1/cancel",
+                           json={"fencing": "token-OLD"})
+    assert stale.status_code == 409
+    missing = await api.post("/sandboxes/run-s7/operations/nope/cancel",
+                             json={"fencing": "token-A"})
+    assert missing.json()["status"] == "unknown"
+
+
+async def test_network_profile_mapping(api, monkeypatch):
+    """网络档案：未知 422；映射进 docker_args＋生效字段；缺省未隔离。"""
+    import service as service_module
+
+    bad = await api.put("/sandboxes/run-n1", json={"network_profile": "nope"})
+    assert bad.status_code == 422
+    monkeypatch.setenv("REPRO_NETWORK_MAP", '{"restricted": "nexus-exp-x"}')
+    monkeypatch.setenv("REPRO_ISOLATED_NETWORK", "nexus-exp-x")
+    ok = await api.put("/sandboxes/run-n2", json={"network_profile": "restricted"})
+    assert ok.status_code == 200
+    assert "--network=nexus-exp-x" in _FakeAdapter.instances[-1].docker_args
+    view = ok.json()
+    assert view["effective_network"] == "nexus-exp-x"
+    assert view["network_isolated"] is True
+    plain = await api.put("/sandboxes/run-n3")
+    assert plain.json()["network_isolated"] is False
+    assert plain.json()["effective_network"] == "bridge"
+
+
+async def test_session_windows_causes():
+    """在途时限裁决：op 超时 / wall 到期分别命名，不混为一谈。"""
+    import time as _time
+
+    import service as service_module
+
+    run = {"deadline_at": 0}
+    op = {"timeout_s": 60, "started_at": _time.time()}
+    window, cause = service_module._session_windows(op, run)
+    assert window > 0 and cause == ""
+    op_expired = {"timeout_s": 0.001, "started_at": _time.time() - 10}
+    _, cause = service_module._session_windows(op_expired, run)
+    assert cause == "OPERATION_TIMEOUT"
+    run_wall = {"deadline_at": _time.time() - 1}
+    op_long = {"timeout_s": 3600, "started_at": _time.time()}
+    _, cause = service_module._session_windows(op_long, run_wall)
+    assert cause == "WALL_TIME_EXCEEDED"
 
 
 async def test_files_round_trip_and_missing(api):

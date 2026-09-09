@@ -1507,12 +1507,15 @@ def _console_backend(run_id: str) -> Any:
 )
 async def repro_run_console(
     run_id: str,
+    cursors: str = "",
     x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
 ) -> dict[str, Any]:
     """T5：自主 run 控制台快照（只读投影，不触发任何执行）。
 
     本人 run 才可见（跨用户/不存在一律 404，不区分）；控制失联时
     console_status=reconciling（存储快照仍为 running，不冒称终态）。
+    F3：`cursors` 为 {operation_id: 已消费字节} JSON（URL 编码），活跃
+    会话操作返回增量（`log_increments`）；非法值即忽略（全量行为）。
     """
     from nexus import experiment_runs as runs_module
     from nexus import experiment_store as store_module
@@ -1521,8 +1524,22 @@ async def repro_run_console(
     run = runs_module.get_run(sanitize_session_id(run_id))
     if run is None or (user_id or "") != run["owner"]:
         raise HTTPException(status_code=404, detail="RUN_NOT_FOUND")
+    parsed: dict[str, int] = {}
+    if (cursors or "").strip():
+        try:
+            import json as _json
+
+            raw = _json.loads(cursors)
+            if isinstance(raw, dict):
+                for key, value in raw.items():
+                    try:
+                        parsed[str(key)] = max(0, int(value or 0))
+                    except (TypeError, ValueError):
+                        continue
+        except ValueError:
+            parsed = {}
     snapshot = await store_module.console_snapshot_for(
-        run["run_id"], backend=_console_backend(run["run_id"]))
+        run["run_id"], backend=_console_backend(run["run_id"]), cursors=parsed)
     return {"snapshot": snapshot}
 
 
@@ -1763,6 +1780,63 @@ async def repro_run_resume(
             result["detail"] = (str(result.get("detail") or "")
                                 + "（无运行循环调度继续执行，可重试认领）")
     return result
+
+
+class OperationCancelRequest(BaseModel):
+    """F3 操作级取消请求体：fencing 随带（旧 token 拒绝）。"""
+
+    fencing: str | None = Field(default=None, max_length=128)
+
+    model_config = {"extra": "forbid"}
+
+
+@app.post(
+    "/api/v1/nexus/repro/runs/{run_id}/operations/{operation_id}/cancel",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_run_operation_cancel(
+    run_id: str,
+    operation_id: str,
+    body: OperationCancelRequest,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """F3：只停止卡住的命令（整体取消仍走 run 级 cancel）。
+
+    本人 running run 的操作才可取消（跨用户/不存在 404）；用户亲手中断
+    自己的卡住命令与 Agent 排错同权（工具侧同样只限本 run），fencing
+    防止旧持有者误伤。判定语义原样返回。
+    """
+    from nexus import experiment_agent as agent_module
+    from nexus import experiment_runs as runs_module
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    run = runs_module.get_run(sanitize_session_id(run_id))
+    if run is None or (user_id or "") != run["owner"]:
+        raise HTTPException(status_code=404, detail="RUN_NOT_FOUND")
+    operation_id = sanitize_session_id(operation_id)
+    try:
+        backend = _console_backend(run["run_id"])
+    except Exception:  # noqa: BLE001
+        backend = None
+    if backend is None:
+        raise HTTPException(status_code=503, detail="CONTROL_UNAVAILABLE")
+    try:
+        return await agent_module.cancel_run_operation(
+            run_id=run["run_id"], operation_id=operation_id,
+            fencing=(body.fencing or ""), backend=backend)
+    except agent_module.OperationCancelError as error:
+        status_map = {
+            "RUN_NOT_FOUND": 404,
+            "RUN_FORBIDDEN": 403,
+            "OPERATION_UNKNOWN": 404,
+            "OPERATION_NOT_INTERRUPTIBLE": 409,
+            "FENCING_REJECTED": 409,
+            "INTERRUPT_UNCONFIRMED": 502,
+            "CONTROL_UNAVAILABLE": 503,
+        }
+        raise HTTPException(
+            status_code=status_map.get(error.code, 409), detail=error.code
+        ) from error
 
 
 # ---------------------------------------------------------------------------

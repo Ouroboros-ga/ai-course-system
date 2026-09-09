@@ -1464,8 +1464,16 @@ def _run_provider(run: dict[str, Any]) -> str:
     return "preset"
 
 
-async def _runtime_console_snapshot(run_id: str, user_id: Any) -> dict[str, Any] | None:
-    """读 Runtime 自主 run 控制台快照；任何失败返回 None（调用方回落快照）。"""
+async def _runtime_console_snapshot(
+    run_id: str, user_id: Any, log_cursors: dict[str, int] | None = None,
+) -> dict[str, Any] | None:
+    """读 Runtime 自主 run 控制台快照；任何失败返回 None（调用方回落快照）。
+
+    F3：log_cursors 为 {operation_id: 已消费字节}（已校验形状），透传给
+    Runtime console 取增量；非法即忽略（全量行为）。
+    """
+    from urllib.parse import quote as _quote
+
     base = _runtime_base_url()
     if not base:
         return None
@@ -1473,12 +1481,14 @@ async def _runtime_console_snapshot(run_id: str, user_id: Any) -> dict[str, Any]
     if settings.NEXUS_RUNTIME_API_KEY:
         headers["Authorization"] = f"Bearer {settings.NEXUS_RUNTIME_API_KEY}"
     headers["X-Nexus-User-Id"] = str(user_id)
+    url = f"{base}/api/v1/nexus/repro/runs/{run_id}/console"
+    if log_cursors:
+        import json as _json
+
+        url += f"?cursors={_quote(_json.dumps(log_cursors), safe='')}"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
-            response = await client.get(
-                f"{base}/api/v1/nexus/repro/runs/{run_id}/console",
-                headers=headers,
-            )
+            response = await client.get(url, headers=headers)
     except httpx.HTTPError as error:
         logger.warning("nexus runtime console unreachable for run %s: %s", run_id, error)
         return None
@@ -1577,6 +1587,10 @@ def _merge_run_console(
         # F2：恢复状态直通（""=未恢复过；UI 只读展示，不分支新枚举）。
         "recovery_status": console.get("recovery_status", ""),
         "completion_reason": console.get("completion_reason", ""),
+        # F3：活跃操作增量（{op_id: {increment/offset/reset/status}}；
+        # 空即无在途增量，调用方按 offset 更新游标）。
+        "log_increments": console.get("log_increments", {})
+        if isinstance(console.get("log_increments"), dict) else {},
     }
     merged["status_source"] = "live"
     merged["stale"] = False
@@ -1647,6 +1661,7 @@ def _config_status(run: dict[str, Any]) -> str:
 async def _merge_runs_live(
     runs: list[dict[str, Any]],
     session: Session | None = None,
+    log_cursors: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """批量合并实时态：有界并发（4）＋整体截止（10s）。
 
@@ -1654,6 +1669,7 @@ async def _merge_runs_live(
     快照；超时/失败的行回落 stale 快照——部分失联不能阻塞整个会话列表。
     T5：自主 run 走 Runtime console 分支（attempt 投影＋reconciling 语义）；
     session 传入时做终态快照回写（best-effort）。
+    F3：log_cursors 透传 Runtime console 取在途增量（仅详情轮询携带）。
     """
     import asyncio
     import time as _time
@@ -1673,7 +1689,8 @@ async def _merge_runs_live(
                          "note": "终态快照，不再轮询执行器"},
             }
         if _run_provider(run) == "autonomous":
-            console = await _runtime_console_snapshot(run["run_id"], run["user_id"])
+            console = await _runtime_console_snapshot(
+                run["run_id"], run["user_id"], log_cursors=log_cursors)
             if console is None:
                 return _merge_run_live(run, None, observed_at=now) | {
                     "provider": "autonomous"}
@@ -1750,11 +1767,16 @@ async def nexus_runs_list(
 @router.get("/runs/{run_id}")
 async def nexus_run_detail(
     run_id: str,
+    log_cursors: str = "",
     session: Session = Depends(get_session),
     current_user: dict = Depends(require_nexus_use),
 ):
     """单个 run 详情（含实时态合并；新字段 display_title/run_number/version/
-    parent/proposal/config_snapshot；老字段保留）。非 owner/不存在 → 404。"""
+    parent/proposal/config_snapshot；老字段保留）。非 owner/不存在 → 404。
+
+    F3：`log_cursors` 为 {operation_id: 已消费字节} JSON（URL 编码），
+    在途会话操作返回增量（`live.log_increments`）；非法值忽略（全量）。
+    """
     from app.services import nexus_artifact_service, nexus_run_service
 
     run = nexus_run_service.get_owned_run(
@@ -1762,7 +1784,21 @@ async def nexus_run_detail(
     )
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
-    merged = (await _merge_runs_live([run], session))[0]
+    parsed_cursors: dict[str, int] = {}
+    if (log_cursors or "").strip():
+        try:
+            import json as _json
+
+            raw = _json.loads(log_cursors)
+            if isinstance(raw, dict):
+                for key, value in raw.items():
+                    try:
+                        parsed_cursors[str(key)] = max(0, int(value or 0))
+                    except (TypeError, ValueError):
+                        continue
+        except ValueError:
+            parsed_cursors = {}
+    merged = (await _merge_runs_live([run], session, log_cursors=parsed_cursors))[0]
     # NX-LB5：已授权 Artifact 引用（可下载）；Worker 工作目录文件清单不是
     # 下载链接，不经此字段暴露。
     merged["artifacts"] = nexus_artifact_service.list_run_artifacts(
@@ -1990,6 +2026,51 @@ async def nexus_run_resume(
         request, current_user, "POST",
         f"/api/v1/nexus/repro/runs/{run['run_id']}/resume",
         body={"research_execution_mode": payload.research_execution_mode},
+    )
+
+
+class NexusRunOperationCancel(BaseModel):
+    """F3 操作级取消代理体：只透传 fencing（归属＋会话校验先行）。
+
+    extra=allow：容忍签名键 time/enc；未声明字段由 _reject_unknown_fields
+    422；转发上游时只带声明字段。
+    """
+
+    fencing: str | None = Field(default=None, max_length=128)
+
+    model_config = {"extra": "allow"}
+
+
+@router.post("/runs/{run_id}/operations/{operation_id}/cancel")
+async def nexus_run_operation_cancel(
+    run_id: str,
+    operation_id: str,
+    payload: NexusRunOperationCancel,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F3：只停止卡住的命令（整体取消仍走 run 级 cancel）。
+
+    本人 run 才可操作（非本人 404）；判定语义由 Runtime 原样返回：
+    会话在途 → 中断＋确认；one-shot 在途 → 409（无中断语义）；
+    中断未确认 → INTERRUPT_UNCONFIRMED（容器已回收，原因保留）。
+    """
+    from urllib.parse import quote as _quote
+
+    from app.services import nexus_run_service
+
+    _reject_unknown_fields(NexusRunOperationCancel, payload.model_dump())
+    run = nexus_run_service.get_owned_run(
+        session, user_id=_artifact_user_id(current_user), run_id=run_id.strip()[:64]
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
+    return await _proxy_json(
+        request, current_user, "POST",
+        f"/api/v1/nexus/repro/runs/{run['run_id']}/operations/"
+        f"{_quote(operation_id.strip()[:128], safe='')}/cancel",
+        body={"fencing": payload.fencing or ""},
     )
 
 

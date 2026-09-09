@@ -10,7 +10,8 @@
 # 可选环境变量（缺省按已确认 scope 的默认资源）：
 #   EXPECT_MEMORY_BYTES（默认 2147483648 = 2g）
 #   EXPECT_PIDS（默认 512）
-#   EXPECT_NETWORK（默认 bridge）
+#   EXPECT_NETWORK（默认 bridge；受限网络部署后传实际网络名）
+#   EXPECT_ISOLATED（默认 0；为 1 时额外断言 metadata 不可达，见下）
 #
 # 退出码：0=全部通过；1=有断言失败（逐条打印 OK/FAIL）。
 set -uo pipefail
@@ -39,6 +40,17 @@ check "Privileged"  "$(inspect '{{.HostConfig.Privileged}}')"  "false"
 check "NetworkMode" "$(inspect '{{.HostConfig.NetworkMode}}')" "$EXPECT_NETWORK"
 check "Mounts"      "$(inspect '{{len .Mounts}}')"             "0"
 check "DockerSock"  "$(inspect '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' | grep -c 'docker.sock' || true)" "0"
+
+# F3：受限网络生效断言（EXPECT_ISOLATED=1 时）：metadata 169.254.169.254
+# 必须不可达（容器内 5s 超时即算阻断通过；可达即 FAIL）。
+if [ "${EXPECT_ISOLATED:-0}" = "1" ]; then
+  if docker exec "$CONTAINER" timeout 5 curl -fsS -o /dev/null http://169.254.169.254/ 2>/dev/null; then
+    echo "FAIL Metadata=reachable（期望不可达）"
+    fail=1
+  else
+    echo "OK   Metadata=blocked"
+  fi
+fi
 
 echo "---"
 if [ "$fail" -eq 0 ]; then

@@ -1223,7 +1223,8 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // T6：+runs/{id}/report 自主报告 → 36 个。
   // SR6：+runs/{id}/formats 正式格式＋runs/{id}/clean-verify 干净验证 → 38 个。
   // F2：+runs/{id}/resume 恢复认领 → 39 个。
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 39)
+  // F3：+runs/{id}/operations/{op}/cancel 操作级取消 → 40 个。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 40)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })
@@ -1372,4 +1373,30 @@ test('F2 恢复认领：对账在途意图后继续（Auto 门，Ask 禁用）',
   assert.match(page, /requestResumeRun/)
   assert.match(page, /@resume="requestResumeRun"/)
   assert.match(page, /run\.recoveryStatus = /)
+})
+
+test('F3 操作级中断＋增量 Console（会话语义，整体取消保留）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const runtime = read('nexus/src/nexus/main.py')
+  // 客户端：中断函数＋详情游标参数，与报告链同形状。
+  assert.match(client, /export function cancelNexusRunOperation\(runId, operationId\)/)
+  assert.match(client, /\/nexus\/runs\/.*\/operations\/.*\/cancel/)
+  assert.match(client, /getNexusRunDetail\(runId, logCursors\)/)
+  // 后端：操作级取消反代（D10 门数 40 另行锁定）＋详情游标透传。
+  assert.match(backend, /@router\.post\("\/runs\/\{run_id\}\/operations\/\{operation_id\}\/cancel"\)/)
+  assert.match(backend, /log_cursors/)
+  // Runtime：操作取消端点＋console 游标参数。
+  assert.match(runtime, /repro_run_operation_cancel/)
+  assert.match(runtime, /cursors/)
+  // 工作台：在途操作行（增量＋单命令中断，Ask 禁用），整体取消不动。
+  assert.match(ws, /中断该命令/)
+  assert.match(ws, /emit\('interrupt-op'/)
+  assert.match(ws, /activeOpId/)
+  // 父组件：处理函数＋事件绑定＋游标推进。
+  assert.match(page, /requestInterruptOp/)
+  assert.match(page, /@interrupt-op=/)
+  assert.match(page, /opLogCursors/)
 })
