@@ -524,6 +524,19 @@ async def test_session_windows_causes():
     assert cause == "WALL_TIME_EXCEEDED"
 
 
+def test_session_wrapper_keeps_repl_alive():
+    """包装器不得裸 exit（会退出 REPL 本体致 pty EOF；线上实证）。
+
+    退出码经子 shell `(exit $code)` 传递：设施提取 intact，会话保活。
+    """
+    import service as service_module
+
+    wrapped = service_module._wrap_session_command("/tmp/.x.sh", "/tmp/.x.log",
+                                                   "/tmp/.x.done")
+    assert wrapped.rstrip().endswith("(exit $code)")
+    assert "\nexit " not in wrapped and not wrapped.rstrip().endswith("exit $code")
+
+
 async def test_files_round_trip_and_missing(api):
     await api.put("/sandboxes/run-3")
     put = await api.put("/sandboxes/run-3/files/workspace/out.txt",

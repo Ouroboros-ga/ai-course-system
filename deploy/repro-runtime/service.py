@@ -287,13 +287,15 @@ def _wrap_session_command(script_path: str, log_path: str, done_path: str) -> st
     """F3：会话包装命令（固定模板＋引用路径；原命令不进字符串）。
 
     设施退出码 == 脚本退出码（pexpect 提取，权威）；done 文件只是自述。
+    关键：末尾用子 shell `(exit $code)` 传递退出码——裸 `exit` 会退出
+    REPL 本体，导致会话 pty EOF（线上实证）。
     """
     import shlex
 
     return (
         f"bash {shlex.quote(script_path)} > {shlex.quote(log_path)} 2>&1; "
         f"code=$?; printf 'EXIT:%s' \"$code\" > {shlex.quote(done_path)}; "
-        f"exit $code"
+        f"(exit $code)"
     )
 
 
