@@ -277,7 +277,7 @@ def list_tasks(owner: str, session_id: str = "") -> list[dict[str, Any]]:
                             f"WHERE owner=%s ORDER BY updated_at DESC LIMIT 50",
                             (owner,),
                         )
-                    return [_row_from_pg(dict(zip(_JOB_KEYS, found)))
+                    return [_row_from_pg(found)
                             for found in cur.fetchall()]
         except Exception as error:  # noqa: BLE001
             logger.warning("research task pg list failed: %s", error)

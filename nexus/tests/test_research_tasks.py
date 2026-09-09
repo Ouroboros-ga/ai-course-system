@@ -332,4 +332,61 @@ async def test_research_http_endpoints(monkeypatch):
         cancelled = await client.post(
             f"/api/v1/nexus/research-tasks/{task_id}/cancel", headers=user)
         assert cancelled.json()["task"]["status"] == "cancelled"
+
+
+def test_list_tasks_pg_rows_map_once(monkeypatch):
+    """PG 行只映射一次：list 直接把原始行给 _row_from_pg（线上真 bug 回归）。
+
+    曾把 dict(zip(...)) 的结果再传给 _row_from_pg，导致对列名二次 zip，
+    PG 存在时列表恒空（本地无 PG 只走内存故未暴露）。
+    """
+    import json as _json
+    import sys as _sys
+    import types as _types
+
+    created = state_module.create_task(
+        owner="u-pg", session_id="s-pg", objective="PG 映射回归")
+    row = dict(state_module._memory_tasks[created["task_id"]])
+    pg_tuple = tuple(
+        _json.dumps(row[key], ensure_ascii=False)
+        if isinstance(row[key], (dict, list)) else row[key]
+        for key in state_module._JOB_KEYS
+    )
+
+    class _FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, *args, **kwargs):
+            return None
+
+        def fetchall(self):
+            return [pg_tuple, pg_tuple]
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def cursor(self):
+            return _FakeCursor()
+
+    fake_psycopg = _types.ModuleType("psycopg")
+    fake_psycopg.connect = lambda *args, **kwargs: _FakeConn()
+    monkeypatch.setitem(_sys.modules, "psycopg", fake_psycopg)
+    monkeypatch.setattr(state_module, "_pg_settings",
+                        lambda: ("postgresql://fake/db", "nexus_checkpoints"))
+    state_module.clear_memory_store()
+
+    tasks = state_module.list_tasks("u-pg", "")
+    assert len(tasks) == 2
+    assert tasks[0]["task_id"] == created["task_id"]
+    assert tasks[0]["owner"] == "u-pg"
+    assert isinstance(tasks[0]["created_at"], float)
+    assert tasks[0]["namespace"] == f"rstask-{created['task_id']}"
     state_module.clear_memory_store()
