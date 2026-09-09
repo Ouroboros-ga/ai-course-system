@@ -171,3 +171,51 @@ def test_create_build_requires_fingerprint(session, capsys):
             "create-build", "--version-ids", *version_ids,
             "--dimension", str(TEST_DIM)])
     assert exc_info.value.code == 2  # argparse: --model-fingerprint 必填
+
+
+def test_hf_tokenizer_adapter_delegates_and_names():
+    """导入分块必须能用真实 tokenizer（字符回退低估英文 token 会超模型上限）。"""
+    module = _load_script("import_discipline_corpus")
+
+    class _Tok:
+        def encode(self, text, truncation=False):
+            return [0] * len(str(text))
+
+    adapter = module._HfTokenizerAdapter(_Tok(), "bge-small-zh-v1.5/1")
+    assert adapter.name == "bge-small-zh-v1.5/1"
+    assert adapter.count("abcd") == 4
+    assert adapter.count("") == 0
+    # 名称合法（进入 chunker 身份，非法名会被 _resolve_chunker 拒绝）
+    import re
+    assert re.fullmatch(r"[A-Za-z0-9._+/-]+", adapter.name)
+
+
+def test_create_build_pins_chunker_version_and_filters_chunks(session):
+    """同版本存在多套分块时，构建必须只索引冻结口径的块（2026-09-09 实测缺陷）。"""
+    from sqlmodel import select
+
+    from app.models.discipline_knowledge_model import DisciplineChunk
+    from app.services.discipline_knowledge import builds as build_svc
+
+    for i, chunker in enumerate((
+            "corpus-chunk/1+char-fallback/1+t320+o32+m512",
+            "corpus-chunk/1+bge-small-zh-v1.5/1+t320+o32+m512")):
+        session.add(DisciplineChunk(
+            chunk_id=f"dkch_pin_{i}", version_id="dkdv_pin_1",
+            chunker_version=chunker, chunk_no=i, locator=f"p{i}:0-10",
+            content_hash=f"h{i}", text_object_key="", char_start=0,
+            char_end=10, char_count=10, token_estimate=5,
+            token_count=5, section_path=""))
+    session.commit()
+    pinned = "corpus-chunk/1+bge-small-zh-v1.5/1+t320+o32+m512"
+    created = build_svc.create_corpus_build(
+        session, owner_user_id=1,
+        scope={"document_version_ids": ["dkdv_pin_1"]},
+        config={"model_fingerprint": TEST_FP, "dimension": TEST_DIM,
+                "chunker_version": pinned})
+    build = build_svc.get_build(session, created["build_id"])
+    assert (build.get("scope") or {}).get("chunker_version") == pinned
+    assert created["planned_chunks"] == 1, "只应规划冻结口径的 1 块"
+    assert session.exec(select(DisciplineChunk.chunk_id).where(
+        DisciplineChunk.chunk_id.like("dkch_pin_%"))).all() == [
+        "dkch_pin_0", "dkch_pin_1"], "测试数据自检"

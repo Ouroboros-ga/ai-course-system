@@ -49,7 +49,10 @@ def _tables(db_url: str) -> set[str]:
 
 
 def test_discipline_migration_has_single_head():
-    assert list(_script().get_heads()) == ["dk20260909v2"]
+    """唯一 head 是硬约束；不绑定具体版本名（新迁移不应改测试）。"""
+    heads = list(_script().get_heads())
+    assert len(heads) == 1, f"迁移链必须单 head：{heads}"
+    assert heads[0].startswith("dk2026")
 
 
 def test_discipline_migration_upgrade_downgrade_reupgrade(tmp_path):
@@ -62,7 +65,9 @@ def test_discipline_migration_upgrade_downgrade_reupgrade(tmp_path):
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
     try:
         with engine.connect() as conn:
-            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "dk20260909v2"
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")).scalar() == \
+                list(_script().get_heads())[0]
     finally:
         engine.dispose()
 
@@ -109,6 +114,6 @@ def test_workitem_build_scoped_unique_roundtrip(tmp_path):
         with engine.connect() as conn:
             assert conn.execute(
                 text("SELECT version_num FROM alembic_version")).scalar() == \
-                "dk20260909v2"
+                list(_script().get_heads())[0]
     finally:
         engine.dispose()

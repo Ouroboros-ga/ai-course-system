@@ -53,6 +53,42 @@ DEFAULT_CHUNKER_CONFIGS = {
 }
 
 
+class _HfTokenizerAdapter:
+    """HF tokenizer → 分块器接口（.count/.name）；名称进入 chunker 身份。"""
+
+    def __init__(self, tokenizer, name: str) -> None:
+        self._tokenizer = tokenizer
+        self.name = name
+
+    def count(self, text: str) -> int:
+        return len(self._tokenizer.encode(str(text or ""), truncation=False))
+
+
+def _load_chunker_tokenizer() -> "_HfTokenizerAdapter | None":
+    """按 CORPUS_EMBEDDING_MODEL_PATH 离线加载真实 tokenizer（失败退回字符回退）。
+
+    字符回退（``CharFallbackTokenizer``，len//4+cjk）会低估英文 token，导致
+    分块超过模型 max_length——2026-09-09 cs-textbooks 首批导入实测 142/160
+    分片 INPUT_TOO_LONG。真实 tokenizer 让分块与模型口径一致。
+    """
+    from app.core.config import settings
+
+    path = str(getattr(settings, "CORPUS_EMBEDDING_MODEL_PATH", "") or "")
+    if not path:
+        return None
+    try:
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            path, local_files_only=True, trust_remote_code=False)
+    except Exception as exc:  # noqa: BLE001 - 加载失败如实告警并退回
+        print(f"WARN: tokenizer 离线加载失败，退回字符回退计数：{exc}",
+              file=sys.stderr)
+        return None
+    model_id = str(getattr(settings, "CORPUS_EMBEDDING_MODEL_ID", "") or "tokenizer")
+    return _HfTokenizerAdapter(tokenizer, f"{model_id.split('/')[-1]}/1")
+
+
 def load_manifest(path: Path):
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -131,6 +167,13 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     chunker_config = DEFAULT_CHUNKER_CONFIGS[args.chunker]
+    if chunker_config is not None:
+        # 分块口径与 embedding 模型一致：有模型目录时注入真实 tokenizer，
+        # 否则保持字符回退（名称进身份，两种口径的块不混用）。
+        chunker_config = dict(chunker_config)
+        tokenizer = _load_chunker_tokenizer()
+        if tokenizer is not None:
+            chunker_config["tokenizer"] = tokenizer
     if args.manifest is not None:
         documents = load_manifest(args.manifest)[: max(0, args.limit_docs)]
         source_stats: list[dict] | None = None

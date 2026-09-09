@@ -79,7 +79,8 @@ class DisciplineChunk(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     chunk_id: str = Field(unique=True, index=True, max_length=64)
     version_id: str = Field(index=True, max_length=64)
-    chunker_version: str = Field(default="chunk/1", max_length=32)
+    # 含分块参数（t/o/m）后串长约 45 字符；列宽 128（dk20260909v3 放宽）。
+    chunker_version: str = Field(default="chunk/1", max_length=128)
     chunk_no: int = Field(default=0)
     locator: str = Field(default="", max_length=128)
     content_hash: str = Field(default="", max_length=64)
@@ -319,7 +320,8 @@ class DisciplineReleaseItem(SQLModel, table=True):
     release_id: str = Field(index=True, max_length=64)
     item_type: str = Field(default="", max_length=32)
     stable_id: str = Field(default="", max_length=128)
-    content_hash: str = Field(default="", max_length=64)
+    # 值形如 "sha256:<64 hex>"（71 字符）；列宽 80（dk20260909v4 放宽）。
+    content_hash: str = Field(default="", max_length=80)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow_aware)
 

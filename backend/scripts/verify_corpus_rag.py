@@ -80,13 +80,17 @@ def _build_embed_client(environ: dict, model_fingerprint: str):
         except Exception:  # noqa: BLE001 - 无配置环境用默认
             return default
 
+    from app.platform.knowledge.corpus_embedding import family_spec
+
+    spec = family_spec(_attr("CORPUS_EMBEDDING_FAMILY", "e5"))
     provider = E5Provider.load(model_path, {
+        "family": spec["family"],
         "model_id": _attr("CORPUS_EMBEDDING_MODEL_ID"),
         "revision": _attr("CORPUS_EMBEDDING_MODEL_REVISION"),
         "files_hash": _attr("CORPUS_EMBEDDING_FILES_HASH"),
         "tokenizer": _attr("CORPUS_EMBEDDING_TOKENIZER"),
-        "pooling": "attention-mask mean",
-        "prefixes": {"query": "query: ", "passage": "passage: "},
+        "pooling": spec["pooling"],
+        "prefixes": spec["prefixes"],
         "dimension": _attr("CORPUS_EMBEDDING_DIMENSION"),
         "max_length": _attr("CORPUS_EMBEDDING_MAX_LENGTH"),
     })

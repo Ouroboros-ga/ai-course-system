@@ -211,6 +211,7 @@ def create_build(
     idempotency_key: Optional[str] = None,
     pipeline_kind: str = PIPELINE_LEGACY,
     chunker_config: Any = None,
+    chunker_version: str = "",
 ) -> dict[str, Any]:
     """创建有限范围构建：一条 TaskRecord + DisciplineBuild + 初始工作项。
 
@@ -244,7 +245,12 @@ def create_build(
         )
     scope_key = str(manifest_path or "") or ("versions:" + ",".join(sorted(version_ids)))
 
-    key = idempotency_key or f"discipline-build:{sha16(scope_key, ','.join(sorted(stages)), json.dumps(merged, sort_keys=True))}"
+    # 幂等键含冻结分块口径：换 chunker_version 是另一个构建，不得复用旧构建。
+    key = idempotency_key or (
+        "discipline-build:" + sha16(
+            scope_key, ",".join(sorted(stages)),
+            json.dumps(merged, sort_keys=True),
+            str(chunker_version or "")))
     existing_link = session.exec(
         select(IdempotencyKeyRecord).where(
             IdempotencyKeyRecord.user_id == owner_user_id,
@@ -326,7 +332,9 @@ def create_build(
         scope_manifest_key=str(manifest_path or ""),
         scope={"manifest_path": str(manifest_path or ""),
                # manifest 范围 ingest 后回填实际版本清单，供分片规划使用
-               "document_version_ids": version_ids},
+               "document_version_ids": version_ids,
+               # 冻结分块口径（可选）：同版本多套分块时只索引这一套
+               "chunker_version": str(chunker_version or "")},
         stages=stages,
         extractor_version="deterministic/1",
         model_version="none-deterministic",
@@ -343,7 +351,8 @@ def create_build(
 
     if manifest_path and ensured_versions:
         build.scope = {"manifest_path": str(manifest_path or ""),
-                       "document_version_ids": ensured_versions}
+                       "document_version_ids": ensured_versions,
+                       "chunker_version": str(chunker_version or "")}
         session.add(build)
         session.commit()
 
@@ -595,6 +604,8 @@ def create_corpus_build(
     budget = _corpus_defaults()
     budget.update(config.get("budget") or {})
     budget["dimension"] = dimension
+    # 冻结分块口径（可选）：同版本存在多套 chunker_version 块时只索引这一套。
+    pinned_chunker = str(config.get("chunker_version") or "").strip()
 
     created = create_build(
         session,
@@ -604,6 +615,7 @@ def create_corpus_build(
         budget=budget,
         pipeline_kind=PIPELINE_CORPUS,
         chunker_config=config.get("chunker_config"),
+        chunker_version=pinned_chunker,
         idempotency_key=config.get("idempotency_key"),
     )
     if not created["created"]:
@@ -638,15 +650,21 @@ def _corpus_chunk_ids(session: Session, build_id: str) -> list[str]:
     build = _load_build(session, build_id)
     scope = dict(build.scope or {})
     version_ids = list(scope.get("document_version_ids") or [])
+    # 构建冻结分块口径：同一版本可能同时存在多套 chunker_version 的块
+    # （换分块器重导入），只取本构建声明的那一套，避免混块。
+    pinned_chunker = str(scope.get("chunker_version") or "")
     seen: list[str] = []
     seen_set: set[str] = set()
     for version_id in version_ids:
-        rows = session.exec(
-            select(DisciplineChunk.chunk_id)
-            .where(DisciplineChunk.version_id == version_id)
-            .where(DisciplineChunk.chunker_version.like("corpus-chunk/1%"))
-            .order_by(DisciplineChunk.chunk_no)
-        ).all()
+        query = select(DisciplineChunk.chunk_id).where(
+            DisciplineChunk.version_id == version_id)
+        if pinned_chunker:
+            query = query.where(
+                DisciplineChunk.chunker_version == pinned_chunker)
+        else:
+            query = query.where(
+                DisciplineChunk.chunker_version.like("corpus-chunk/1%"))
+        rows = session.exec(query.order_by(DisciplineChunk.chunk_no)).all()
         for chunk_id in rows:
             if chunk_id not in seen_set:
                 seen_set.add(chunk_id)

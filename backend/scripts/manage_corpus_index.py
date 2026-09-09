@@ -162,6 +162,8 @@ def _cmd_create_build(args) -> int:
         budget["max_chunks"] = args.max_chunks
     if budget:
         config["budget"] = budget
+    if getattr(args, "chunker_version", ""):
+        config["chunker_version"] = args.chunker_version
 
     with session_factory() as session:
         try:
@@ -224,12 +226,20 @@ def _cmd_build(args) -> int:
 
             from app.models.discipline_knowledge_model import DisciplineChunk
 
+            # 构建冻结的分块口径（create-build 写入 scope）；未冻结时按旧口径。
+            pinned_chunker = str(
+                (view.get("scope") or {}).get("chunker_version") or "")
             for marker in records:
+                query = select(DisciplineChunk.chunk_id).where(
+                    DisciplineChunk.version_id == marker["__version_id__"])
+                if pinned_chunker:
+                    query = query.where(
+                        DisciplineChunk.chunker_version == pinned_chunker)
+                else:
+                    query = query.where(
+                        DisciplineChunk.chunker_version.like("corpus-chunk/1%"))
                 rows = session.exec(
-                    select(DisciplineChunk.chunk_id).where(
-                        DisciplineChunk.version_id == marker["__version_id__"],
-                        DisciplineChunk.chunker_version.like("corpus-chunk/1%"),
-                    ).order_by(DisciplineChunk.chunk_no)).all()
+                    query.order_by(DisciplineChunk.chunk_no)).all()
                 chunk_ids.extend(rows)
         else:
             for record in records:
@@ -350,6 +360,10 @@ def main(argv=None) -> int:
         "--owner-user-id", type=int,
         default=int(os.environ.get("DISCIPLINE_BUILD_OWNER_USER_ID") or 1),
         help="任务归属（审计用；create_task 只校验非空，无外键）")
+    create.add_argument(
+        "--chunker-version", default="",
+        help="冻结分块口径（如 corpus-chunk/1+bge-small-zh-v1.5/1+t320+o32+m512）；"
+             "同版本存在多套分块时必须显式指定，否则混块")
     create.set_defaults(func=_cmd_create_build)
 
     build = sub.add_parser("build", help="导入并组装 release + 构建 FTS")
