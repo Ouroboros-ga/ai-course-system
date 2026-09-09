@@ -26,7 +26,7 @@ import math
 import re
 import threading
 import time
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from sqlmodel import Session, select
 
@@ -52,6 +52,14 @@ CONTEXT_BUDGET_TOKENS = 3000
 MAX_CHUNKS_PER_DOC = 2
 
 VECTOR_COOLDOWN_SECONDS = 60
+
+
+class _LiveMember(NamedTuple):
+    """release 内实时成员（单次 JOIN 的行投影；替代逐成员 ORM 往返）。"""
+
+    chunk_id: str
+    embedding_id: str | None
+    display_metadata: dict
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
@@ -162,28 +170,30 @@ class CorpusSearchService:
 
         counts = release["counts"]
         model_fp = counts.get("model_fingerprint") or ""
-        members = session.exec(
-            select(DisciplineCorpusIndexMember).where(
-                DisciplineCorpusIndexMember.release_id == rid)
+        # -- 版本内成员表 + 撤回实时过滤（单次 JOIN） --
+        # 旧实现逐成员查 chunk/version：3899 成员 ≈ 7800 次往返/查询（实测
+        # 纯词法 7.3s 的主因）。改为一条 JOIN，语义不变：chunk 缺失跳过、
+        # version 缺失或 withdrawn 计入 withdrawn。
+        member_rows = session.exec(
+            select(DisciplineCorpusIndexMember.chunk_id,
+                   DisciplineCorpusIndexMember.embedding_id,
+                   DisciplineCorpusIndexMember.display_metadata,
+                   DisciplineDocumentVersion.status)
+            .join(DisciplineChunk,
+                  DisciplineChunk.chunk_id == DisciplineCorpusIndexMember.chunk_id)
+            .join(DisciplineDocumentVersion,
+                  DisciplineDocumentVersion.version_id == DisciplineChunk.version_id,
+                  isouter=True)
+            .where(DisciplineCorpusIndexMember.release_id == rid)
         ).all()
-        # -- 版本内成员表 + 撤回实时过滤 --
-        live: dict[str, DisciplineCorpusIndexMember] = {}
+        live: dict[str, _LiveMember] = {}
         withdrawn = 0
-        for member in members:
-            chunk = session.exec(
-                select(DisciplineChunk).where(
-                    DisciplineChunk.chunk_id == member.chunk_id)
-            ).first()
-            if chunk is None:
-                continue
-            version = session.exec(
-                select(DisciplineDocumentVersion).where(
-                    DisciplineDocumentVersion.version_id == chunk.version_id)
-            ).first()
-            if version is None or version.status == "withdrawn":
+        for chunk_id, embedding_id, display_metadata, version_status in member_rows:
+            if version_status is None or version_status == "withdrawn":
                 withdrawn += 1
                 continue
-            live[member.chunk_id] = member
+            live[chunk_id] = _LiveMember(chunk_id, embedding_id,
+                                         dict(display_metadata or {}))
         eligible = len(live)
         embedded_ids = {cid for cid, m in live.items() if m.embedding_id}
 
@@ -414,11 +424,16 @@ class CorpusSearchService:
                   chunk_ids: list[str], lexical_set: set[str],
                   vector_set: set[str], live: dict,
                   read_chunk_text) -> list[dict[str, Any]]:
-        member_nos: dict[str, list[int]] = {}
+        # 版本 → chunk_no → chunk_id 索引：每查询构建一次，替代每个结果重扫
+        # 全部成员（旧实现 6 结果 × 3899 成员 ≈ 2.3 万次 JSON 解析/查询）。
+        by_version: dict[str, dict[int, str]] = {}
+        meta_by_cid: dict[str, tuple[str, int]] = {}
         for cid, member in live.items():
             meta = dict(member.display_metadata or {})
-            member_nos.setdefault(str(meta.get("version_id") or ""), []).append(
-                int(meta.get("chunk_no") or 0))
+            version_id = str(meta.get("version_id") or "")
+            chunk_no = int(meta.get("chunk_no") or 0)
+            meta_by_cid[cid] = (version_id, chunk_no)
+            by_version.setdefault(version_id, {})[chunk_no] = cid
         results = []
         spent = 0
         for chunk_id in chunk_ids:
@@ -432,8 +447,9 @@ class CorpusSearchService:
             if chunk_id in vector_set:
                 matched.append("vector")
             snippet = _make_snippet(ref["text"], query)
+            version_id, chunk_no = meta_by_cid.get(chunk_id, ("", 0))
             context, truncated, cost = CorpusSearchService._context(
-                session, release_id, live, member_nos, chunk_id,
+                session, by_version, version_id, chunk_no, chunk_id,
                 ref["text"], CONTEXT_BUDGET_TOKENS - spent, read_chunk_text)
             spent += cost
             results.append({
@@ -455,18 +471,11 @@ class CorpusSearchService:
         return results
 
     @staticmethod
-    def _context(session: Session, release_id: str, live: dict,
-                 member_nos: dict[str, list[int]], chunk_id: str, text: str,
+    def _context(session: Session, by_version: dict[str, dict[int, str]],
+                 version_id: str, chunk_no: int, chunk_id: str, text: str,
                  budget: int, read_chunk_text) -> tuple[str, bool, int]:
         """前后各 1 邻块（同版本、同文档、成员内、不重复），共用预算。"""
-        meta = dict(live[chunk_id].display_metadata or {})
-        version_id = str(meta.get("version_id") or "")
-        chunk_no = int(meta.get("chunk_no") or 0)
-        by_no = {}
-        for cid, member in live.items():
-            m = dict(member.display_metadata or {})
-            if str(m.get("version_id") or "") == version_id:
-                by_no[int(m.get("chunk_no") or 0)] = cid
+        by_no = by_version.get(version_id) or {}
         parts = [text]
         for neighbor in (chunk_no - 1, chunk_no + 1):
             nid = by_no.get(neighbor)
