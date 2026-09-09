@@ -3,11 +3,12 @@
 > 挑战杯 XH-202620《面向一流学科建设的学科垂类大模型与创新应用开发》——
 > "模型微调（LoRA/SFT）"的**可复现管线交付**（2026-08-20，R2 骨架；R14 完成真训练实现）。
 >
-> **诚实状态**：数据准备与评测可在本环境复现；**当前环境无 GPU，训练未执行**。
-> `train_lora.py` 是完整 PEFT LoRA 训练实现（缺依赖/缺 CUDA 时 fail-closed 退出，
-> 不假装训练成功）。如需"已微调模型"成果，请：(a) 提供 GPU 环境运行本管线，
-> 或 (b) 开通星火 MaaS 微调（提交 ServiceID），或 (c) 以"管线 + RAG 增强"口径
-> 申报并在方案中如实说明。
+> **诚实状态(2026-09-09 更新)**:数据准备与评测可在本环境复现;训练已在本机冒烟、
+> **2026-09-09 于云 GPU RTX 4090 实测完成 Qwen2.5-7B-Instruct LoRA 3 epochs**
+> (train_loss 0.667–0.669,adapter 交付见 `export/adapter_qwen25_7b_v22_final.zip`;
+> 交付/评测记录见 `export/微调交付_模型与对照表.md` 与 `docs/phase1/2026-09-09_XH202620微调交付记录.md`)。
+> 本机 8GB(WDDM)仅适合冒烟/3B 调试(3B ~2s/样本),7B 全量请用云 GPU。
+> 基座模型声明:Qwen/Qwen2.5-7B-Instruct;评测口径如实(基准 10 问基座 4/8 vs 微调 3/8,不宣称提升)。
 
 ## 目录
 
@@ -19,10 +20,14 @@
 | `train_lora.py` | PEFT LoRA + HF Trainer 完整训练脚本（ChatML 模板化、prompt 段 loss 掩蔽、按 epoch 保存 adapter） | ❌ 需 GPU + 独立依赖 |
 | `requirements.txt` | GPU 训练依赖（**需用户批准后安装**） | ❌ 不装 |
 
-## 数据集（2026-08-30 R14 再生成）
+## 数据集
 
-- **指令集 197 训练 + 31 评测**（知识库 112 节点 + 106 关系 + 基准 10 问 = 228 条，
-  90% / 10% 划分后评测集并入基准 10 问）。
+> **2026-09-09 现状**:当前权威训练/评测数据为 **v2.2 —— 2212 训练 + 50 评测**
+> (`data/instruction_train_v2.jsonl` / `instruction_eval_v2.jsonl`,生成器 `prepare_dataset_v2.py`,
+> 见 `data/DATACARD.md`)。下方 R14 数字为历史口径,仅作追溯。
+
+- **R14(历史)指令集 197 训练 + 31 评测**(知识库 112 节点 + 106 关系 + 基准 10 问 = 228 条,
+  90% / 10% 划分后评测集并入基准 10 问)。
 - **防污染设计**：评测基准 10 问**只进 eval 集不进训练集**——`evaluate.py` 用这
   10 问对比"基座 vs 微调后"，若标准答案进训练集，微调收益就是记忆而非泛化，
   对比证据失真。
@@ -32,8 +37,8 @@
 ## 使用流程
 
 ```bash
-# 1) 生成指令数据集（本环境可跑）
-python backend/finetune/prepare_dataset.py --output-dir backend/finetune/data
+# 1) 生成指令数据集（v2.2 生成器，本环境可跑，seed 固定可复现）
+python backend/finetune/prepare_dataset_v2.py --output-dir backend/finetune/data
 
 # 2) 评测基座模型（对比基线；需端点 Key，不写入任何文件）
 python backend/finetune/evaluate.py \
@@ -42,10 +47,11 @@ python backend/finetune/evaluate.py \
   --output backend/finetune/results_base.json
 
 # 3) 微调（GPU 环境；先经用户批准安装 requirements.txt）
+#    v2.2 数据用 instruction_train_v2.jsonl；云 GPU 一键包见 export/cloud_gpu_pack/README.md
 pip install -r backend/finetune/requirements.txt
 python backend/finetune/train_lora.py \
   --base-model Qwen/Qwen2.5-7B-Instruct \
-  --data-file backend/finetune/data/instruction_train.jsonl \
+  --data-file backend/finetune/data/instruction_train_v2.jsonl \
   --output-dir backend/finetune/lora_output
 
 # 4) 评测微调后模型，与第 2 步结果对比（技术先进性证据）
@@ -82,10 +88,14 @@ python backend/finetune/evaluate.py \
 
 **路径 A：云 GPU → 模型文件（租 4090 约 1-2 元/小时）**
 
-1. 上传 `train_lora.py` + `data/instruction_train.jsonl`，跑 PEFT LoRA（Qwen2.5-7B-Instruct）；
+1. 一键包已就绪：`export/cloud_gpu_pack/`（含 `train_lora.py` + v2.2 数据 + 操作手册
+   `export/cloud_gpu_pack/README.md`，SHA256 见包内 `SHA256SUMS.txt`）；
 2. 产物 `adapter_model.safetensors + adapter_config.json` 即**可提交的模型文件**（几十 MB，
    附基座声明与 model card；不必提交 15GB 合并全量模型）；
 3. 可选：上传 ModelScope 建仓得模型仓 ID，或 vLLM `--enable-lora` 部署为 OpenAI 端点（等效 ServiceID）。
+
+**实测提示（2026-09-09，本机 RTX 5070 Laptop 8GB/WDDM）**：本地小 batch 训练吞吐仅 ~60–80 tok/s，
+3B 3 epochs 实测需 6–9h 且逐步降频；**建议直接用路径 A 云 GPU 或路径 B MaaS**，本地仅作冒烟/调试。
 
 **建议组合**：B 出 ServiceID + A 出 adapter 文件，同一份数据、同一个 `evaluate.py` 评测，
 两条证据互相印证。

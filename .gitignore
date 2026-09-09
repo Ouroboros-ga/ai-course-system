@@ -162,3 +162,9 @@ backend/.qa/
 database/*.db.*
 
 .corpus_cache/
+
+# Finetune 大二进制交付物(不入库,本地/ModelScope 留存)
+backend/finetune/lora_output_qwen25_7b_v22/
+backend/finetune/export/adapter_qwen25_7b_v22_final.zip
+backend/finetune/export/_train7b_raw_log.txt
+backend/finetune/export/cloud_gpu_pack.zip
