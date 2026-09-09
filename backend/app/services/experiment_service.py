@@ -260,12 +260,21 @@ class ExperimentVersionService:
         max_file_size: int = 1024,
         passing_score: float = 1.0,
         writes_formal_evidence: bool = True,
+        starter_code: Optional[dict] = None,
         created_by: int,
         test_cases: Optional[list[dict]] = None,
         activate: bool = True,
     ) -> ExperimentVersion:
         if passing_score != 1.0:
             reject_validation_failed("Formal programming experiments require passing_score=1.0")
+        # 起始代码只做形状消毒：键值转 str、单语言截断 20k（对齐单次提交上限），
+        # 此处不编译不执行；是否允许的语言由 definition 白名单在提交时校验。
+        clean_starter: dict[str, str] = {}
+        if isinstance(starter_code, dict):
+            for lang, code in starter_code.items():
+                if not isinstance(lang, str) or not lang.strip():
+                    continue
+                clean_starter[lang.strip()] = str(code or "")[:20_000]
         if not test_cases:
             reject_validation_failed("An experiment version requires at least one test case")
         total_weight = sum(float(case.get("weight", 1.0)) for case in test_cases)
@@ -297,6 +306,7 @@ class ExperimentVersionService:
             enable_network=False,  # 始终关闭
             passing_score=passing_score,
             writes_formal_evidence=writes_formal_evidence,
+            starter_code=clean_starter,
             is_active=False,
             created_by=created_by,
         )
@@ -574,6 +584,65 @@ class ExperimentAttemptService:
         session.add(attempt)
         session.flush()
         return attempt
+
+    def student_summaries(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        student_id: int,
+    ) -> dict[str, dict[str, Any]]:
+        """学生视角的实验聚合：每个 experiment 一条摘要（列表筛选与进度展示用）。
+
+        只读聚合，不改变任何状态；教师视图不调用。CANCELLED 尝试不计入
+        （与 max_attempts 计数口径一致）。无尝试的实验不在返回中出现，
+        调用方按"待完成"处理。
+        """
+        attempts = session.exec(
+            select(ExperimentAttempt).where(
+                ExperimentAttempt.course_id == course_id,
+                ExperimentAttempt.student_id == student_id,
+                ExperimentAttempt.status != AttemptStatus.CANCELLED,
+            )
+        ).all()
+        runs = session.exec(
+            select(ExperimentRun).where(
+                ExperimentRun.course_id == course_id,
+                ExperimentRun.student_id == student_id,
+            ).order_by(ExperimentRun.submitted_at.desc())
+        ).all()
+        runs_by_attempt: dict[str, list] = {}
+        for run in runs:
+            runs_by_attempt.setdefault(run.attempt_id, []).append(run)
+
+        by_exp: dict[str, list] = {}
+        for attempt in attempts:
+            by_exp.setdefault(attempt.experiment_id, []).append(attempt)
+
+        summaries: dict[str, dict[str, Any]] = {}
+        for experiment_id, items in by_exp.items():
+            ordered = sorted(items, key=lambda a: to_aware(a.started_at), reverse=True)
+            finalized = [a for a in items if a.status == AttemptStatus.FINALIZED]
+            latest_run = None
+            for attempt in ordered:
+                attempt_runs = runs_by_attempt.get(attempt.attempt_id)
+                if attempt_runs:
+                    latest_run = attempt_runs[0]
+                    break
+            outcome = (
+                getattr(latest_run.outcome, "value", latest_run.outcome)
+                if latest_run is not None
+                else None
+            )
+            summaries[experiment_id] = {
+                "attempts_used": len(items),
+                "has_finalized": bool(finalized),
+                "bucket": "done" if finalized else "in_progress",
+                "latest_outcome": outcome,
+                "latest_passed_count": latest_run.passed_count if latest_run else None,
+                "latest_total_count": latest_run.total_count if latest_run else None,
+            }
+        return summaries
 
     def get_attempt(
         self,
@@ -1194,9 +1263,52 @@ class ExperimentFinalizeService:
             session, attempt=attempt, run=latest_run,
         )
 
+        # F3-A：通过的实验同步完成态投影。只有能确定 release/outline 身份时写，
+        # 映射不上就跳过（不猜）；幂等键保证终结化重试不重复计数。未通过的尝试
+        # 不动 exposure（掌握度仍经证据链渗透），完成率只反映真正做出的题目。
+        if attempt.passed:
+            self._project_completion_on_pass(
+                session, course_id=course_id, attempt=attempt,
+            )
+
         session.add(attempt)
         session.flush()
         return attempt
+
+    @staticmethod
+    def _project_completion_on_pass(session: Session, *, course_id: int, attempt) -> None:
+        from app.models.unified_learning_model import LearningEventType
+        from app.services.unified_learning_service import record_event, refresh_course_stats
+
+        release_id = getattr(attempt, "source_release_id", None)
+        outline_node_id = getattr(attempt, "outline_node_id", None)
+        if not release_id or not outline_node_id:
+            return
+        try:
+            record_event(
+                session,
+                student_id=attempt.student_id,
+                course_id=course_id,
+                release_id=release_id,
+                outline_node_id=outline_node_id,
+                event_type=LearningEventType.EXPLICIT_COMPLETE,
+                idempotency_key=f"experiment_finalize|{attempt.attempt_id}",
+                payload={
+                    "experiment_id": attempt.experiment_id,
+                    "final_score": attempt.final_score,
+                },
+                source="experiment_finalize",
+            )
+        except ValueError:
+            # release 不存在 / 节点不在该 release 内：映射不上就跳过，不猜测。
+            logger.warning(
+                "Experiment finalize completion skipped (unmapped release/node): "
+                "course_id=%s attempt_id=%s",
+                course_id,
+                attempt.attempt_id,
+            )
+            return
+        refresh_course_stats(session, course_id=course_id, release_id=release_id)
 
     def _write_formal_evidence(
         self,

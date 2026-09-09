@@ -1375,6 +1375,61 @@ test('F2 恢复认领：对账在途意图后继续（Auto 门，Ask 禁用）',
   assert.match(page, /run\.recoveryStatus = /)
 })
 
+test('实验链F1：版本创建透传起始代码/证据开关，定义列表回显起始代码', () => {
+  const backend = read('backend/app/api/v1/endpoints/experiments.py')
+  const service = read('backend/app/services/experiment_service.py')
+  const contract = read('frontend/src/api/experimentPublishContract.js')
+  const panel = read('frontend/src/app/components/course/TeacherExperimentPanel.vue')
+  // 后端：请求模型接收起始代码并透传服务消毒持久化（列已存在，无迁移）。
+  assert.match(backend, /class VersionCreateRequest[\s\S]*?starter_code: dict/)
+  assert.match(backend, /starter_code=payload\.starter_code/)
+  assert.match(service, /starter_code=clean_starter/)
+  // 后端：定义列表/详情回显默认版本起始代码（学生重置链路的唯一来源）。
+  assert.match(backend, /"starter_code": dict\(default_starter_code or \{\}\)/)
+  // 前端：契约透传（证据开关默认开），出题页三字段 + 证据就绪横幅。
+  assert.match(contract, /writes_formal_evidence: form\.writesFormalEvidence !== false/)
+  assert.match(contract, /starter_code: sanitizeStarterCode\(form\.starterCode\)/)
+  assert.match(panel, /knowledge_node_ids: definitionForm\.value\.knowledgeNodeIds/)
+  assert.match(panel, /evidenceReady/)
+})
+
+test('实验链F2：学生列表带尝试聚合（筛选器与进度条目），教师视图无泄露', () => {
+  const backend = read('backend/app/api/v1/endpoints/experiments.py')
+  const service = read('backend/app/services/experiment_service.py')
+  const page = read('frontend/src/app/pages/course/CourseExperimentsPage.vue')
+  // 后端：只读聚合（CANCELLED 不计），仅学生视图附加，教师视图保持原样。
+  assert.match(service, /def student_summaries\(/)
+  assert.match(service, /AttemptStatus\.CANCELLED/)
+  assert.match(backend, /summaries = attempt_service\.student_summaries\(/)
+  assert.match(backend, /"student_summary": student_summary/)
+  // 前端：三态筛选器 + 条目字段（知识点/进度/最近结果/开始继续）+ 提交后刷新。
+  assert.match(page, /待完成｜进行中｜已完成/)
+  assert.match(page, /knowledgeNames\(item\)/)
+  assert.match(page, /attemptsText\(item\)/)
+  assert.match(page, /outcomeText\(item\)/)
+  assert.match(page, /@submit-complete="handleSubmitComplete"/)
+})
+
+test('实验链F3：终结化同步完成投影，学情加编程聚合', () => {
+  const service = read('backend/app/services/experiment_service.py')
+  const facade = read('backend/app/api/v1/endpoints/facade.py')
+  const analytics = read('frontend/src/app/pages/course/CourseAnalyticsPage.vue')
+  // A：仅通过的终结化写显式完成事件（幂等键防重），映射不上跳过不猜，并刷新统计。
+  assert.match(service, /_project_completion_on_pass\(/)
+  assert.match(service, /LearningEventType\.EXPLICIT_COMPLETE/)
+  assert.match(service, /experiment_finalize\|\{attempt\.attempt_id\}/)
+  assert.match(service, /refresh_course_stats\(session, course_id=course_id, release_id=release_id\)/)
+  // B：学情课程级与单学生级均带 coding 聚合（可信终结记录口径）。
+  assert.match(facade, /def _coding_summary\(/)
+  assert.match(facade, /LabRecord\.trusted_source == True/)
+  assert.match(facade, /"coding": coding/)
+  assert.match(facade, /data\["coding"\] = next\(/)
+  // 前端：编程实战区块 + 学生行/明细编程行，无数据时不渲染区块。
+  assert.match(analytics, /编程实战/)
+  assert.match(analytics, /codingText\(student\.student_id\)/)
+  assert.match(analytics, /studentDetail\.coding/)
+})
+
 test('F3 操作级中断＋增量 Console（会话语义，整体取消保留）', () => {
   const client = read('frontend/src/api/nexus.js')
   const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')

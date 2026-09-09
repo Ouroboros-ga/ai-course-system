@@ -268,6 +268,57 @@ async def complete_learning_action(course_id: int, release_id: str, outline_node
     return unified_response(200, "知识点已完成", {"event_id": event.event_id, "outline_node_id": projection.outline_node_id, "status": projection.exposure_status.value})
 
 
+def _coding_summary(session: Session, *, course_id: int, student_ids: list) -> dict:
+    """F3-B：编程维度聚合（课程级与单学生共用）。
+
+    提交数 = 到达终态的运行（pending/processing/sandbox_unavailable 除外，
+    口径与"基础设施失败不成为成绩"一致）；通过数 = 可信 LabRecord 中 passed
+    （仅终结化成绩）。只统计传入的学生集合（调用方已排除 analytics_excluded）。
+    无数据时通过率取 None（前端显示"—"，不伪造 0%）。
+    """
+    from app.models.experiment_model import ExperimentRun, LabRecord
+
+    non_judged = {"pending", "processing", "sandbox_unavailable"}
+    run_filter = (
+        ExperimentRun.student_id.in_(student_ids)
+        if student_ids
+        else ExperimentRun.student_id == -1
+    )
+    runs = session.exec(select(ExperimentRun).where(
+        ExperimentRun.course_id == course_id,
+        run_filter,
+    )).all()
+    judged = [
+        r for r in runs
+        if getattr(getattr(r, "outcome", None), "value", r.outcome) not in non_judged
+    ]
+    record_filter = (
+        LabRecord.student_id.in_(student_ids)
+        if student_ids
+        else LabRecord.student_id == -1
+    )
+    records = session.exec(select(LabRecord).where(
+        LabRecord.course_id == course_id,
+        LabRecord.trusted_source == True,  # noqa: E712
+        record_filter,
+    )).all()
+    passed_records = [r for r in records if r.passed]
+
+    def _student_row(student_id: int) -> dict:
+        submitted = sum(1 for r in judged if r.student_id == student_id)
+        passed = sum(1 for r in passed_records if r.student_id == student_id)
+        return {"student_id": student_id, "submitted": submitted, "passed": passed}
+
+    submitted = len(judged)
+    passed = len(passed_records)
+    return {
+        "submitted": submitted,
+        "passed": passed,
+        "pass_rate": round(passed / submitted, 3) if submitted else None,
+        "students": [_student_row(student_id) for student_id in student_ids],
+    }
+
+
 @router.get("/course/{course_id}/analytics")
 async def get_learning_analytics(course_id: int, release_id: Optional[str] = Query(None), days: int = Query(7, ge=1, le=90), session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     require_course_permission(session, current_user, course_id, "analytics.view_course")
@@ -331,6 +382,7 @@ async def get_learning_analytics(course_id: int, release_id: Optional[str] = Que
             "completion_rate": completed / len(nodes) if nodes else 0.0,
         })
     trend_metrics = course_trend_and_metrics(session, course_id=course_id, days=days)
+    coding = _coding_summary(session, course_id=course_id, student_ids=student_ids)
     return unified_response(200, "获取课程学习统计成功", {
         "course_id": course_id,
         "release_id": release.release_id,
@@ -339,6 +391,7 @@ async def get_learning_analytics(course_id: int, release_id: Optional[str] = Que
         "students": student_summaries,
         "trend": trend_metrics["trend"],
         "core_metrics": trend_metrics["core_metrics"],
+        "coding": coding,
     })
 
 
@@ -352,6 +405,11 @@ async def get_student_learning_analytics(course_id: int, student_id: int, releas
     for item in data.get("items", []):
         _attach_cognition(session, student_id=student_id, course_id=course_id, item=item)
     data["student_id"] = student_id
+    coding = _coding_summary(session, course_id=course_id, student_ids=[student_id])
+    data["coding"] = next(
+        (row for row in coding["students"] if row["student_id"] == student_id),
+        {"student_id": student_id, "submitted": 0, "passed": 0},
+    )
     return unified_response(200, "获取学生学习统计成功", data)
 
 

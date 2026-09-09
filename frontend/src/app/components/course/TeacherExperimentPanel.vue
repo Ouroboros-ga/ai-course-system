@@ -10,6 +10,7 @@ import {
   updateExperimentDefinition,
 } from '@/api/experiments.js'
 import { resolveExperimentWizardStage } from '@/api/experimentPublishWorkflow.js'
+import { getActiveKnowledgeGraph } from '@/api/graph.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -44,6 +45,9 @@ const definitionForm = ref({
   languages: 'python3',
   max_attempts: 3,
   cooldown_minutes: 30,
+  // F1a：关联知识点（课程知识图谱节点 int id）。创建时写入，update 接口
+  // 不可更改；为空时成绩仍可评出，但不进入认知统计（见发布页 F1d 提示）。
+  knowledgeNodeIds: [],
 })
 const versionForm = ref({
   label: 'v1',
@@ -52,6 +56,10 @@ const versionForm = ref({
   wallTimeLimit: 10,
   maxProcesses: 30,
   maxFileSize: 1024,
+  // F1c：计入学习证据（默认开）。关闭后成绩仅记分，不写 LearningEvidence。
+  writesFormalEvidence: true,
+  // F1b：起始代码 {language: source}，学生工作台重置时按语言取用。
+  starterCode: {},
   testCases: [
     { case_name: '公开样例', stdin: '', expected_stdout: '', is_hidden: false, weight: 0.5 },
     { case_name: '边界用例', stdin: '', expected_stdout: '', is_hidden: true, weight: 0.5 },
@@ -65,6 +73,14 @@ const selectedLanguages = computed(() => definitionForm.value.languages
   .filter(Boolean))
 const testWeight = computed(() => versionForm.value.testCases
   .reduce((total, testCase) => total + Number(testCase.weight || 0), 0))
+// F1d：证据链就绪态。fail-closed 语义不动，只把"成绩会不会进统计"提前可见。
+const evidenceReady = computed(() => {
+  const serverNodes = selectedDefinition.value?.knowledge_node_ids
+  const nodes = (Array.isArray(serverNodes) && serverNodes.length
+    ? serverNodes
+    : definitionForm.value.knowledgeNodeIds)
+  return nodes.length > 0 && versionForm.value.writesFormalEvidence !== false
+})
 const canLock = computed(() => preview.value?.accepted === true && Boolean(selectedVersionId.value))
 const canPublish = computed(() => Boolean(selectedDefinition.value && selectedVersionId.value))
 const currentStageIndex = computed(() => stageOrder.indexOf(stage.value))
@@ -76,15 +92,47 @@ function resetWizard() {
   preview.value = null
   definitionForm.value = {
     title: '', description: '', languages: 'python3', max_attempts: 3, cooldown_minutes: 30,
+    knowledgeNodeIds: [],
   }
   versionForm.value = {
     label: 'v1', cpuTimeLimit: 5, memoryLimit: 128000, wallTimeLimit: 10, maxProcesses: 30, maxFileSize: 1024,
+    writesFormalEvidence: true, starterCode: {},
     testCases: [
       { case_name: '公开样例', stdin: '', expected_stdout: '', is_hidden: false, weight: 0.5 },
       { case_name: '边界用例', stdin: '', expected_stdout: '', is_hidden: true, weight: 0.5 },
     ],
   }
   referenceForm.value = { language: 'python3', source_code: '' }
+}
+
+// F1a：课程知识图谱节点（与知识图谱页同一数据源）。失败/为空不阻塞出题，
+// 只是届时成绩不进入认知统计（发布页 F1d 会如实提示）。
+const knowledgeNodes = ref([])
+const knowledgeNodesState = ref('idle')
+
+async function loadKnowledgeNodes() {
+  knowledgeNodesState.value = 'loading'
+  try {
+    const data = unwrap(await getActiveKnowledgeGraph(courseId.value))
+    const raw = data?.nodes ?? data?.items ?? []
+    knowledgeNodes.value = (Array.isArray(raw) ? raw : [])
+      .map((n) => ({
+        id: Number(n?.id ?? n?.node_id),
+        title: String(n?.title ?? n?.label ?? n?.node_key ?? ''),
+      }))
+      .filter((n) => Number.isInteger(n.id) && n.title)
+    knowledgeNodesState.value = knowledgeNodes.value.length ? 'ready' : 'empty'
+  } catch {
+    knowledgeNodes.value = []
+    knowledgeNodesState.value = 'error'
+  }
+}
+
+function toggleKnowledgeNode(id) {
+  const list = definitionForm.value.knowledgeNodeIds
+  const idx = list.indexOf(id)
+  if (idx >= 0) list.splice(idx, 1)
+  else list.push(id)
 }
 
 function unwrap(response) {
@@ -113,6 +161,7 @@ async function createDefinition() {
       title: definitionForm.value.title.trim(),
       description: definitionForm.value.description.trim(),
       language_whitelist: selectedLanguages.value,
+      knowledge_node_ids: definitionForm.value.knowledgeNodeIds.filter((n) => Number.isInteger(n)),
       max_attempts: Number(definitionForm.value.max_attempts),
       cooldown_minutes: Number(definitionForm.value.cooldown_minutes),
     }))
@@ -252,6 +301,10 @@ function continueDraft(item) {
     languages: (item.language_whitelist || []).join(', '),
     max_attempts: item.max_attempts || 3,
     cooldown_minutes: item.cooldown_minutes || 0,
+    // 更新接口不可更改关联节点：此处仅回显创建时的绑定。
+    knowledgeNodeIds: Array.isArray(item.knowledge_node_ids)
+      ? item.knowledge_node_ids.filter((n) => Number.isInteger(n))
+      : [],
   }
   referenceForm.value = {
     language: item.language_whitelist?.[0] || 'python3',
@@ -265,7 +318,10 @@ function startNewDraft() {
   resetWizard()
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadKnowledgeNodes()
+})
 </script>
 
 <template>
@@ -292,6 +348,22 @@ onMounted(load)
       <label>任务说明<textarea v-model.trim="definitionForm.description" class="sfx-input" rows="4" maxlength="4000" /></label>
       <label>最大尝试次数<input v-model.number="definitionForm.max_attempts" class="sfx-input" type="number" min="1" max="20" /></label>
       <label>冷却时间（分钟）<input v-model.number="definitionForm.cooldown_minutes" class="sfx-input" type="number" min="0" max="1440" /></label>
+      <fieldset class="sfx-knowledge-field">
+        <legend>关联知识点（{{ definitionForm.knowledgeNodeIds.length }} 已选）</legend>
+        <p class="sfx-t-caption">决定成绩能否进入认知统计。创建时写入，之后不可更改；不选也可发布，但成绩仅记分。</p>
+        <div v-if="knowledgeNodesState === 'ready'" class="sfx-knowledge-list">
+          <label v-for="node in knowledgeNodes" :key="node.id" class="sfx-knowledge-item">
+            <input
+              type="checkbox"
+              :checked="definitionForm.knowledgeNodeIds.includes(node.id)"
+              @change="toggleKnowledgeNode(node.id)"
+            />
+            <span>{{ node.title }}</span>
+          </label>
+        </div>
+        <p v-else-if="knowledgeNodesState === 'loading'" class="sfx-t-caption">知识点加载中…</p>
+        <p v-else class="sfx-t-caption">课程暂无可用知识图谱节点，可先发布（成绩仅记分，不进统计）。</p>
+      </fieldset>
       <SfxButton type="submit" :loading="saving">创建任务定义</SfxButton>
     </form>
 
@@ -301,6 +373,7 @@ onMounted(load)
       <p class="sfx-t-caption">仅允许课程已启用并可由评测机执行的语言。</p>
       <label>最大尝试次数<input v-model.number="definitionForm.max_attempts" class="sfx-input" type="number" min="1" max="20" /></label>
       <label>冷却时间（分钟）<input v-model.number="definitionForm.cooldown_minutes" class="sfx-input" type="number" min="0" max="1440" /></label>
+      <p class="sfx-t-caption">已关联 {{ definitionForm.knowledgeNodeIds.length }} 个知识点（创建时设定，不可更改）。</p>
       <div class="sfx-wizard-actions">
         <SfxButton variant="secondary" @click="stage = 'definition'">返回定义</SfxButton>
         <SfxButton type="submit" :disabled="!selectedLanguages.length" :loading="saving">保存并配置版本</SfxButton>
@@ -310,6 +383,10 @@ onMounted(load)
     <section v-else-if="stage === 'version'" class="sfx-panel sfx-wizard-form">
       <h3 class="sfx-panel-subtitle">版本与测试</h3>
       <p class="sfx-t-caption">权重用于完整性校验，正式结果仍是全量通过或未通过。</p>
+      <label class="sfx-evidence-check">
+        <input v-model="versionForm.writesFormalEvidence" type="checkbox" />
+        <span>计入学习证据（推荐开启；关闭后成绩仅记分，不进入认知统计）</span>
+      </label>
       <div class="sfx-limit-grid">
         <label>版本标签<input v-model.trim="versionForm.label" class="sfx-input" maxlength="100" /></label>
         <label>CPU 秒数<input v-model.number="versionForm.cpuTimeLimit" class="sfx-input" type="number" min="1" max="30" /></label>
@@ -333,6 +410,15 @@ onMounted(load)
         <SfxButton variant="secondary" @click="addTestCase(false)">增加公开测试</SfxButton>
         <SfxButton variant="secondary" @click="addTestCase(true)">增加隐藏测试</SfxButton>
         <SfxBadge :tone="Math.abs(testWeight - 1) < 0.000001 ? 'green' : 'red'">权重 {{ testWeight.toFixed(2) }} / 1.00</SfxBadge>
+      </div>
+      <div class="sfx-starter-block">
+        <h4 class="sfx-starter-title">开始代码（可选，按语言）</h4>
+        <p class="sfx-t-caption">学生打开工作台时预填；重置代码时恢复此处。留空则为空编辑器。</p>
+        <label v-for="lang in selectedLanguages" :key="lang" class="sfx-starter-item">
+          <span>{{ lang }}</span>
+          <textarea v-model="versionForm.starterCode[lang]" class="sfx-input sfx-code-input" rows="5" spellcheck="false" />
+        </label>
+        <p v-if="!selectedLanguages.length" class="sfx-t-caption">请先在「语言与资源」中填写允许语言。</p>
       </div>
       <div class="sfx-wizard-actions">
         <SfxButton variant="secondary" @click="stage = 'limits'">返回资源</SfxButton>
@@ -367,6 +453,11 @@ onMounted(load)
     <section v-else-if="stage === 'publish'" class="sfx-panel sfx-wizard-form">
       <h3 class="sfx-panel-subtitle">发布实验</h3>
       <p>发布前服务端会再次校验课程能力、评测机、语言白名单、资源边界、全量测试、默认版本、锁定状态和参考解预览。</p>
+      <div class="sfx-evidence-banner" :class="evidenceReady ? 'is-ready' : 'is-limited'">
+        <SfxBadge :tone="evidenceReady ? 'green' : 'amber'">{{ evidenceReady ? '将进入认知统计' : '仅记分' }}</SfxBadge>
+        <span v-if="evidenceReady">已关联知识点且证据开关开启，通过/失败成绩将写入学习证据并参与掌握度计算。</span>
+        <span v-else>未关联知识点或证据开关关闭：成绩仍可评出，但不会进入认知统计（可在新版中补关联后重发）。</span>
+      </div>
       <SfxButton :disabled="!canPublish" :loading="saving" @click="publish">发布给学生</SfxButton>
     </section>
 
@@ -385,7 +476,7 @@ onMounted(load)
           <thead><tr><th>任务</th><th>语言</th><th>状态</th><th>默认版本</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="item in items" :key="item.experiment_id">
-              <td><strong>{{ item.title }}</strong><p class="sfx-t-caption">{{ item.description }}</p></td>
+              <td><strong>{{ item.title }}</strong><p class="sfx-t-caption">{{ item.description }}</p><p v-if="(item.knowledge_node_ids || []).length" class="sfx-t-caption">已关联 {{ item.knowledge_node_ids.length }} 个知识点</p></td>
               <td>{{ (item.language_whitelist || []).join(', ') }}</td>
               <td><SfxBadge :tone="item.publish_status === 'published' ? 'green' : 'amber'">{{ item.publish_status }}</SfxBadge></td>
               <td>{{ item.default_version_id || '未创建' }}</td>
@@ -412,6 +503,17 @@ onMounted(load)
 .sfx-panel-subtitle { margin: 0; font-size: var(--title-3-size); line-height: var(--title-3-line-height); }
 .sfx-limit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
 .sfx-test-case { display: grid; gap: var(--space-3); padding: var(--space-4); border: var(--border-default); border-radius: var(--radius-md); background: var(--surface-cool); }
+.sfx-knowledge-field { display: grid; gap: var(--space-2); border: var(--border-default); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); }
+.sfx-knowledge-field legend { font-size: var(--ui-md-size); font-weight: var(--ui-md-weight); padding: 0 var(--space-1); }
+.sfx-knowledge-list { display: grid; gap: var(--space-1); max-height: 180px; overflow-y: auto; }
+.sfx-knowledge-item { display: flex; align-items: center; gap: var(--space-2); font-size: var(--ui-sm-size); cursor: pointer; padding: 2px 0; }
+.sfx-evidence-check { display: flex; align-items: center; gap: var(--space-2); font-size: var(--ui-md-size); cursor: pointer; }
+.sfx-starter-block { display: grid; gap: var(--space-2); }
+.sfx-starter-title { margin: 0; font-size: var(--ui-md-size); }
+.sfx-starter-item { display: grid; gap: var(--space-1); }
+.sfx-evidence-banner { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-sm); font-size: var(--ui-sm-size); line-height: 1.6; }
+.sfx-evidence-banner.is-ready { border: 1px solid var(--green-300); background: var(--green-100); color: var(--green-700); }
+.sfx-evidence-banner.is-limited { border: 1px solid var(--amber-300); background: var(--amber-100); color: var(--amber-700); }
 .sfx-test-case > header { justify-content: flex-start; }
 .sfx-test-case > header .sfx-btn { margin-left: auto; }
 .sfx-code-input { min-height: 80px; font-family: "JetBrains Mono", "Fira Code", Consolas, monospace; line-height: 1.55; }
