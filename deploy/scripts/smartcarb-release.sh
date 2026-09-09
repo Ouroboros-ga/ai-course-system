@@ -11,7 +11,7 @@
 #   5. 重启后端并做健康检查（openapi + 首页）
 #   6. Nexus 独立运行时同步：nexus/ → /opt/smartcarb/nexus-runtime（保留旧副本，
 #      uv.lock 变化才 uv sync --frozen）并重启 nexus-runtime + 健康检查
-#   7. 同步 repro-runtime 控制面并健康检查（6c）
+#   7. 同步 repro-runtime 控制面（6c）＋重启语料常驻单元（6d）
 #   8. 调用 smartcarb-prune-releases.sh 清理旧 release
 #
 # CR6 说明：切 current **不会**恢复/更新独立 Nexus Runtime（独立目录 + 独立 venv），
@@ -256,6 +256,28 @@ if [ "${SMARTCARB_SKIP_REPRO_RUNTIME:-0}" != "1" ]; then
   fi
 else
   echo "==> 跳过 repro-runtime 同步（SMARTCARB_SKIP_REPRO_RUNTIME=1）"
+fi
+
+# 6d. 语料 RAG 常驻单元（随 current 切换重启，避免旧进程持旧代码）
+if systemctl cat smartcarb-corpus-embedding >/dev/null 2>&1; then
+  echo "==> 重启语料 embedding 服务（loopback 8310）"
+  systemctl restart smartcarb-corpus-embedding
+  corpus_ready=0
+  for i in $(seq 1 "$HEALTH_RETRIES"); do
+    if curl -fsS -o /dev/null http://127.0.0.1:8310/health 2>/dev/null; then
+      corpus_ready=1
+      echo "==> 语料 embedding 就绪（第 ${i} 次探测）"
+      break
+    fi
+    sleep "$HEALTH_INTERVAL"
+  done
+  # 不阻断发布：backend 启动不依赖该服务，查询侧有降级；如实告警。
+  [ "$corpus_ready" -eq 1 ] \
+    || echo "语料 embedding 健康检查失败；请人工排查（发布已继续）" >&2
+fi
+if systemctl cat smartcarb-corpus-worker >/dev/null 2>&1; then
+  systemctl restart smartcarb-corpus-worker || true
+  echo "==> 语料构建 worker 已重启（空闲轮询；有 queued 构建时自动开工）"
 fi
 
 # 7. 记录本次发布（回退清单）并清理旧 release
