@@ -323,6 +323,78 @@ def test_probe_link_ip_filter():
     assert intake_module._is_public_http_url("not a url") is False
 
 
+class _CheckedClient:
+    """_checked_get/_fetch_repo_file 替身：按 host 脚本化应答。"""
+
+    def __init__(self, raw_text=None, contents_text=None):
+        import base64 as _base64
+
+        self.raw_text = raw_text
+        self.contents_text = contents_text
+        self.calls: list[str] = []
+        self._b64 = _base64
+
+    async def get(self, url):
+        import httpx
+
+        self.calls.append(url)
+        if "raw.githubusercontent.com" in url:
+            if self.raw_text is None:
+                raise httpx.ConnectError("v6 down")
+            return _FakeResp(200, text=self.raw_text, url=url)
+        if "/contents/" in url:
+            if self.contents_text is None:
+                return _FakeResp(404, text="{}", url=url)
+            payload = {"encoding": "base64",
+                       "content": self._b64.b64encode(
+                           self.contents_text.encode()).decode()}
+            return _FakeResp(200, json_data=payload, url=url)
+        return _FakeResp(404, text="{}", url=url)
+
+
+class _FakeResp:
+    def __init__(self, status_code, text="", json_data=None, url=""):
+        self.status_code = status_code
+        self.text = text
+        self._json = json_data
+        self.url = url
+        self.headers = {}
+
+    def json(self):
+        if self._json is None:
+            raise ValueError("no json")
+        return self._json
+
+
+async def test_fetch_repo_file_prefers_raw():
+    """raw 可达即用 raw（不碰 contents API）。"""
+    from nexus import experiment_intake as intake_module
+
+    client = _CheckedClient(raw_text="hello-raw")
+    text = await intake_module._fetch_repo_file(client, "o", "r", "abc", "README.md", 5.0)
+    assert text == "hello-raw"
+    assert not any("/contents/" in call for call in client.calls)
+
+
+async def test_fetch_repo_file_falls_back_to_contents_api():
+    """raw 不通即 contents API 同 ref 读取（v6 机房实证场景）。"""
+    from nexus import experiment_intake as intake_module
+
+    client = _CheckedClient(raw_text=None, contents_text="hello-contents")
+    text = await intake_module._fetch_repo_file(client, "o", "r", "abc", "README.md", 5.0)
+    assert text == "hello-contents"
+    assert any("/contents/" in call and "ref=abc" in call for call in client.calls)
+
+
+async def test_fetch_repo_file_missing_both_ways():
+    """两路皆无即 None（调用方按不可读处理，不抛）。"""
+    from nexus import experiment_intake as intake_module
+
+    client = _CheckedClient(raw_text=None, contents_text=None)
+    assert await intake_module._fetch_repo_file(
+        client, "o", "r", "abc", "NOPE.md", 5.0) is None
+
+
 def test_parse_paper_ref_shapes():
     """F4：来源识别（arXiv URL/id、附件、标题）先于来源限制。"""
     from nexus import experiment_intake as intake_module
