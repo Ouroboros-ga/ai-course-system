@@ -1,0 +1,45 @@
+# finetune_提交包 —— 微调交付自洽提交包(2026-09-09)
+
+> 作用:挑战杯 XH-202620「05 作品代码」**微调部分的完整、自洽提交包**——评审/打包时
+> 无需再回仓库多处翻找;除 adapter zip 外均随仓库提交,zip 本体本地留存(建议上传
+> ModelScope 建仓后把「模型仓下载地址」填回材料 05)。
+> 基座声明:**Qwen/Qwen2.5-7B-Instruct**(LoRA r16);adapter 不含基座权重。
+
+## 目录与逐项对照
+
+| 材料05 要求 | 本包位置 | 说明 |
+|---|---|---|
+| 模型文件(LoRA 权重/下载地址) | `model_files/adapter_qwen25_7b_v22_final.zip` | 11 文件 146.4MB;SHA256 `548974c198ec81f54a6ac7caa7d358531eab8aa12d4697841aa6dfec7d1cdb50` |
+| 模型说明/基座声明 | `model_files/model_card_qwen25_7b_v22.md` | 概述、用途边界、数据合规、评测诚实口径、复现命令 |
+| 完整性校验 | `model_files/SHA256SUMS_微调交付.txt` | zip 与内部 11 文件逐项哈希 |
+| 训练记录/对照表 | `evidence/微调交付_模型与对照表.md` | A–G 表:清单、训练记录、loss 曲线、数据速查、评测、材料填写、费用 |
+| Loss 曲线(逐步) | `evidence/loss_curve_qwen25_7b_v22.csv` | 417 点(global_step/epoch/loss/grad_norm/lr) |
+| 基座 vs 微调评测明细 | `evidence/eval_基座vs微调_结果与样例.txt` | 逐条判定 + 6 组样例;基准10 自动 4/8 vs 3/8(如实,不宣称提升) |
+| 交付记录(归档) | `evidence/交付记录_2026-09-09.md` | 做了什么/交付/成本/坑/待办 |
+| 代码复现入口 | `code/` | `cloud_gpu_pack`:train_lora.py + v2.2 数据 + requirements + README + AutoDL 操作清单 |
+| MaaS 提交物(ServiceID 用) | `maas/` | spark_train_messages(2212)/alpaca、评测 50、防污染 10、manifest |
+| ServiceID(待填) | — | 星火 MaaS 训练后回填材料 05(见下"待办") |
+
+## 使用说明
+
+1. **模型文件交付**:把 `model_files/adapter_qwen25_7b_v22_final.zip` 上传 ModelScope 建仓
+   (或网盘),材料 05「模型文件下载地址」填模型仓/下载地址;本地即留底。
+2. **云端微调 ServiceID**(如需讯飞生态服务 ID):登录 training.xfyun.cn → 建数据集 →
+   上传 `maas/spark_train_messages.jsonl`(2212 条 ≥ lite 100 门槛)→ 选基座 spark/Qwen2.5 →
+   训练 → 发布为服务 → 得到 ServiceID → 回填材料 05。MaaS 不提供权重下载,权重由本包 model_files 补齐。
+3. **复现训练**:按 `code/README.md` + `code/AutoDL_操作清单.md`(4090 约 15 分钟/3 epochs);
+   需 ≥16GB 显存 Linux;本机 8GB 仅可 3B 冒烟。
+4. **评测**:50 条指令集 + judge0_manual 用例尚未全量评测(需沙箱);基准 10 问已测,结论如实。
+
+## 合规红线(打包前核对)
+
+- 包内无 `.env`、真实 Key、学生/敏感数据;训练数据为公开教材摘要 + 自建标准答案 +
+  CC BY-SA 等开源语料(溯源见数据卡)。
+- 评测口径诚实:基准 10 问 基座 4/8 vs 微调 3/8,**不得**宣称"评测提升";材料表述限
+  "LoRA 训练收敛(0.67)、可复现、输出贴合课程语料风格"。
+
+## 待办(提交前回填)
+
+- [ ] 材料 05:ServiceID(星火 MaaS)或注明未提交原因;
+- [ ] (可选)50 条评测 + 沙箱用例补测后更新 `evidence/` 中 E 表;
+- [ ] adapter zip 上传 ModelScope/网盘后,将下载地址写回材料 05 与 `model_files/SHA256SUMS_微调交付.txt` 旁说明。
