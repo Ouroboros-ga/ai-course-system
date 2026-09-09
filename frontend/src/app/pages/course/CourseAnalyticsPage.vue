@@ -337,6 +337,25 @@ function barPct(value, total) {
   return `${Math.min(100, (Number(value) || 0) / t * 100)}%`
 }
 
+// ---------- 编程实战（F3-B：终结化成绩聚合；掌握度口径不动） ----------
+const coding = computed(() => analytics.value?.coding || null)
+const codingStudents = computed(() => {
+  const map = {}
+  for (const row of (coding.value?.students || [])) {
+    map[row.student_id] = row
+  }
+  return map
+})
+function codingText(studentId) {
+  const row = codingStudents.value[studentId]
+  if (!row || (!row.submitted && !row.passed)) return '编程未提交'
+  return `编程提交 ${row.submitted} · 通过 ${row.passed}`
+}
+const codingPassRate = computed(() => {
+  const rate = coding.value?.pass_rate
+  return rate == null ? '—' : `${Math.round(rate * 100)}%`
+})
+
 function reasonText(cognition) {
   const codes = Array.isArray(cognition?.reason_codes) ? cognition.reason_codes : []
   return codes.length ? codes.join('、') : '暂无原因码'
@@ -489,6 +508,30 @@ onMounted(load)
           </div>
         </section>
 
+        <section v-if="coding && (coding.submitted > 0 || coding.passed > 0)" class="sfx-chart-grid">
+          <div class="sfx-panel sfx-chart-panel">
+            <h2 class="sfx-panel-title">编程实战</h2>
+            <p class="sfx-t-caption sfx-t-muted">终结化评测成绩聚合；提交数为到达终态的运行，通过数为可信终结记录，基础设施失败不计入</p>
+            <div class="sfx-metrics-grid">
+              <div class="sfx-metric-card">
+                <span class="sfx-metric-label">提交运行</span>
+                <strong class="sfx-metric-value">{{ coding.submitted }}</strong>
+                <span class="sfx-metric-sub">到达终态的评测运行</span>
+              </div>
+              <div class="sfx-metric-card">
+                <span class="sfx-metric-label">通过终结</span>
+                <strong class="sfx-metric-value">{{ coding.passed }}</strong>
+                <span class="sfx-metric-sub">可信终结记录为通过</span>
+              </div>
+              <div class="sfx-metric-card">
+                <span class="sfx-metric-label">通过率</span>
+                <strong class="sfx-metric-value">{{ codingPassRate }}</strong>
+                <span class="sfx-metric-sub">通过 / 提交</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section class="sfx-chart-grid">
           <div class="sfx-panel sfx-chart-panel">
             <h2 class="sfx-panel-title">掌握等级分布</h2>
@@ -533,6 +576,7 @@ onMounted(load)
             <span>学生 {{ student.student_id }}</span>
             <span>{{ student.completed }} / {{ student.total }} 已完成</span>
             <span>{{ Math.round(student.completion_rate * 100) }}%</span>
+            <span class="sfx-t-caption">{{ codingText(student.student_id) }}</span>
             <SfxButton size="sm" variant="secondary" @click="inspectStudent(student.student_id)">查看矩阵</SfxButton>
           </div>
           <p v-if="!students.length" class="sfx-t-secondary">当前发布版本没有可统计的学生。</p>
@@ -541,6 +585,7 @@ onMounted(load)
 
       <section v-if="studentDetail" class="sfx-panel">
         <h2 class="sfx-panel-title">学生 {{ selectedStudent }} 学习明细</h2>
+        <p v-if="studentDetail.coding && (studentDetail.coding.submitted > 0 || studentDetail.coding.passed > 0)" class="sfx-t-secondary">编程：提交 {{ studentDetail.coding.submitted }} · 通过 {{ studentDetail.coding.passed }}</p>
         <div v-for="item in studentDetail.items" :key="item.outline_node_id" class="sfx-analytics-student-detail">
           <div><strong>{{ item.title }}</strong><span>{{ item.learning.status }} · {{ Math.round(item.learning.completion_ratio * 100) }}%</span></div>
           <div><span>认知：{{ item.cognition.mastery_level || item.cognition.status }}</span><span>置信度：{{ item.cognition.evidence_confidence ?? '—' }}</span></div>
