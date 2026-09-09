@@ -1419,6 +1419,10 @@ test('实验链F3：终结化同步完成投影，学情加编程聚合', () => 
   assert.match(service, /LearningEventType\.EXPLICIT_COMPLETE/)
   assert.match(service, /experiment_finalize\|\{attempt\.attempt_id\}/)
   assert.match(service, /refresh_course_stats\(session, course_id=course_id, release_id=release_id\)/)
+  // 正式实验页的 attempt 无 release/outline 身份：经 active release + 知识映射
+  // 回退解析；统计投影异常不得阻断评分（non-blocking）。
+  assert.match(service, /_resolve_active_outlines\(/)
+  assert.match(service, /non-blocking/)
   // B：学情课程级与单学生级均带 coding 聚合（可信终结记录口径）。
   assert.match(facade, /def _coding_summary\(/)
   assert.match(facade, /LabRecord\.trusted_source == True/)

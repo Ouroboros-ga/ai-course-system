@@ -1263,13 +1263,22 @@ class ExperimentFinalizeService:
             session, attempt=attempt, run=latest_run,
         )
 
-        # F3-A：通过的实验同步完成态投影。只有能确定 release/outline 身份时写，
-        # 映射不上就跳过（不猜）；幂等键保证终结化重试不重复计数。未通过的尝试
-        # 不动 exposure（掌握度仍经证据链渗透），完成率只反映真正做出的题目。
+        # F3-A：通过的实验同步完成态投影。身份按"attempt 自带 → active release +
+        # 知识映射"回退解析，都解析不出就跳过（不猜）；幂等键保证终结化重试不
+        # 重复计数。未通过的尝试不动 exposure（掌握度仍经证据链渗透），完成率
+        # 只反映真正做出的题目。统计投影绝不能阻断评分：异常只记日志。
         if attempt.passed:
-            self._project_completion_on_pass(
-                session, course_id=course_id, attempt=attempt,
-            )
+            try:
+                self._project_completion_on_pass(
+                    session, course_id=course_id, attempt=attempt,
+                )
+            except Exception:
+                logger.exception(
+                    "Experiment finalize completion projection failed (non-blocking): "
+                    "course_id=%s attempt_id=%s",
+                    course_id,
+                    attempt.attempt_id,
+                )
 
         session.add(attempt)
         session.flush()
@@ -1280,35 +1289,126 @@ class ExperimentFinalizeService:
         from app.models.unified_learning_model import LearningEventType
         from app.services.unified_learning_service import record_event, refresh_course_stats
 
+        # 1) 优先使用 attempt 自带身份（对话式挑战链路）；正式实验页没有该身份，
+        #    回退到 active release + 知识映射解析（学情统计本来就按 active
+        #    release 口径展示）。
         release_id = getattr(attempt, "source_release_id", None)
-        outline_node_id = getattr(attempt, "outline_node_id", None)
-        if not release_id or not outline_node_id:
-            return
-        try:
-            record_event(
-                session,
-                student_id=attempt.student_id,
-                course_id=course_id,
-                release_id=release_id,
-                outline_node_id=outline_node_id,
-                event_type=LearningEventType.EXPLICIT_COMPLETE,
-                idempotency_key=f"experiment_finalize|{attempt.attempt_id}",
-                payload={
-                    "experiment_id": attempt.experiment_id,
-                    "final_score": attempt.final_score,
-                },
-                source="experiment_finalize",
+        outline_node_ids: list[str] = []
+        if getattr(attempt, "outline_node_id", None):
+            outline_node_ids = [attempt.outline_node_id]
+        if not release_id or not outline_node_ids:
+            resolved = ExperimentFinalizeService._resolve_active_outlines(
+                session, course_id=course_id, attempt=attempt,
             )
-        except ValueError:
-            # release 不存在 / 节点不在该 release 内：映射不上就跳过，不猜测。
+            if resolved is None:
+                return
+            release_id, outline_node_ids = resolved
+        wrote = False
+        for outline_node_id in outline_node_ids:
+            try:
+                record_event(
+                    session,
+                    student_id=attempt.student_id,
+                    course_id=course_id,
+                    release_id=release_id,
+                    outline_node_id=outline_node_id,
+                    event_type=LearningEventType.EXPLICIT_COMPLETE,
+                    idempotency_key=(
+                        f"experiment_finalize|{attempt.attempt_id}|{outline_node_id}"
+                    ),
+                    payload={
+                        "experiment_id": attempt.experiment_id,
+                        "final_score": attempt.final_score,
+                    },
+                    source="experiment_finalize",
+                )
+            except ValueError:
+                # release 不存在 / 节点不在该 release 内：映射不上就跳过，不猜测。
+                logger.warning(
+                    "Experiment finalize completion skipped (unmapped release/node): "
+                    "course_id=%s attempt_id=%s outline_node_id=%s",
+                    course_id,
+                    attempt.attempt_id,
+                    outline_node_id,
+                )
+                continue
+            wrote = True
+        if wrote:
+            refresh_course_stats(session, course_id=course_id, release_id=release_id)
+
+    @staticmethod
+    def _resolve_active_outlines(
+        session: Session, *, course_id: int, attempt,
+    ):
+        """经 active release + 知识映射解析大纲节点。
+
+        返回 (release_id, [outline_node_id])，解析不出返回 None。
+        definition 未配知识点 / 无 active release / 知识点在大纲找不到
+        对应节点时均为预期内的"配不通"，调用方跳过即可。
+        """
+        from app.models.course_outline_model import CourseOutlineNode
+        from app.models.graph_production_model import CourseKnowledgeNode
+        from app.services.unified_learning_service import active_release
+
+        try:
+            definition = definition_service.get_definition(
+                session, course_id=course_id, experiment_id=attempt.experiment_id,
+            )
+        except Exception:
             logger.warning(
-                "Experiment finalize completion skipped (unmapped release/node): "
+                "Experiment finalize completion skipped (no definition): "
                 "course_id=%s attempt_id=%s",
                 course_id,
                 attempt.attempt_id,
             )
-            return
-        refresh_course_stats(session, course_id=course_id, release_id=release_id)
+            return None
+        requested = [
+            node_id
+            for node_id in (definition.knowledge_node_ids or [])
+            if isinstance(node_id, int) and not isinstance(node_id, bool)
+        ]
+        if not requested:
+            logger.warning(
+                "Experiment finalize completion skipped (no_knowledge_nodes): "
+                "course_id=%s attempt_id=%s experiment_id=%s",
+                course_id,
+                attempt.attempt_id,
+                attempt.experiment_id,
+            )
+            return None
+        release = active_release(session, course_id)
+        if release is None:
+            logger.warning(
+                "Experiment finalize completion skipped (no_active_release): "
+                "course_id=%s attempt_id=%s",
+                course_id,
+                attempt.attempt_id,
+            )
+            return None
+        outlines: list[str] = []
+        for node_id in requested:
+            knowledge = session.exec(select(CourseKnowledgeNode).where(
+                CourseKnowledgeNode.id == node_id,
+                CourseKnowledgeNode.course_id == course_id,
+            )).first()
+            if knowledge is None:
+                continue
+            outline = session.exec(select(CourseOutlineNode).where(
+                CourseOutlineNode.course_id == course_id,
+                CourseOutlineNode.outline_version_id == release.outline_version_id,
+                CourseOutlineNode.knowledge_graph_node_id == knowledge.node_key,
+            )).first()
+            if outline is not None and outline.outline_node_id not in outlines:
+                outlines.append(outline.outline_node_id)
+        if not outlines:
+            logger.warning(
+                "Experiment finalize completion skipped (node_not_mapped): "
+                "course_id=%s attempt_id=%s",
+                course_id,
+                attempt.attempt_id,
+            )
+            return None
+        return release.release_id, outlines
 
     def _write_formal_evidence(
         self,
