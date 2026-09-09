@@ -187,13 +187,10 @@ class GitHubReader:
                 for name in (*_README_NAMES, *_ENV_FILES):
                     if total >= _TOTAL_CAP:
                         break
-                    f_resp = await _checked_get(
-                        client,
-                        f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{name}",
-                        self._timeout)
-                    if f_resp is None:
+                    raw = await _fetch_repo_file(client, owner, repo, ref, name,
+                                                 self._timeout)
+                    if raw is None:
                         continue
-                    raw = f_resp.text
                     truncated = len(raw) > _FILE_CAP
                     text = raw[:_FILE_CAP]
                     total += len(text)
@@ -257,13 +254,10 @@ class GitHubReader:
                         except Exception:  # noqa: BLE001
                             sha = ""
                 ref = sha or "main"
-                f_resp = await _checked_get(
-                    client,
-                    f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{cleaned_path}",
-                    self._timeout, max_bytes=limit + offset + 16)
-                if f_resp is None:
+                raw = await _fetch_repo_file(client, owner, repo, ref, cleaned_path,
+                                             self._timeout)
+                if raw is None:
                     return {"reachable": False, "reason": "文件不可读"}
-                raw = f_resp.text
                 window = raw[offset:offset + limit]
                 return {"reachable": True, "text": window,
                         "truncated": len(raw) > offset + limit,
@@ -271,6 +265,49 @@ class GitHubReader:
         except Exception as error:  # noqa: BLE001
             logger.warning("github file read failed: %s", type(error).__name__)
             return {"reachable": False, "reason": f"读取失败（{type(error).__name__}）"}
+
+
+async def _fetch_repo_file(client: Any, owner: str, repo: str, ref: str,
+                           name: str, timeout_s: float) -> str | None:
+    """F4：取仓库文件文本（raw 优先＋contents API 回退）。
+
+    线上实证：部分机房 IPv6 egress 不通时 raw.githubusercontent.com
+    只解析到 v6 而连接超时；此时经同属白名单的 api.github.com contents
+    接口按同 ref 读取（base64 解码，体量上限内），读不到即 None。
+    """
+    from urllib.parse import quote as _quote
+
+    raw_resp = await _checked_get(
+        client,
+        f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{name}",
+        min(6.0, timeout_s))
+    if raw_resp is not None:
+        try:
+            return raw_resp.text
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        api_resp = await _checked_get(
+            client,
+            f"https://api.github.com/repos/{owner}/{repo}/contents/"
+            f"{_quote(name, safe='')}?ref={_quote(ref, safe='')}",
+            timeout_s)
+        if api_resp is None:
+            return None
+        payload = api_resp.json()
+        if not isinstance(payload, dict) or payload.get("encoding") != "base64":
+            return None
+        import base64 as _base64
+
+        content = str(payload.get("content") or "")
+        if len(content) > 4 * (_FETCH_MAX_BYTES // 3) + 8:
+            logger.warning("contents api body too large for %s", name)
+            return None
+        return _base64.b64decode(content).decode("utf-8", errors="replace")
+    except Exception as error:  # noqa: BLE001
+        logger.warning("contents api fallback failed for %s: %s",
+                       name, type(error).__name__)
+        return None
 
 
 async def _checked_get(client: Any, url: str, timeout_s: float,
