@@ -60,7 +60,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, requestNexusRunFormats, requestNexusRunCleanVerify, requestNexusRunResume, cancelNexusRunOperation, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, requestNexusRunFormats, requestNexusRunCleanVerify, requestNexusRunResume, cancelNexusRunOperation, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval, listNexusCompares, getNexusCompare, linkNexusCompareRun, cancelNexusCompare } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -505,8 +505,84 @@ watch(
   { immediate: true }
 )
 watch(isLabView, (v) => {
-  if (v) loadRunNotes(activeRun.value?.runId || '')
+  if (v) {
+    loadRunNotes(activeRun.value?.runId || '')
+    loadCompares()
+  }
 })
+
+/* ── F8 受控对照 ───────────────────────────────────────────────
+   对照不执行任何东西：只建规格、关联终态运行、并列报告。
+   结论只有 descriptive_ready / incomplete，界面不出现"显著/更优/提升"。 */
+const compares = ref([])
+const activeCompare = ref(null)
+const activeCompareId = ref('')
+const linking = ref(false)
+
+async function loadCompares() {
+  if (nexusDataSourceMode.value !== 'real') {
+    compares.value = []
+    activeCompare.value = null
+    return
+  }
+  try {
+    const res = await listNexusCompares(activeSessionId.value || '')
+    const list = Array.isArray(res) ? res : (res?.compares || res?.items || [])
+    compares.value = list
+    const pick = activeCompareId.value
+      ? list.find((c) => c.compare_id === activeCompareId.value)
+      : list[0]
+    if (pick?.compare_id) await selectCompare(pick.compare_id)
+    else {
+      activeCompareId.value = ''
+      activeCompare.value = null
+    }
+  } catch {
+    // fail-closed：取不到就当没有对照，不回退演示数据
+    compares.value = []
+    activeCompare.value = null
+  }
+}
+
+async function selectCompare(compareId) {
+  if (!compareId) return
+  activeCompareId.value = compareId
+  try {
+    const res = await getNexusCompare(compareId)
+    activeCompare.value = res?.compare || res || null
+  } catch (err) {
+    activeCompare.value = null
+    showToast(err?.message || '对照详情加载失败', 'error')
+  }
+}
+
+/** 关联终态运行：三道硬门（终态/有冻结配方/配方一致）全在服务端，前端只传 arm + run_id */
+async function linkCompareRun({ armName, runId }) {
+  const compareId = activeCompare.value?.compare_id
+  if (!compareId || !armName || !runId || linking.value) return
+  linking.value = true
+  try {
+    await linkNexusCompareRun(compareId, armName, runId)
+    await selectCompare(compareId)
+    showToast(`已关联 ${armName}`, 'success')
+  } catch (err) {
+    // 拒绝码（COMPARE_RECIPE_MISMATCH 等）原样透出，不翻译成"成功"
+    showToast(err?.message || '关联失败', 'error')
+  } finally {
+    linking.value = false
+  }
+}
+
+async function cancelCompareById(compareId) {
+  if (!compareId) return
+  try {
+    await cancelNexusCompare(compareId)
+    await selectCompare(compareId)
+    showToast('对照已取消；已关联结果保留', 'success')
+  } catch (err) {
+    showToast(err?.message || '取消失败', 'error')
+  }
+}
 
 async function addRunNote({ content, onError, onDone }) {
   const runId = activeRun.value?.runId
@@ -3213,6 +3289,12 @@ const emptySuggestions = computed(() =>
         :preset="activePreset"
         :noting="noting"
         :execution-mode="execMode"
+        :compare="activeCompare"
+        :compares="compares"
+        :linking="linking"
+        @compare-select="selectCompare"
+        @compare-link="linkCompareRun"
+        @compare-cancel="cancelCompareById"
         @switch="switchActiveRun"
         @cancel="cancelRunFromWorkspace"
         @ask="openAskWindow"
