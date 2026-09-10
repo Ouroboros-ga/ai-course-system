@@ -1,0 +1,10 @@
+{
+  "spark_x25": {
+    "file_name": "spark_x25_alpaca.jsonl",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output"
+    }
+  }
+}
