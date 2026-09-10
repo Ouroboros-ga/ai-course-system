@@ -1,8 +1,10 @@
 # GPU 训练依赖（LoRA/SFT 微调用，可选）
 # ⚠️ 安装前需用户明确批准（AGENTS.md §8.5：安装依赖前经用户批准）。
 # 不进入 backend/pyproject.toml 主依赖；无 GPU 环境可跳过，仅用 RAG 增强。
+# 星火 X2.5 自定义架构（Spark2_5ForCausalLM）要求 transformers>=4.57.1。
 torch>=2.3
-transformers>=4.44
+transformers>=4.57.1
 peft>=0.12
 datasets>=2.20
 accelerate>=0.33
+bitsandbytes>=0.43  # 仅 --use-4bit QLoRA 降级方案需要；4090/5090 跑 BF16 可不装
