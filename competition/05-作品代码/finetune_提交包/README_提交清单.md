@@ -3,7 +3,8 @@
 > 作用:挑战杯 XH-202620「05 作品代码」**微调部分的完整、自洽提交包**——评审/打包时
 > 无需再回仓库多处翻找;除 adapter zip 外均随仓库提交,zip 本体本地留存(建议上传
 > ModelScope 建仓后把「模型仓下载地址」填回材料 05)。
-> 基座声明:**Qwen/Qwen2.5-7B-Instruct**(LoRA r16);adapter 不含基座权重。
+> 基座声明:**Qwen/Qwen2.5-7B-Instruct** 与 **XHToken/Spark-X2.5-4B**(Apache-2.0)两个 LoRA adapter;
+> adapter 均不含基座权重,需自行加载基座。数据:训练集 v2.2(2212)与 v3(3127)/评测 231(见 `dataset/`)。
 
 ## 目录与逐项对照
 
@@ -17,13 +18,20 @@
 | 基座 vs 微调评测明细 | `evidence/eval_基座vs微调_结果与样例.txt` | 逐条判定 + 6 组样例;基准10 自动 4/8 vs 3/8(如实,不宣称提升) |
 | 交付记录(归档) | `evidence/交付记录_2026-09-09.md` | 做了什么/交付/成本/坑/待办 |
 | 代码复现入口 | `code/` | `cloud_gpu_pack`:train_lora.py + v2.2 数据 + requirements + README + AutoDL 操作清单 |
+| **模型文件 ②(星火 4B,推荐主交付)** | `model_files/adapter_spark_x25_4b_final.zip` | 7 文件 95.2MB(解压 140MB);SHA256 `a5333425d9b42b5837628cc6d3819de77a821007a2b54ee57c5c16265fcafcf1` |
+| 星火 4B 模型卡 | `model_files/model_card_spark_x25_4b.md` | 基座 Apache-2.0 / LoRA r16 / 32.45M 可训练(0.78%)/ 边界与复现 |
+| 星火 4B 完整性校验 | `model_files/SHA256SUMS_spark_x25_4b.txt` | zip 与内部 7 文件逐项哈希 |
+| 星火 4B 评测与曲线 | `evidence/spark_x25_4b_评测与曲线.md` | 训练记录 + **逐步 loss 曲线 588 点** + eval_loss + 基座/微调对照 + 基准10 |
+| 星火 4B 曲线数据 | `evidence/spark4b_loss_curve.csv`、`spark4b_loss_curve_eval.csv` | 588 步 loss / 3 点 eval_loss |
+| 星火 4B 生成式评测 | `evidence/eval_spark_x25_4b.txt` | 基准 10 问逐条判定 + 6 组样例(基座/微调/参考答案) |
+| **数据集统合** | `dataset/` | v2.2(2212/50)+ **v3(3127/231,来源 dev-liu `d1c2be0`)** + 基准10 + `DATASET_MANIFEST.md` |
 | MaaS 提交物(可选补充) | `maas/` | spark_train_messages(2212)/alpaca、评测 50、防污染 10、manifest |
 | ServiceID(二选一,无需) | — | 赛题允许"模型文件或 ServiceID 二选一";本包已提供模型文件,故无需 ServiceID |
 
 ## 使用说明
 
-1. **模型文件交付**:把 `model_files/adapter_qwen25_7b_v22_final.zip` 上传 ModelScope 建仓
-   (或网盘),材料 05「模型文件下载地址」填模型仓/下载地址;本地即留底。
+1. **模型文件交付**:把 `model_files/` 下两个 zip(**Qwen2.5-7B v2.2** 与 **星火 X2.5-4B v3**,后者为主交付)
+   上传 ModelScope 建仓(或网盘),材料 05「模型文件下载地址」填模型仓/下载地址;本地即留底。
 2. **云端微调 ServiceID(可选,二选一)**:赛题允许"模型文件或 ServiceID 二选一",本包已提供
    模型文件,ServiceID **非必需**;如需讯飞生态服务 ID:登录 training.xfyun.cn → 建数据集 →
    上传 `maas/spark_train_messages.jsonl`(2212 条 ≥ lite 100 门槛)→ 选基座 spark/Qwen2.5 →

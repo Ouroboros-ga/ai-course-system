@@ -45,3 +45,27 @@
 - 数据来源:公开教材内容摘要 / 自建标准答案 / 开源语料(CC BY-SA 等,逐条溯源见 `backend/finetune/data/corpus_qa_provenance.jsonl`);无真实学生或敏感数据。
 - 防污染:评测基准 10 问仅存在于评测集,训练集不含(自动校验 0 泄漏)。
 - 历史版本(`instruction_train.jsonl` 197 条 等)仅作追溯,不作为当前训练依据。
+
+---
+
+## 新数据集接入记录 `v3`(由 `backend/finetune/intake_dataset.py` 生成)
+
+| 文件 | 条数 | 大小 | SHA256(前12) |
+|---|---|---|---|
+| `v3_train_messages.jsonl` | 3127 | 2.09 MB | `fbbdf9f6d34e` |
+| `v3_train_alpaca.jsonl` | 3127 | 1.94 MB | `1867caa3d7c2` |
+| `v3_eval.jsonl` | 231 | 0.15 MB | `3d6b49f0ec29` |
+| `sft_train_v2.2_messages.jsonl` | 2212 | 1.24 MB | `d3aa8bb48287` |
+| `sft_train_v2.2_alpaca.jsonl` | 2212 | 1.07 MB | `a6d139e0daad` |
+| `sft_eval_v2.2.jsonl` | 50 | 0.03 MB | `6c754f3b8bee` |
+| `benchmark10_only.jsonl` | 10 | 0.00 MB | `c6f3009d0952` |
+
+| 画像项 | 值 |
+|---|---|
+| 条数 | 3127 |
+| 消息数 | 6948(多轮 296) |
+| 内容字符 | 731,221 |
+| 单条上限 | 708 字符 |
+| 中文/英文起始 | 3113 / 14 |
+
+防污染检查:基准 10 问 **0 命中**(通过)。
