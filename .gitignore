@@ -140,9 +140,10 @@ backend/finetune/lora_output_qwen25_7b_v22/
 backend/finetune/export/adapter_qwen25_7b_v22_final.zip
 backend/finetune/export/_train7b_raw_log.txt
 backend/finetune/export/cloud_gpu_pack.zip
-competition/05-作品代码/finetune_提交包/model_files/*.zip
 backend/finetune/lora_output_spark_x25_4b/
 backend/finetune/export/adapter_spark_x25_4b_final.zip
 backend/finetune/export/_spark4b_train.log
 backend/finetune/data/incoming_devliu/
 backend/finetune/export/spark_x25_cloudrun.zip
+competition/05-作品代码/finetune_提交包/model_qwen25_7b_v22/*.zip
+competition/05-作品代码/finetune_提交包/model_spark_x25_4b/*.zip
