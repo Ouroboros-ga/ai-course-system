@@ -1,7 +1,7 @@
 # 云 GPU 一键包 —— Qwen2.5 LoRA 微调(挑战杯 XH-202620)
 
 > 生成:2026-09-09 · 数据:`instruction_train_v2.jsonl` 2212 条训练 / 50 条评测(数据卡见 `data/DATACARD.md`)
-> 目的:在云 GPU(Linux,无 WDDM 降频问题)上跑出 **adapter 模型文件**(`adapter_model.safetensors + adapter_config.json`,几十 MB),与星火 MaaS ServiceID 路径(见 `backend/finetune/export/` 其他文件)构成双证据。
+> 目的:在云 GPU(Linux,无 WDDM 降频问题)上跑出 **adapter 模型文件**(`adapter_model.safetensors + adapter_config.json`,几十 MB),作为本提交的微调模型文件交付。
 > 本地 8GB 笔记本实测结论:**3B/7B 小 batch 训练受 Windows WDDM 限制仅 ~60–80 tok/s,3 epochs 需 6–9h**,不建议本地跑满;云 GPU 4090 约 0.5–1.5h、成本数元。
 
 ## 目录
