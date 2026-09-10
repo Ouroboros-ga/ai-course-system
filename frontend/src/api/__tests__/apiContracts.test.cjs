@@ -1503,3 +1503,18 @@ test('F8 受控对照：共同条件＋两组冻结配方＋只关联终态运�
   assert.match(tool, /get_compare/)
   assert.match(tool, /cancel_compare/)
 })
+
+test('F9 配方身份：详情透传配方引用，工作台只读展示（空即历史未验证）', () => {
+  const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  // 后端：console 合并层直通配方引用（与 clean_status 同模式，只读投影）。
+  assert.match(backend, /merged\["recipe_hash"\] = console\.get\("recipe_hash", ""\)/)
+  assert.match(backend, /merged\["recipe_status"\] = console\.get\("recipe_status", ""\)/)
+  // 父组件：详情透传（空即未冻结，不反推执行事实）。
+  assert.match(page, /run\.recipeHash = /)
+  assert.match(page, /run\.recipeStatus = /)
+  // 工作台：短 hash 只读展示；无配方显历史未验证。
+  assert.match(ws, /run\?\.recipeHash/)
+  assert.match(ws, /历史未验证/)
+})

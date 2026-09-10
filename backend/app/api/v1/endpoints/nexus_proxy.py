@@ -1575,6 +1575,9 @@ def _merge_run_console(
     # SR6：干净B结论直通（只读投影；""=未验证/verifying=运行中）。
     merged["clean_status"] = console.get("clean_status", "")
     merged["clean_note"] = console.get("clean_note", "")
+    # F9：冻结配方身份直通（只读投影；""=未冻结/历史未验证，UI 不反推执行事实）。
+    merged["recipe_hash"] = console.get("recipe_hash", "")
+    merged["recipe_status"] = console.get("recipe_status", "")
     console_status = console.get("console_status", "unknown")
     merged["live"] = {
         "status": console_status,

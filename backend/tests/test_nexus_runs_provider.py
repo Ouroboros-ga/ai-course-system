@@ -172,6 +172,32 @@ def test_run_detail_autonomous_has_attempts(client, session, student_user, monke
     assert body["artifacts"] == []
 
 
+def test_run_detail_autonomous_carries_recipe_identity(client, session, student_user,
+                                                      monkeypatch):
+    """F9：冻结配方身份随详情直通（有则透、无则空，不反推执行事实）。"""
+    token = _grant_fixture(monkeypatch, session, student_user)
+    uid = str(student_user.id)
+    _record_auto(session, "apv_f9_recipe", user=uid, session_id=SID)
+    _record_auto(session, "apv_f9_bare", user=uid, session_id=SID)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        snapshot = _console_snapshot("apv_f9_recipe")
+        if "apv_f9_recipe" in request.url.path:
+            snapshot["snapshot"]["recipe_hash"] = "deadbeef0001"
+            snapshot["snapshot"]["recipe_status"] = "complete"
+        return httpx.Response(200, json=snapshot)
+
+    with mock_runtime(handler):
+        frozen = client.get("/api/v1/nexus/runs/apv_f9_recipe", headers=_auth(token))
+        bare = client.get("/api/v1/nexus/runs/apv_f9_bare", headers=_auth(token))
+    assert frozen.status_code == 200
+    assert frozen.json()["recipe_hash"] == "deadbeef0001"
+    assert frozen.json()["recipe_status"] == "complete"
+    assert bare.status_code == 200
+    assert bare.json()["recipe_hash"] == ""
+    assert bare.json()["recipe_status"] == ""
+
+
 def test_user_cancel_autonomous_calls_runtime(client, session, student_user, monkeypatch):
     token = _grant_fixture(monkeypatch, session, student_user)
     uid = str(student_user.id)
