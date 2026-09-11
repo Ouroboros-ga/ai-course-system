@@ -1,4 +1,4 @@
-﻿# app/main.py
+# app/main.py
 import logging
 import os
 from importlib.util import find_spec
@@ -158,6 +158,7 @@ from app.api.v1.endpoints import (
     document_parse,     # 阶段4 课程材料解析、Evidence、Citation与图谱治理
     practice_recommendation,  # 阶段5 题库、练习推荐、正式学习证据
     experiments,        # 阶段6 课程实验与 TeachingAgent 代码能力兼容接口
+    experiment_activities,  # PR-08：OJ Activity 管理 API（同挂 /api/v1/experiments 前缀）
     resources,          # 阶段7 资源库
     labs,               # 阶段7 平台实验室目录
     agent_governance,   # 阶段9 Agent 工具治理与教师安全阀
@@ -502,6 +503,13 @@ app.include_router(
     experiments.experiment_router,
     prefix="/api/v1/experiments",
     tags=["阶段6 课程实验与代码能力（兼容接口）"],
+)
+
+# PR-08：OJ Activity 管理 API（前缀不变，ADR-0001 决定 6）
+app.include_router(
+    experiment_activities.activity_router,
+    prefix="/api/v1/experiments",
+    tags=["阶段6 OJ 活动管理"],
 )
 
 # 阶段7：资源库

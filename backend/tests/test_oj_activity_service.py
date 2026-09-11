@@ -128,8 +128,12 @@ class TestLifecycle:
                 title="比赛", type="contest",
             )
         assert exc.value.status_code in (400, 409, 422)
-        # 没有落库
-        assert not session.exec(select(ExperimentActivity)).all()
+        # 没有落库（按 type 查，不按全表行数 —— 测试库跨用例共享，
+        # 其它用例提交的活动行不应影响本断言）
+        rows = session.exec(
+            select(ExperimentActivity).where(ExperimentActivity.type == "contest")  # type: ignore[attr-defined]
+        ).all()
+        assert rows == []
 
     def test_invalid_window_rejected(self, session, teacher_user, course, svc):
         with pytest.raises(HTTPException) as exc:

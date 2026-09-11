@@ -223,6 +223,29 @@ class ExperimentActivityService:
         session.flush()
         return activity
 
+    def list_activities(
+        self, session: OrmSession, *, course_id: int
+    ) -> list[ExperimentActivity]:
+        """管理视图：课程下全部活动（含 draft / archived），新创建在前。"""
+        return list(
+            session.exec(
+                select(ExperimentActivity)
+                .where(ExperimentActivity.course_id == course_id)
+                .order_by(ExperimentActivity.created_at.desc())
+            ).all()
+        )
+
+    def list_scopes(
+        self, session: OrmSession, *, activity_id: str
+    ) -> list[ExperimentActivityScope]:
+        return list(
+            session.exec(
+                select(ExperimentActivityScope).where(
+                    ExperimentActivityScope.activity_id == activity_id
+                )
+            ).all()
+        )
+
     # ------------------------------------------------------------------
     # 题目组织（版本固定不变式在此强制）
     # ------------------------------------------------------------------

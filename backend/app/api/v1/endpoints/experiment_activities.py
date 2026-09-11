@@ -1,0 +1,325 @@
+"""OJ Activity 管理 API（PR-08）：教师对活动 / 题目 / 可见范围的管理端点。
+
+**为什么独立成文件而不加进 `experiments.py`**：那已是 1200+ 行的兼容接口大文件；
+Activity 是新 bounded context，路由也按 context 分文件（与 PR-03/04 的服务拆分
+同构）。**前缀不变**（ADR ⑥ 决定 6）：本 router 同样挂在 `/api/v1/experiments` 下，
+不引入 `/oj`。
+
+权限：全部走 `experiment.configure`（教师侧管理语义）。学生侧可见性接口属 PR-12
+学生 Activity 页，本文件不提供 —— 别在这里提前开学生口子。
+
+A DR ⑪：router 只做「鉴权 + 参数形状 + 透传 + 序列化」，业务规则全在
+`ExperimentActivityService` / `domain/oj/activity/`。
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+from sqlmodel import Session
+
+from app.core.exceptions import unified_response
+from app.core.security import get_current_user
+from app.models.database import get_session
+from app.models.experiment_activity_model import ExperimentActivityProblem
+from app.services.course_access_service import require_course_permission
+from app.services.experiment_activity_service import ExperimentActivityService
+
+activity_router = APIRouter()
+
+activity_service = ExperimentActivityService()
+
+
+# ---------------------------------------------------------------------------
+# 请求 schema（只做形状约束；取值合法性在 service → 域层）
+# ---------------------------------------------------------------------------
+
+
+class ActivityCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    type: Optional[str] = Field(default=None, max_length=32)
+    description_md: str = Field(default="", max_length=20_000)
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+    allow_late_submit: bool = False
+    max_submissions: int = Field(default=0, ge=0)
+    scoring_mode: Optional[str] = Field(default=None, max_length=32)
+    ranking_mode: Optional[str] = Field(default=None, max_length=32)
+
+
+class ActivityUpdateRequest(BaseModel):
+    """PATCH 语义：`None` = 不动；`clear_window=True` = 清空时间窗（不限时）。"""
+
+    title: Optional[str] = Field(default=None, max_length=200)
+    description_md: Optional[str] = Field(default=None, max_length=20_000)
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+    allow_late_submit: Optional[bool] = None
+    max_submissions: Optional[int] = Field(default=None, ge=0)
+    clear_window: bool = False
+
+
+class ActivityProblemAddRequest(BaseModel):
+    problem_definition_id: str = Field(min_length=1, max_length=64)
+    ordinal: Optional[int] = Field(default=None, ge=1)
+    label: str = Field(default="", max_length=32)
+    max_score: float = Field(default=1.0, ge=0.0)
+
+
+class ActivityScopeSetRequest(BaseModel):
+    scopes: list[dict] = Field(default_factory=list, max_length=100)
+
+
+# ---------------------------------------------------------------------------
+# 序列化
+# ---------------------------------------------------------------------------
+
+
+def _serialize_activity(a) -> dict[str, Any]:
+    return {
+        "activity_id": a.activity_id,
+        "type": a.type,
+        "title": a.title,
+        "description_md": a.description_md,
+        "course_id": a.course_id,
+        "owner_id": a.owner_id,
+        "status": a.status,
+        "start_at": a.start_at.isoformat() if a.start_at else None,
+        "end_at": a.end_at.isoformat() if a.end_at else None,
+        "allow_late_submit": a.allow_late_submit,
+        "freeze_at": a.freeze_at.isoformat() if a.freeze_at else None,
+        "scoring_mode": a.scoring_mode,
+        "ranking_mode": a.ranking_mode,
+        "max_submissions": a.max_submissions,
+        "published_at": a.published_at.isoformat() if a.published_at else None,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+    }
+
+
+def _serialize_problem(p: ExperimentActivityProblem) -> dict[str, Any]:
+    return {
+        "ordinal": p.ordinal,
+        "problem_definition_id": p.problem_definition_id,
+        "problem_version_id": p.problem_version_id,
+        "label": p.label,
+        "max_score": p.max_score,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 端点（鉴权 + 形状 + 透传；规则在 service/域层）
+# ---------------------------------------------------------------------------
+
+
+@activity_router.post("/course/{course_id}/activities")
+async def create_activity(
+    course_id: int,
+    payload: ActivityCreateRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师创建活动（draft 态）。contest/exam 等未实现类型在 service 显式拒绝。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    activity = activity_service.create_activity(
+        session,
+        course_id=course_id,
+        owner_id=int(current_user["user_id"]),
+        title=payload.title,
+        type=payload.type,
+        description_md=payload.description_md,
+        start_at=payload.start_at,
+        end_at=payload.end_at,
+        allow_late_submit=payload.allow_late_submit,
+        max_submissions=payload.max_submissions,
+        scoring_mode=payload.scoring_mode,
+        ranking_mode=payload.ranking_mode,
+    )
+    session.commit()
+    session.refresh(activity)
+    return unified_response(
+        code=201, message="活动已创建", data=_serialize_activity(activity)
+    )
+
+
+@activity_router.get("/course/{course_id}/activities")
+async def list_activities(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师列出本课程全部活动（管理视图：含 draft / archived）。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    activities = activity_service.list_activities(session, course_id=course_id)
+    return unified_response(
+        code=200,
+        message="获取活动列表成功",
+        data={
+            "course_id": course_id,
+            "items": [_serialize_activity(a) for a in activities],
+            "total": len(activities),
+        },
+    )
+
+
+@activity_router.get("/course/{course_id}/activities/{activity_id}")
+async def get_activity(
+    course_id: int,
+    activity_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """活动详情（含题目与可见范围）。跨课程访问由 service 统一 404。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    activity = activity_service.get_activity(
+        session, course_id=course_id, activity_id=activity_id
+    )
+    return unified_response(
+        code=200,
+        message="获取活动详情成功",
+        data={
+            **_serialize_activity(activity),
+            "problems": [
+                _serialize_problem(p)
+                for p in activity_service.list_problems(
+                    session, activity_id=activity.activity_id
+                )
+            ],
+            "scopes": [
+                {"scope_type": s.scope_type, "scope_id": s.scope_id}
+                for s in activity_service.list_scopes(
+                    session, activity_id=activity.activity_id
+                )
+            ],
+        },
+    )
+
+
+@activity_router.put("/course/{course_id}/activities/{activity_id}")
+async def update_activity(
+    course_id: int,
+    activity_id: str,
+    payload: ActivityUpdateRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """PATCH 更新。时间窗收紧 / 放宽 / 清空均可（教师刚需），题目集合不可在此动。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    activity = activity_service.update_activity(
+        session,
+        course_id=course_id,
+        activity_id=activity_id,
+        title=payload.title,
+        description_md=payload.description_md,
+        start_at=payload.start_at,
+        end_at=payload.end_at,
+        allow_late_submit=payload.allow_late_submit,
+        max_submissions=payload.max_submissions,
+        clear_window=payload.clear_window,
+    )
+    session.commit()
+    session.refresh(activity)
+    return unified_response(
+        code=200, message="活动已更新", data=_serialize_activity(activity)
+    )
+
+
+@activity_router.post("/course/{course_id}/activities/{activity_id}/publish")
+async def publish_activity(
+    course_id: int,
+    activity_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """发布：至少一题 + 版本固化 + 版本真实存在，全部在 service 强制。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    activity = activity_service.publish_activity(
+        session, course_id=course_id, activity_id=activity_id
+    )
+    session.commit()
+    session.refresh(activity)
+    return unified_response(
+        code=200, message="活动已发布", data=_serialize_activity(activity)
+    )
+
+
+@activity_router.post("/course/{course_id}/activities/{activity_id}/archive")
+async def archive_activity(
+    course_id: int,
+    activity_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    activity = activity_service.archive_activity(
+        session, course_id=course_id, activity_id=activity_id
+    )
+    session.commit()
+    session.refresh(activity)
+    return unified_response(
+        code=200, message="活动已归档", data=_serialize_activity(activity)
+    )
+
+
+@activity_router.post("/course/{course_id}/activities/{activity_id}/problems")
+async def add_activity_problem(
+    course_id: int,
+    activity_id: str,
+    payload: ActivityProblemAddRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """挂题。版本在写入时逐题固化；发布后不可变更。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    problem = activity_service.add_problem(
+        session,
+        course_id=course_id,
+        activity_id=activity_id,
+        problem_definition_id=payload.problem_definition_id,
+        ordinal=payload.ordinal,
+        label=payload.label,
+        max_score=payload.max_score,
+    )
+    session.commit()
+    session.refresh(problem)
+    return unified_response(
+        code=201, message="题目已挂入活动", data=_serialize_problem(problem)
+    )
+
+
+@activity_router.delete("/course/{course_id}/activities/{activity_id}/problems/{ordinal}")
+async def remove_activity_problem(
+    course_id: int,
+    activity_id: str,
+    ordinal: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    activity_service.remove_problem(
+        session, course_id=course_id, activity_id=activity_id, ordinal=ordinal
+    )
+    session.commit()
+    return unified_response(code=200, message="题目已移出活动", data={"ordinal": ordinal})
+
+
+@activity_router.put("/course/{course_id}/activities/{activity_id}/scopes")
+async def set_activity_scopes(
+    course_id: int,
+    activity_id: str,
+    payload: ActivityScopeSetRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """整体替换可见范围。class / user 可写入但解析行为未实现（PR-12 前不影响学生端）。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    activity_service.get_activity(session, course_id=course_id, activity_id=activity_id)
+    scopes = activity_service.set_scopes(session, activity_id=activity_id, scopes=payload.scopes)
+    session.commit()
+    return unified_response(
+        code=200,
+        message="可见范围已更新",
+        data={"items": [{"scope_type": s.scope_type, "scope_id": s.scope_id} for s in scopes]},
+    )
