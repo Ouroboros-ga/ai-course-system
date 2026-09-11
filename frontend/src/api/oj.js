@@ -60,3 +60,8 @@ export const getOJScoreboard = (courseId, activityId) =>
 
 export const listOJStudentActivities = (courseId) =>
   request.get(`${courseBase(courseId)}/student/activities`)
+
+// ── 学情看板聚合（PR-14 缩范围，教师侧） ──
+
+export const getOJAnalytics = (courseId, trendDays = 30) =>
+  request.get(`${courseBase(courseId)}/analytics/oj`, { params: { trend_days: trendDays } })

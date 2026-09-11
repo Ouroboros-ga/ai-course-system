@@ -88,7 +88,12 @@ export const shadowAppRoutes = [
             path: 'oj',
             component: () => import('./pages/oj/OJLayout.vue'),
             children: [
-              { path: '', redirect: '/app/oj/bank' },
+              { path: '', redirect: '/app/oj/assignments' },
+              {
+                path: 'assignments',
+                name: 'app-oj-assignments',
+                component: () => import('./pages/oj/OJAssignmentsPage.vue'),
+              },
               {
                 path: 'bank',
                 name: 'app-oj-bank',

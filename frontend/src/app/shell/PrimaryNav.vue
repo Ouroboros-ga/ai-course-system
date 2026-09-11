@@ -21,7 +21,7 @@ const baseNavItems = [
     // { label: '资源库', to: '/app/resources/files', icon: FolderOpen, match: '/app/resources' },
     { label: '学科知识库', to: '/app/discipline-knowledge', icon: Library, match: '/app/discipline-knowledge' },
     // OJ 题库（2026-09-11 PR-10/08/11 前端接入；contest 按拍板不做）
-    { label: 'OJ 题库', to: '/app/oj/bank', icon: Code2, match: '/app/oj' },
+    { label: 'OJ 题库', to: '/app/oj/assignments', icon: Code2, match: '/app/oj' },
     // 旧「科研工作台」（/app/course/:id/research）已于 2026-08-20 从课程内 L2 隐藏，
     // 转型后由下面的 Nexus AI 取代；路由与页面保留至 S2 再删除，期间深链仍可访问
     // 以便回退演示（docs/phase1/CodeNexus转型落地计划.md §二）。

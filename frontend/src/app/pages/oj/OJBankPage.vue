@@ -23,12 +23,13 @@ const error = ref('')
 const problems = ref([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = 20
 
 const search = ref('')
 const difficulty = ref('')
 const status = ref('')
-const activeTag = ref('')
+const selectedTags = ref([])
+const pageSize = ref(20)
+const stats = ref({ total: 0, solved: 0, attempted: 0, not_attempted: 0, avg_pass_rate: null })
 
 const difficulties = ['easy', 'medium', 'hard']
 const statusOptions = [
@@ -45,11 +46,6 @@ const allTags = computed(() => {
   return [...seen].sort((a, b) => a.localeCompare(b, 'zh'))
 })
 
-const visibleTags = computed(() => {
-  if (!activeTag.value) return allTags.value
-  return allTags.value
-})
-
 async function loadCourses() {
   courses.value = await listExperimentCourses()
   courseId.value = courses.value[0] ? String(courses.value[0].course_id) : ''
@@ -63,14 +59,33 @@ async function load() {
   state.value = 'loading'
   error.value = ''
   try {
-    const params = { page: page.value, page_size: pageSize }
+    const params = { page: page.value, page_size: pageSize.value }
     if (search.value.trim()) params.search = search.value.trim()
     if (difficulty.value) params.difficulty = difficulty.value
     if (status.value) params.status = status.value
-    if (activeTag.value) params.tags = activeTag.value
-    const data = await listOJProblems(courseId.value, params)
+    if (selectedTags.value.length) params.tags = selectedTags.value.join(',')
+
+    // 统计卡口径 = 全量题（一次拉 100 条足够课程目录规模），与列表分页解耦
+    const [data, all] = await Promise.all([
+      listOJProblems(courseId.value, params),
+      listOJProblems(courseId.value, { page: 1, page_size: 100 }),
+    ])
+    const allItems = Array.isArray(all?.items) ? all.items : []
     problems.value = Array.isArray(data?.items) ? data.items : []
     total.value = Number(data?.total || 0)
+
+    const solved = allItems.filter((i) => i.my_status === 'solved').length
+    const attempted = allItems.filter((i) => i.my_status === 'attempted').length
+    const rates = allItems.filter((i) => i.pass_rate !== null).map((i) => i.pass_rate)
+    stats.value = {
+      total: Number(all?.total || allItems.length),
+      solved,
+      attempted,
+      not_attempted: Math.max(0, statsTotal(allItems.length) - solved - attempted),
+      avg_pass_rate: rates.length
+        ? rates.reduce((sum, r) => sum + r, 0) / rates.length
+        : null,
+    }
     state.value = 'ready'
   } catch (caught) {
     error.value = caught?.message || '题库加载失败'
@@ -79,7 +94,9 @@ async function load() {
 }
 
 function toggleTag(tag) {
-  activeTag.value = activeTag.value === tag ? '' : tag
+  const idx = selectedTags.value.indexOf(tag)
+  if (idx >= 0) selectedTags.value.splice(idx, 1)
+  else selectedTags.value.push(tag)
   page.value = 1
   load()
 }
@@ -88,9 +105,13 @@ function resetFilters() {
   search.value = ''
   difficulty.value = ''
   status.value = ''
-  activeTag.value = ''
+  selectedTags.value = []
   page.value = 1
   load()
+}
+
+function statsTotal(count) {
+  return count
 }
 
 function totalPages() {
@@ -159,6 +180,25 @@ onMounted(async () => {
       </select>
     </label>
 
+    <section v-if="state === 'ready'" class="oj-stats">
+      <div class="sfx-panel oj-stat">
+        <span class="sfx-t-caption sfx-t-secondary">题目总数</span>
+        <strong class="oj-stat-num">{{ stats.total }}</strong>
+      </div>
+      <div class="sfx-panel oj-stat">
+        <span class="sfx-t-caption sfx-t-secondary">已通过</span>
+        <strong class="oj-stat-num">{{ stats.solved }}</strong>
+      </div>
+      <div class="sfx-panel oj-stat">
+        <span class="sfx-t-caption sfx-t-secondary">尝试过</span>
+        <strong class="oj-stat-num">{{ stats.attempted }}</strong>
+      </div>
+      <div class="sfx-panel oj-stat">
+        <span class="sfx-t-caption sfx-t-secondary">平均通过率</span>
+        <strong class="oj-stat-num">{{ formatRate(stats.avg_pass_rate) }}</strong>
+      </div>
+    </section>
+
     <section class="sfx-panel oj-filters">
       <div class="oj-filters-row">
         <input
@@ -178,15 +218,20 @@ onMounted(async () => {
         </select>
         <SfxButton variant="secondary" size="sm" @click="resetFilters">重置</SfxButton>
         <SfxButton variant="primary" size="sm" @click="page = 1; load()">筛选</SfxButton>
+        <select v-model.number="pageSize" class="sfx-select" @change="page = 1; load()">
+          <option :value="10">10 条/页</option>
+          <option :value="20">20 条/页</option>
+          <option :value="50">50 条/页</option>
+        </select>
       </div>
-      <div v-if="visibleTags.length" class="oj-tag-row">
+      <div v-if="allTags.length" class="oj-tag-row">
         <span
-          v-for="tag in visibleTags"
+          v-for="tag in allTags"
           :key="tag"
           role="button"
           tabindex="0"
           class="oj-tag"
-          :class="{ 'is-active': activeTag === tag }"
+          :class="{ 'is-active': selectedTags.includes(tag) }"
           @click="toggleTag(tag)"
           @keyup.enter="toggleTag(tag)"
         >{{ tag }}</span>
@@ -262,6 +307,9 @@ onMounted(async () => {
 
 <style scoped>
 .oj-course-select { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.oj-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-5); }
+.oj-stat { display: flex; flex-direction: column; gap: var(--space-1); }
+.oj-stat-num { font-size: 22px; color: var(--ink-900); }
 .oj-filters { display: flex; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-5); }
 .oj-filters-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 .oj-search { flex: 1; min-width: 200px; }

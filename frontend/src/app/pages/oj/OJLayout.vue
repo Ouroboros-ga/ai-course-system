@@ -7,6 +7,7 @@ import L2TabsLayout from '@/app/shell/L2TabsLayout.vue'
  * 学情分析下的「OJ 数据看板」按家良拍板并入既有学情二级菜单（不另立一级）。
  */
 const tabs = [
+  { key: 'assignments', label: '活动作业', to: '/app/oj/assignments' },
   { key: 'bank', label: '题库列表', to: '/app/oj/bank' },
   { key: 'submissions', label: '我的提交', to: '/app/oj/submissions' },
   { key: 'analytics', label: '学情分析', to: '/app/oj/analytics' },

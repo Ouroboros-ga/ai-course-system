@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { listExperimentCourses } from '@/api/labs.js'
 import { getOJProblem, listOJProblems, listOJSubmissions } from '@/api/oj.js'
+import { getExperimentRun } from '@/api/experiments.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -27,6 +28,14 @@ const submissions = ref([])
 const selected = ref(null)
 const detailState = ref('idle')
 const detailError = ref('')
+const runDetail = ref(null)
+const runDetailState = ref('idle')
+const activeTab = ref('cases')
+
+const testResults = computed(() => {
+  const rows = runDetail.value?.test_results
+  return Array.isArray(rows) ? rows : []
+})
 
 const outcomeOptions = [
   { value: 'accepted', label: '通过' },
@@ -82,13 +91,30 @@ async function loadSubmissions() {
 async function selectRun(run) {
   detailState.value = 'loading'
   detailError.value = ''
+  selected.value = null
+  runDetail.value = null
+  activeTab.value = 'cases'
   try {
     selected.value = await getOJSubmission(courseId.value, run.run_id)
     detailState.value = 'ready'
+    // 逐用例结果 / 源代码 / 编译输出 —— 复用既有 run 资源端点
+    // （后端已对学生做隐藏用例脱敏；本人的代码与输出可见）
+    runDetailState.value = 'loading'
+    try {
+      runDetail.value = await getExperimentRun(courseId.value, run.run_id)
+      runDetailState.value = 'ready'
+    } catch {
+      runDetail.value = null
+      runDetailState.value = 'error'
+    }
   } catch (caught) {
     detailError.value = caught?.message || '详情加载失败'
     detailState.value = 'error'
   }
+}
+
+function formatMs(value) {
+  return value === null || value === undefined ? '—' : `${value} ms`
 }
 
 function problemTitle(experimentId) {
@@ -209,8 +235,61 @@ onMounted(async () => {
             <div><dt>内存</dt><dd>{{ selected.memory_kb === null ? '—' : `${selected.memory_kb} KB` }}</dd></div>
             <div><dt>状态</dt><dd>{{ selected.run_state }}</dd></div>
           </dl>
+          <div class="oj-tabs" role="tablist">
+            <span
+              v-for="tab in [
+                ['cases', `评测详情（${testResults.length}）`],
+                ['code', '代码'],
+                ['output', '执行输出'],
+              ]"
+              :key="tab[0]"
+              role="tab"
+              tabindex="0"
+              class="oj-tab"
+              :class="{ 'is-active': activeTab === tab[0] }"
+              @click="activeTab = tab[0]"
+              @keyup.enter="activeTab = tab[0]"
+            >{{ tab[1] }}</span>
+          </div>
+
+          <SfxSkeleton v-if="runDetailState === 'loading'" :lines="3" block />
+
+          <template v-else-if="runDetailState === 'ready' && runDetail">
+            <div v-if="activeTab === 'cases'" class="oj-cases">
+              <p v-if="!testResults.length" class="sfx-t-caption sfx-t-secondary">
+                暂无逐用例数据（隐藏用例只显示通过与否）。
+              </p>
+              <table v-else class="oj-table">
+                <thead>
+                  <tr><th>#</th><th>结果</th><th>用时</th><th>内存</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, idx) in testResults" :key="idx">
+                    <td class="sfx-t-ui">{{ idx + 1 }}{{ row.is_hidden ? '（隐藏）' : '' }}</td>
+                    <td>
+                      <SfxBadge :tone="row.passed ? 'green' : 'red'">
+                        {{ row.passed ? '通过' : '未通过' }}
+                      </SfxBadge>
+                    </td>
+                    <td class="sfx-t-ui">{{ formatMs(row.time_ms) }}</td>
+                    <td class="sfx-t-ui">{{ row.memory_kb === null || row.memory_kb === undefined ? '—' : `${row.memory_kb} KB` }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <pre v-else-if="activeTab === 'code'" class="oj-code">{{ runDetail.source_code || '（无源代码记录）' }}</pre>
+
+            <div v-else class="oj-output sfx-t-ui">
+              <p><strong>编译信息</strong></p>
+              <pre class="oj-output-pre">{{ runDetail.compile_message || '（无）' }}</pre>
+              <p><strong>运行输出</strong></p>
+              <pre class="oj-output-pre">{{ runDetail.runtime_message || '（无）' }}</pre>
+            </div>
+          </template>
+
           <p class="sfx-t-caption sfx-t-secondary">
-            编译 / 运行的错误信息与逐题解读在题目详情页的 Workbench 内查看（diagnosis 通道）。
+            逐题诊断与讲解在题目详情页的 Workbench 内查看（diagnosis 通道）。
           </p>
         </template>
       </section>
@@ -250,4 +329,22 @@ onMounted(async () => {
 @media (max-width: 1024px) {
   .oj-sub-grid { grid-template-columns: 1fr; }
 }
+
+.oj-tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border-default); }
+.oj-tab { padding: var(--space-2) var(--space-3); cursor: pointer; color: var(--text-secondary); font-size: var(--ui-md-size); }
+.oj-tab.is-active { color: var(--ink-900); box-shadow: inset 0 -2px 0 var(--ink-900); }
+.oj-cases { overflow-x: auto; }
+.oj-table { width: 100%; border-collapse: collapse; }
+.oj-table th, .oj-table td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-default); }
+.oj-code, .oj-output-pre {
+  background: var(--surface-subtle, rgba(0, 0, 0, 0.03));
+  padding: var(--space-3);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--ui-sm-size);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+.oj-output { display: flex; flex-direction: column; gap: var(--space-2); }
 </style>
