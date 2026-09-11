@@ -1,9 +1,34 @@
-"""G3 Judge0 代码沙箱客户端
+"""G3 Judge0 代码沙箱客户端 —— **Judge0 的唯一 HTTP 出口**。
 
 以独立、可回滚的本地 Docker 服务提供代码编译和运行，不在主应用进程执行学生代码。
 后端通过此客户端调用 Judge0 API，每道题独立限制资源。
 默认关闭网络，禁止在线安装依赖。
 沙箱不可用时学习主流程可正常降级。
+
+位置
+----
+原为 ``app/services/sandbox_client.py``，PR-02 迁入本处（见 ADR-0001 决定 3）。
+旧路径保留兼容 shim，**PR-05 完成收拢后删除**。
+
+为什么放这里（而不是继续留在 ``services/``）
+------------------------------------------
+``services/`` 是业务服务层；Judge0 的 status id / token / payload 形状属于
+**基础设施细节**。放进判题子域的 providers，配合 ADR-0001 决定 3，
+让「Judge0 细节只允许存在于本文件」成为可执行的边界，而不是口头约定。
+
+分层现状（2026-09-11 核对）
+--------------------------
+**本模块的分层是健康的**：原始映射 ``JUDGE0_STATUS_MAP``（``status.id`` →
+``SubmissionStatus``）只在这里；``SandboxResult`` 对外是归一化类型
+（``status`` + ``is_accepted`` / ``is_timeout`` / ``is_memory_exceeded``），
+业务层不接触 Judge0 的 payload 形状。
+
+（此前评审曾把 ``experiment_service.py:1028`` 消费 ``result.compile_output``
+说成「provider 细节泄漏」，**该定性不成立**——``compile_output`` 是任何判题后端
+都有的中性字段。真实问题是判定词汇表手写在业务服务里，已由 PR-05 搬进
+``domain/oj/judging/verdicts.py``。）
+
+本次迁移**只搬家，不改任何行为**。
 """
 from __future__ import annotations
 
@@ -19,6 +44,17 @@ import httpx
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "ALLOWED_LANGUAGES",
+    "MAX_RESULT_TEXT_CHARS",
+    "SandboxClient",
+    "SandboxResourceLimits",
+    "SandboxResult",
+    "SandboxUnavailableError",
+    "SubmissionStatus",
+    "sandbox_client",
+]
 
 # Judge0 语言 ID 映射（仅允许课程声明的语言）
 ALLOWED_LANGUAGES: dict[str, int] = {

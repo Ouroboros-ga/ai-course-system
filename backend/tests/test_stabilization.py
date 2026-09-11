@@ -223,8 +223,8 @@ class TestTimeoutDegradation:
 
     def test_sandbox_timeout_returns_unavailable(self, monkeypatch):
         """沙箱调用超时时返回不可用而非抛异常阻塞。"""
-        from app.services import sandbox_client as sb_mod
-        from app.services.sandbox_client import (
+        from app.domain.oj.judging.providers import judge0 as sb_mod
+        from app.domain.oj.judging.providers.judge0 import (
             SandboxClient,
             SandboxResourceLimits,
             SubmissionStatus,
@@ -244,16 +244,16 @@ class TestTimeoutDegradation:
 
     def test_sandbox_health_check_down(self, monkeypatch):
         """不可达的沙箱 health_check 返回 False。"""
-        from app.services import sandbox_client as sb_mod
-        from app.services.sandbox_client import SandboxClient
+        from app.domain.oj.judging.providers import judge0 as sb_mod
+        from app.domain.oj.judging.providers.judge0 import SandboxClient
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", True)
         sandbox = SandboxClient(base_url="http://127.0.0.1:59999")
         assert sandbox.health_check() is False
 
     def test_sandbox_disabled_returns_unavailable(self, monkeypatch):
         """JUDGE0_ENABLED=False 时沙箱直接返回不可用。"""
-        from app.services import sandbox_client as sb_mod
-        from app.services.sandbox_client import SandboxClient, SubmissionStatus
+        from app.domain.oj.judging.providers import judge0 as sb_mod
+        from app.domain.oj.judging.providers.judge0 import SandboxClient, SubmissionStatus
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", False)
         sandbox = SandboxClient(base_url="http://127.0.0.1:59999")
         result = sandbox.submit_code(
@@ -274,7 +274,7 @@ class TestResourceLimits:
 
     def test_sandbox_resource_limits_passed_to_judge0(self):
         """资源限制（时间/内存）正确序列化为 Judge0 参数。"""
-        from app.services.sandbox_client import SandboxResourceLimits
+        from app.domain.oj.judging.providers.judge0 import SandboxResourceLimits
         limits = SandboxResourceLimits(
             cpu_time_limit=2,
             memory_limit=131072,  # 128 MB in KB
@@ -697,8 +697,8 @@ class TestExternalDependencyDegradation:
 
     def test_sandbox_unavailable_returns_proper_status(self, monkeypatch):
         """沙箱不可用时返回 SANDBOX_UNAVAILABLE 而非 INTERNAL_ERROR。"""
-        from app.services import sandbox_client as sb_mod
-        from app.services.sandbox_client import SandboxClient, SubmissionStatus
+        from app.domain.oj.judging.providers import judge0 as sb_mod
+        from app.domain.oj.judging.providers.judge0 import SandboxClient, SubmissionStatus
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", True)
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_API_URL", "http://127.0.0.1:59999")
         sandbox = SandboxClient(base_url="http://127.0.0.1:59999")
@@ -722,8 +722,8 @@ class TestExternalDependencyDegradation:
 
     def test_disabled_sandbox_marks_action_unavailable(self, monkeypatch):
         """JUDGE0_ENABLED=False 时 CodingAction 显示不可用而非虚构执行。"""
-        from app.services import sandbox_client as sb_mod
-        from app.services.sandbox_client import SandboxClient, SubmissionStatus
+        from app.domain.oj.judging.providers import judge0 as sb_mod
+        from app.domain.oj.judging.providers.judge0 import SandboxClient, SubmissionStatus
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", False)
         sandbox = SandboxClient(base_url="http://127.0.0.1:59999")
         result = sandbox.submit_code(source_code="x=1", language="python3")

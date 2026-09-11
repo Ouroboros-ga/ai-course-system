@@ -742,8 +742,8 @@ class TestAcceptanceExternalDependencyDegradation:
 
     def test_sandbox_unavailable_returns_unavailable_status(self, monkeypatch):
         """沙箱不可用时返回 SANDBOX_UNAVAILABLE 而非 INTERNAL_ERROR。"""
-        from app.services import sandbox_client as sb_mod
-        from app.services.sandbox_client import SandboxClient, SubmissionStatus
+        from app.domain.oj.judging.providers import judge0 as sb_mod
+        from app.domain.oj.judging.providers.judge0 import SandboxClient, SubmissionStatus
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", True)
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_API_URL", "http://127.0.0.1:59999")
         sandbox = SandboxClient(base_url="http://127.0.0.1:59999")
@@ -754,8 +754,8 @@ class TestAcceptanceExternalDependencyDegradation:
 
     def test_sandbox_disabled_returns_unavailable(self, monkeypatch):
         """JUDGE0_ENABLED=False 时沙箱返回不可用而非虚构执行。"""
-        from app.services import sandbox_client as sb_mod
-        from app.services.sandbox_client import SandboxClient, SubmissionStatus
+        from app.domain.oj.judging.providers import judge0 as sb_mod
+        from app.domain.oj.judging.providers.judge0 import SandboxClient, SubmissionStatus
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", False)
         sandbox = SandboxClient(base_url="http://127.0.0.1:59999")
         result = sandbox.submit_code(source_code="x=1", language="python3")
@@ -836,7 +836,7 @@ class TestAcceptanceExternalDependencyDegradation:
     def test_health_endpoint_works_when_external_deps_down(self, client, monkeypatch):
         """外部依赖全部不可用时健康检查仍正常。"""
         # 模拟 LLM 和沙箱不可用
-        from app.services import sandbox_client as sb_mod
+        from app.domain.oj.judging.providers import judge0 as sb_mod
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", False)
         r = client.get("/")
         assert r.status_code == 200

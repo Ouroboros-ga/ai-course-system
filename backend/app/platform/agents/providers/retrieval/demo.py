@@ -133,7 +133,7 @@ class Judge0SandboxPort:
     ) -> None:
         if client is None:
             # Lazy import to avoid module-level side effects in tests.
-            from app.services.sandbox_client import sandbox_client as _default
+            from app.domain.oj.judging.providers.judge0 import sandbox_client as _default
             client = _default
         self._client = client
         # session_factory 用于查询 ExperimentRun；None 时查询路径降级

@@ -23,6 +23,7 @@ import {
   BookMarked,
   BookOpen,
   Bot,
+  Brain,
   Check,
   ChevronDown,
   Copy,
@@ -33,6 +34,7 @@ import {
   FileText,
   FlaskConical,
   Globe,
+  Hand,
   Layers,
   Link2,
   Microscope,
@@ -53,7 +55,8 @@ import {
   TriangleAlert,
   User,
   Wrench,
-  X
+  X,
+  Zap
 } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxDrawer from '@/app/ui/SfxDrawer.vue'
@@ -962,6 +965,10 @@ function initSessions() {
   if (initial) {
     void restoreSessionRuns(initial)
     void restoreSessionPlan(initial)
+    // T5：执行模式随会话恢复（服务端偏好真相源；失败本地默认）。
+    void restoreExecMode(initial)
+    // 思考模式：本机会话偏好（无服务端端点）。
+    restoreThinkingMode(initial)
   }
 }
 
@@ -1080,7 +1087,9 @@ async function loadRemoteHistory(session) {
   scrollToBottom()
 }
 
-function createNewSession(initialMode = NEXUS_MODES.GENERAL) {
+// 2026-09-11：默认模式改为 Research（"研究与实验"入口）——新对话直接进
+// 研究模式，可检索论文、建证据、跑复现；用户仍可在顶栏切回 Nexus 通用模式。
+function createNewSession(initialMode = NEXUS_MODES.RESEARCH) {
   const newId = `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
   const newSession = {
     id: newId,
@@ -1102,6 +1111,12 @@ function createNewSession(initialMode = NEXUS_MODES.GENERAL) {
   sessions.value.unshift(newSession)
   activeSessionId.value = newId
   persistSessions()
+  // 新会话执行模式：进入即置"自动执行"并显式保存偏好（与 ref 默认值一致）。
+  // 失败只本地缓存（setExecMode 内部已如实提示），不阻断建会话。
+  if (initialMode === NEXUS_MODES.RESEARCH) {
+    void setExecMode('auto')
+    restoreThinkingMode(newSession)
+  }
 }
 
 function switchSession(id) {
@@ -1116,15 +1131,21 @@ function switchSession(id) {
     void restoreSessionPlan(target)
     // T5：执行模式随会话恢复（服务端偏好真相源；失败本地默认 ask）。
     void restoreExecMode(target)
+    // 思考模式：本机会话偏好（无服务端端点，故只读 localStorage）。
+    restoreThinkingMode(target)
   }
 }
 
-// ── T5 Ask/Auto：Research 输入框选择器 ＋ 服务端会话偏好 ──
+// ── T5 执行模式：Research 输入框选择器 ＋ 服务端会话偏好 ──
 // - 只在 Research 展示；General 隐藏且不发送（服务端执行核无授权）。
 // - 同一会话的研究对话与询问浮窗共享同一 execMode（单一状态源）。
 // - 刷新/切会话由服务端偏好恢复；保存失败只本地缓存并如实提示。
 // - 切 Ask 只约束后续新请求：已启动 run 继续按原授权执行，不暗中取消。
-const execMode = ref('ask')
+// - 2026-09-11：默认值改为 'auto'（"研究与实验"）。新会话即默认允许沙箱自主
+//   运行实验（首次仍需用户确认一次）。注意这是**安全默认的弱化**：服务端
+//   resolve_effective 对"未传字段"仍归 Ask，前端此处是**显式发送** auto，
+//   走的是"用户明确选择"分支（会保存会话偏好），不是偷偷升级。
+const execMode = ref('auto')
 const execModeSaved = ref(true)
 
 function sessionExecKey(id) {
@@ -1145,8 +1166,10 @@ async function restoreExecMode(session) {
   } catch { /* 失败回落本地 */ }
   try {
     const cached = localStorage.getItem(sessionExecKey(session.id))
-    execMode.value = cached === 'auto' ? 'auto' : 'ask'
-  } catch { execMode.value = 'ask' }
+    // 2026-09-11：本地无记录时默认 auto（对齐新会话默认"自动执行"）；
+    // 仅显式存过 'ask' 才回落授权执行。
+    execMode.value = cached === 'ask' ? 'ask' : 'auto'
+  } catch { execMode.value = 'auto' }
   execModeSaved.value = false
 }
 
@@ -1167,6 +1190,39 @@ async function setExecMode(mode) {
     execModeSaved.value = false
     try { localStorage.setItem(sessionExecKey(sid), mode) } catch { /* 忽略 */ }
     showToast('执行模式偏好保存失败，仅本次会话有效', 'warning')
+  }
+}
+
+// ── 思考模式开关（2026-09-11）：请求级，与 execMode 同构但语义不同 ──
+// - 语义：开 = 模型先推理再答（reasoning 经独立 SSE 事件折叠展示），
+//   关 = 直接作答。官方明示思考模式下 temperature 不生效。
+// - 作用域：**本机会话偏好**（localStorage 键控），随每次请求显式发送；
+//   与 execMode 不同，服务端不持久化该偏好（无对应端点）。
+// - 默认：跟随服务端配置默认（生产 enabled）。首次进入取 true。
+const thinkingMode = ref(true)
+
+function sessionThinkingKey(id) {
+  return `nexus_thinking_${id || 'default'}`
+}
+
+function restoreThinkingMode(session) {
+  try {
+    const cached = localStorage.getItem(sessionThinkingKey(session?.id))
+    // 仅显式 "off" 视为关闭；其余（含无记录）取开启，与服务端默认一致。
+    thinkingMode.value = cached !== 'off'
+  } catch {
+    thinkingMode.value = true
+  }
+}
+
+function setThinkingMode(next) {
+  const value = next === true || next === 'on' || next === 'true'
+  thinkingMode.value = value
+  try {
+    localStorage.setItem(sessionThinkingKey(currentSession.value?.id), value ? 'on' : 'off')
+  } catch {
+    // 本机存储不可用：仅本次会话有效，不阻断开关本身。
+    showToast('思考模式偏好未能写入本机存储，仅本次会话有效', 'warning')
   }
 }
 
@@ -2502,8 +2558,12 @@ function renderedAnswer(turn) {
   return cached?.html || ''
 }
 
-function handleEvent(turn, { event, data }, session = null) {
-  if (event === 'plan') {
+/* P1-4：思考过程（reasoning）字数统计——只计非空白字符，避免换行虚高。 */
+function reasoningChars(turn) {
+  return ((turn?.reasoning || '').match(/\S/g) || []).length
+}
+
+function handleEvent(turn, { event, data }, session = null) {  if (event === 'plan') {
     // NX-H1：计划快照（真实 state 投影）。会话级状态——经 planState 状态机
     // 去重/排序，旧 revision 忽略；session 缺省时（历史调用方）不消费。
     const target = session || currentSession.value
@@ -2513,6 +2573,15 @@ function handleEvent(turn, { event, data }, session = null) {
     }
   } else if (event === 'token') {
     turn.answer += data?.content ?? ''
+  } else if (event === 'reasoning') {
+    // P1-4：思考内容与正文分离（官方 reasoning_content）。**不写入 answer**——
+    // 混入正文会污染 Markdown 渲染、引用与后续对话历史；单独累积供折叠展示。
+    // 空串/非字符串一律忽略（上游注释帧与本事件无关）。
+    const piece = data?.content
+    if (typeof piece === 'string' && piece) {
+      turn.reasoning = (turn.reasoning || '') + piece
+      turn.hasReasoning = true
+    }
   } else if (event === 'tool_call') {
     turn.toolEvents.push({
       kind: 'call',
@@ -2727,6 +2796,8 @@ async function runTurn(message) {
       mode: activeMode.value,
       // T5 Ask/Auto：Research 显式发送本次 effective 值；General 不传。
       researchExecutionMode: isResearchMode.value ? execMode.value : null,
+      // 思考模式：显式发送本次开关（服务端按此构建 LLM；推理经 reasoning 事件回传）。
+      thinking: thinkingMode.value,
       courseId: currentSession.value.courseId ?? null,
       model: effectiveModel.value || null,
       // NX-A1：仅发送就绪附件 id；绑定与验主在服务端完成。
@@ -3861,6 +3932,30 @@ const emptySuggestions = computed(() =>
                 </template>
               </div>
 
+              <!-- P1-4 思考过程（2026-09-11）：独立于正文，默认折叠。
+                   来源是官方 reasoning_content，经独立 SSE 事件 reasoning 累积；
+                   绝不写入 answer（混入会污染 Markdown/引用/历史）。
+                   流式中显示"推理中"；结束后保留可展开，解释等待时间。 -->
+              <div v-if="turn.hasReasoning" class="nx-reasoning">
+                <!-- design.md 硬约束：禁止原生 button 元素（契约测试断言）。
+                     用 span + role=button，与 nx-seg-btn 同语汇。 -->
+                <span
+                  class="nx-reasoning-head"
+                  role="button"
+                  tabindex="0"
+                  :aria-expanded="turn.reasoningOpen ? 'true' : 'false'"
+                  @click="turn.reasoningOpen = !turn.reasoningOpen"
+                  @keydown.enter.prevent="turn.reasoningOpen = !turn.reasoningOpen"
+                  @keydown.space.prevent="turn.reasoningOpen = !turn.reasoningOpen"
+                >
+                  <Brain :size="12" />
+                  <span>{{ streaming && turn === streamingTurn ? '正在推理…' : '思考过程' }}</span>
+                  <span class="nx-reasoning-count">{{ reasoningChars(turn) }} 字</span>
+                  <component :is="turn.reasoningOpen ? ChevronDown : ChevronRight" :size="12" />
+                </span>
+                <pre v-if="turn.reasoningOpen" class="nx-reasoning-body">{{ turn.reasoning }}</pre>
+              </div>
+
               <!-- Markdown 核心答复正文（节流渲染，禁止直接逐 token 调 renderContent） -->
               <div
                 v-if="turn.answer"
@@ -4068,16 +4163,18 @@ const emptySuggestions = computed(() =>
                 <template #icon><Paperclip :size="13" /></template>
                 附件
               </SfxButton>
-              <!-- T5 Ask/Auto：只在 Research 展示；General 隐藏且不发送。
-                   下拉式（对齐 ChatGPT 模式切换的形态）：收起只占当前模式名，
-                   展开后每项一句话说清差别——模式差异在切换前就看得见。
+              <!-- T5 执行模式：只在 Research 展示；General 隐藏且不发送。
+                   2026-09-11 文案消歧义：旧文案「研究与写作 / 研究与实验」两项
+                   都以"研究"开头，用户分不清差别（截图反馈）。改为直接描述
+                   **权限差异本身**——Ask→「授权执行」（每步实验需确认），
+                   Auto→「自动执行」（确认一次后可自主运行修复）。
                    同一会话的研究对话与询问浮窗共享 execMode；切 Ask 不取消已启动 run。 -->
               <div
                 v-if="isResearchMode"
                 class="nx-seg nx-exec-seg"
                 role="tablist"
-                aria-label="执行模式"
-                title="Ask 自主研究与文档输出，不运行实验；Auto 确认一次后可自主配置、运行和修复实验"
+                aria-label="实验执行模式"
+                title="授权执行：实验每步需你确认；自动执行：确认一次后由 Nexus 自主运行并修复"
               >
                 <span
                   class="nx-seg-btn"
@@ -4085,12 +4182,14 @@ const emptySuggestions = computed(() =>
                   role="tab"
                   tabindex="0"
                   :aria-selected="execMode === 'ask'"
-                  title="自主研究与文档输出，不运行实验"
+                  title="自主研究与文档输出，实验执行前需你确认"
                   @click="setExecMode('ask')"
                   @keydown.enter.prevent="setExecMode('ask')"
                   @keydown.space.prevent="setExecMode('ask')"
                 >
-                  <i class="nx-seg-no">研</i>研究与写作
+                  <i class="nx-seg-no" aria-hidden="true">
+                    <Hand :size="12" />
+                  </i>授权执行
                 </span>
                 <span
                   class="nx-seg-btn"
@@ -4098,14 +4197,37 @@ const emptySuggestions = computed(() =>
                   role="tab"
                   tabindex="0"
                   :aria-selected="execMode === 'auto'"
-                  title="可在确认后自主配置、运行和修复实验"
+                  title="确认一次后，由 Nexus 自主配置、运行和修复实验"
                   @click="setExecMode('auto')"
                   @keydown.enter.prevent="setExecMode('auto')"
                   @keydown.space.prevent="setExecMode('auto')"
                 >
-                  <i class="nx-seg-no">验</i>研究与实验
+                  <i class="nx-seg-no" aria-hidden="true">
+                    <Zap :size="12" />
+                  </i>自动执行
                 </span>
               </div>
+              <!-- 思考模式开关（2026-09-11）：请求级，两模式都可用。
+                   开 = 模型先推理再答，推理过程在回答上方折叠展示；
+                   关 = 直接作答。官方明示思考模式下 temperature 不生效。 -->
+              <span
+                class="nx-think-toggle"
+                :class="{ 'is-on': thinkingMode }"
+                role="switch"
+                tabindex="0"
+                :aria-checked="thinkingMode ? 'true' : 'false'"
+                aria-label="思考模式"
+                :title="thinkingMode
+                  ? '思考模式：开 —— 模型先推理再作答（推理过程折叠展示）'
+                  : '思考模式：关 —— 模型直接作答'"
+                @click="setThinkingMode(!thinkingMode)"
+                @keydown.enter.prevent="setThinkingMode(!thinkingMode)"
+                @keydown.space.prevent="setThinkingMode(!thinkingMode)"
+              >
+                <Brain :size="13" />
+                <span class="nx-think-label">思考</span>
+                <i class="nx-think-state" aria-hidden="true">{{ thinkingMode ? '开' : '关' }}</i>
+              </span>
               <span v-if="isResearchMode && !execModeSaved" class="nx-rl-note" title="偏好保存失败，仅本次会话有效">
                 偏好未同步
               </span>
@@ -5528,9 +5650,89 @@ const emptySuggestions = computed(() =>
   font-style: normal;
   color: var(--text-disabled);
   font-variant-numeric: tabular-nums;
+  /* 2026-09-11：段控前导位由单字（研/验）改为图标，需固定为可容纳 svg 的
+     行内盒并继承当前色（图标用 currentColor 描边，随 is-on 一起变色）。 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
 }
 
 .nx-seg-btn.is-on .nx-seg-no { color: var(--nexus-accent); }
+
+/* 思考模式开关（2026-09-11）：与段控同高同语汇，但语义是单值开关——
+   故不用 role=tablist，用 role=switch；状态以文字"开/关"直读，
+   不靠颜色单独表达（色盲可用）。 */
+.nx-think-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.nx-think-toggle:hover { border-color: var(--border-strong); }
+
+.nx-think-toggle.is-on {
+  color: var(--nexus-accent);
+  border-color: var(--nexus-accent);
+}
+
+.nx-think-state {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-disabled);
+}
+
+.nx-think-toggle.is-on .nx-think-state { color: var(--nexus-accent); }
+
+/* P1-4：思考过程区。1px 发丝线 + 左侧竖线，弱于正文但可读；
+   不用背景块、不用卡片（对齐 design.md 去卡片化语汇）。 */
+.nx-reasoning {
+  margin: 2px 0 10px;
+  border-left: 2px solid var(--border-subtle);
+  padding-left: 10px;
+}
+
+.nx-reasoning-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.nx-reasoning-head:hover { color: var(--text-primary); }
+
+.nx-reasoning-count {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-disabled);
+}
+
+.nx-reasoning-body {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
+}
 
 /* T5 Ask/Auto：输入框工具栏内的同一分段控件语汇（26px 高对齐 SfxButton sm）。 */
 

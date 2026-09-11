@@ -446,3 +446,81 @@ async def test_stream_cancel_does_not_emit_done(monkeypatch: pytest.MonkeyPatch)
         assert not any("event: done" in f for f in seen)
     finally:
         main_module._agents = original
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-11：_tool_surface 巡检口径的键形兼容与逐项容错
+# ---------------------------------------------------------------------------
+
+
+def _fake_surface_agent(tool_names: list[str]):
+    """构造带 nodes["tools"].bound.tools_by_name 的最小假 agent。"""
+    from types import SimpleNamespace
+
+    bound = SimpleNamespace(tools_by_name={n: object() for n in tool_names})
+    return SimpleNamespace(nodes={"tools": SimpleNamespace(bound=bound)})
+
+
+def test_tool_surface_parses_all_key_shapes(monkeypatch: pytest.MonkeyPatch):
+    """4/3/2 元组键都能解析；生产键带 thinking 后缀，旧桩键无后缀。
+
+    键形在 2026-09-11 扩为四元（+思考模式），但单测大量以三元/二元注入桩，
+    故 _tool_surface 必须同时认三种形状，否则 /health 的巡检口径会漏报。
+    """
+    import nexus.main as main_module
+
+    original = main_module._agents
+    main_module._agents = {
+        ("research", "m", "auto", True): _fake_surface_agent(["a"]),
+        ("research", "m", "auto", False): _fake_surface_agent(["a"]),
+        ("research", "m", "ask"): _fake_surface_agent(["a"]),
+        ("general", "m"): _fake_surface_agent(["a", "b"]),
+    }
+    try:
+        surface = main_module._tool_surface()
+        assert surface is not None
+        assert "research@m:auto:thinking" in surface
+        assert "research@m:auto:plain" in surface
+        assert surface["research@m:ask"] == ["a"]
+        assert surface["general@m:ask"] == ["a", "b"]
+        # 思考开关不该改工具面——同 mode/execution 两种取值必须一致。
+        assert surface["research@m:auto:thinking"] == surface["research@m:auto:plain"]
+    finally:
+        main_module._agents = original
+
+
+def test_tool_surface_skips_malformed_agents(monkeypatch: pytest.MonkeyPatch):
+    """形状不符的实例必须被跳过，绝不让整个 /health 500。
+
+    历史实现只捕 AttributeError；而 agent.nodes 是 dict，缺 "tools" 键抛
+    KeyError → 未捕获 → 健康检查整体失败。本用例钉住三种异常都要收口。
+    """
+    from types import SimpleNamespace
+
+    import nexus.main as main_module
+
+    original = main_module._agents
+    main_module._agents = {
+        ("research", "m", "ask", True): SimpleNamespace(nodes={}),          # KeyError
+        ("research", "m", "ask", False): SimpleNamespace(),                  # AttributeError
+        ("general", "m", "ask", True): SimpleNamespace(nodes={"tools": None}),  # AttributeError
+        ("general", "m", "ask", False): _fake_surface_agent(["ok"]),         # 正常项
+    }
+    try:
+        surface = main_module._tool_surface()
+        # 关键：正常项仍被上报（坏项不影响好项），且调用本身不抛异常。
+        assert surface == {"general@m:ask:plain": ["ok"]}
+    finally:
+        main_module._agents = original
+
+
+def test_tool_surface_returns_none_when_empty(monkeypatch: pytest.MonkeyPatch):
+    """_agents 为空时报 None（而非空 dict），巡检侧以此区分"未构建"。"""
+    import nexus.main as main_module
+
+    original = main_module._agents
+    main_module._agents = {}
+    try:
+        assert main_module._tool_surface() is None
+    finally:
+        main_module._agents = original

@@ -30,7 +30,7 @@ from app.models.safety_policy_model import (
     AuditEventType,
 )
 from app.services.safety_guard_service import check_forbidden_operations
-from app.services.sandbox_client import (
+from app.domain.oj.judging.providers.judge0 import (
     sandbox_client,
     SandboxClient,
     SandboxResourceLimits,

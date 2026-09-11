@@ -1292,10 +1292,19 @@ test('T5 Ask/Auto：输入框选择器＋服务端偏好＋合并批准动作（
   assert.match(client, /\/nexus\/runs\/.*\/report/)
   // 选择器只在 Research 展示（General 隐藏且不发送），与视图切换器同分段语汇。
   assert.match(page, /v-if="isResearchMode"[\s\S]*?nx-exec-seg/)
-  assert.match(page, /研究与写作/)
-  assert.match(page, /研究与实验/)
+  // 2026-09-11 文案消歧义：旧文案「研究与写作 / 研究与实验」两项都以"研究"
+  // 开头，用户读不出差别（截图反馈）。改为直接描述权限差异。
+  assert.match(page, /授权执行/)
+  assert.match(page, /自动执行/)
   assert.match(page, /setExecMode\('ask'\)/)
   assert.match(page, /setExecMode\('auto'\)/)
+  // 2026-09-11 思考模式开关：请求级、两模式可用、状态以文字直读。
+  assert.match(page, /nx-think-toggle/)
+  assert.match(page, /setThinkingMode/)
+  assert.match(page, /role="switch"/)
+  // 默认执行模式 = auto（"研究与实验"），且新会话默认进 Research。
+  assert.match(page, /const execMode = ref\('auto'\)/)
+  assert.match(page, /createNewSession\(initialMode = NEXUS_MODES\.RESEARCH\)/)
   // 偏好恢复与保存失败语义：服务端真相源，失败只本地缓存并如实提示。
   assert.match(page, /restoreExecMode/)
   assert.match(page, /偏好保存失败，仅本次会话有效/)
