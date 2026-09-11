@@ -26,10 +26,12 @@ from app.models.database import get_session
 from app.models.experiment_activity_model import ExperimentActivityProblem
 from app.services.course_access_service import require_course_permission
 from app.services.experiment_activity_service import ExperimentActivityService
+from app.services.experiment_scoreboard_service import ExperimentScoreboardService
 
 activity_router = APIRouter()
 
 activity_service = ExperimentActivityService()
+scoreboard_service = ExperimentScoreboardService()
 
 
 # ---------------------------------------------------------------------------
@@ -323,3 +325,21 @@ async def set_activity_scopes(
         message="可见范围已更新",
         data={"items": [{"scope_type": s.scope_type, "scope_id": s.scope_id} for s in scopes]},
     )
+
+
+@activity_router.get("/course/{course_id}/activities/{activity_id}/scoreboard")
+async def get_activity_scoreboard(
+    course_id: int,
+    activity_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """作业榜（教师侧）。口径 = finalized attempts；与单生算分同源可重算。
+
+    学生侧看榜属 PR-12/PR-15 的教学策略口径，本端点不开放。
+    """
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    board = scoreboard_service.get_homework_board(
+        session, course_id=course_id, activity_id=activity_id
+    )
+    return unified_response(code=200, message="获取作业榜成功", data=board)
