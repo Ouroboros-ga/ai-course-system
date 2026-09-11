@@ -1,0 +1,264 @@
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowLeft } from 'lucide-vue-next'
+import { listExperimentCourses } from '@/api/labs.js'
+import { getOJProblem, listOJSubmissions } from '@/api/oj.js'
+import { getSandboxHealth, getSandboxLanguages } from '@/api/sandbox.js'
+import SfxBadge from '@/app/ui/SfxBadge.vue'
+import SfxButton from '@/app/ui/SfxButton.vue'
+import SfxEmpty from '@/app/ui/SfxEmpty.vue'
+import SfxError from '@/app/ui/SfxError.vue'
+import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+import CodeWorkbench from '@/components/codebench/CodeWorkbench.vue'
+
+/**
+ * OJ 题目详情（PR-10，设计稿②）。
+ * 左：题面（描述 / 标签 / 限制 / 我的作答摘要）；右：CodeWorkbench
+ * （复用既有 CodeMirror 判题链：运行 / 提交 / 诊断 / 讲解，不重复造）。
+ * 详情不含 testcase —— 学生侧评测解读走 diagnosis 通道。
+ */
+const route = useRoute()
+const router = useRouter()
+
+const experimentId = computed(() => String(route.params.experimentId || ''))
+const courses = ref([])
+const courseId = ref('')
+const state = ref('loading')
+const error = ref('')
+const problem = ref(null)
+const languages = ref([])
+const mySubmissions = ref([])
+
+const workbenchExperiment = computed(() => {
+  if (!problem.value) return null
+  return {
+    experiment_id: problem.value.experiment_id,
+    title: problem.value.title,
+    description: problem.value.description,
+    starter_code: problem.value.starter_code || {},
+    language_whitelist: problem.value.language_whitelist || [],
+    default_version_id: null,
+  }
+})
+
+async function loadCourses() {
+  courses.value = await listExperimentCourses()
+  courseId.value = courses.value[0] ? String(courses.value[0].course_id) : ''
+}
+
+async function load() {
+  if (!courseId.value || !experimentId.value) {
+    state.value = 'empty'
+    return
+  }
+  state.value = 'loading'
+  error.value = ''
+  try {
+    const [detail, health, supported] = await Promise.all([
+      getOJProblem(courseId.value, experimentId.value),
+      getSandboxHealth().catch(() => null),
+      getSandboxLanguages().catch(() => null),
+    ])
+    problem.value = detail
+    languages.value = Array.isArray(supported?.languages) ? supported.languages : []
+    // 我的最近提交（用于摘要；评测解读由 Workbench 内的 diagnosis 通道负责）
+    const subs = await listOJSubmissions(courseId.value, {
+      experiment_id: experimentId.value,
+      limit: 5,
+    }).catch(() => null)
+    mySubmissions.value = Array.isArray(subs?.items) ? subs.items : []
+    state.value = 'ready'
+  } catch (caught) {
+    const status = caught?.response?.status
+    if (status === 404) {
+      error.value = '题目不存在或未发布'
+    } else {
+      error.value = caught?.message || '题目加载失败'
+    }
+    state.value = 'error'
+  }
+}
+
+function statusLabel(value) {
+  return { solved: '已通过', attempted: '尝试过', not_attempted: '未尝试' }[value] || value
+}
+
+function statusTone(value) {
+  return { solved: 'green', attempted: 'amber', not_attempted: 'ink' }[value] || 'ink'
+}
+
+function difficultyLabel(value) {
+  return { easy: '简单', medium: '中等', hard: '困难' }[value] || value || '—'
+}
+
+function formatRate(rate) {
+  return rate === null || rate === undefined ? '—' : `${Math.round(rate * 1000) / 10}%`
+}
+
+function formatOutcome(value) {
+  return {
+    accepted: '通过', wrong_answer: '答案错误', runtime_error: '运行错误',
+    time_limit_exceeded: '超时', compile_error: '编译错误', pending: '评测中',
+  }[value] || value
+}
+
+function backToBank() {
+  router.push('/app/oj/bank')
+}
+
+onMounted(async () => {
+  try {
+    await loadCourses()
+    await load()
+  } catch (caught) {
+    error.value = caught?.message || '加载失败'
+    state.value = 'error'
+  }
+})
+</script>
+
+<template>
+  <div class="sfx-page">
+    <header class="oj-detail-header">
+      <span
+        role="button"
+        tabindex="0"
+        class="oj-back"
+        @click="backToBank"
+        @keyup.enter="backToBank"
+      ><ArrowLeft :size="16" /> 返回题库</span>
+      <SfxBadge
+        v-if="problem"
+        :tone="problem.my_status === 'solved' ? 'green' : 'ink'"
+      >{{ statusLabel(problem.my_status) }}</SfxBadge>
+    </header>
+
+    <SfxSkeleton v-if="state === 'loading'" :lines="6" block />
+    <SfxError v-else-if="state === 'error'" :description="error" @retry="load" />
+    <SfxEmpty v-else-if="state === 'empty'" title="未找到题目" description="题目可能未发布或已下架。" />
+
+    <template v-else>
+      <header class="sfx-page-header">
+        <div>
+          <h1 class="sfx-t-title1">{{ problem.title }}</h1>
+          <div class="oj-meta">
+            <SfxBadge
+              :tone="{ easy: 'green', medium: 'amber', hard: 'red' }[problem.difficulty] || 'ink'"
+            >{{ difficultyLabel(problem.difficulty) }}</SfxBadge>
+            <span v-for="tag in problem.tags" :key="tag" class="oj-tag">{{ tag }}</span>
+            <span v-if="problem.stats" class="sfx-t-caption sfx-t-secondary">
+              全班通过率 {{ formatRate(problem.stats.pass_rate) }} · {{ problem.stats.attempt_total }} 次提交
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <div class="oj-detail-grid">
+        <section class="sfx-panel oj-problem-panel">
+          <div class="oj-limits sfx-t-caption sfx-t-secondary" v-if="problem.limits">
+            <span v-if="problem.limits.cpu_time_limit">时间 {{ problem.limits.cpu_time_limit }}s</span>
+            <span v-if="problem.limits.memory_limit">内存 {{ problem.limits.memory_limit }} KB</span>
+            <span v-if="problem.limits.wall_time_limit">总时限 {{ problem.limits.wall_time_limit }}s</span>
+            <span v-if="problem.language_whitelist?.length">
+              语言 {{ problem.language_whitelist.join(' / ') }}
+            </span>
+          </div>
+          <div class="oj-description" v-html="problem.description || '暂无题面描述。'"></div>
+
+          <div class="oj-mine sfx-t-ui">
+            <h2 class="oj-section-title">我的作答</h2>
+            <p>
+              状态：<SfxBadge :tone="statusTone(problem.my_status)">
+                {{ statusLabel(problem.my_status) }}
+              </SfxBadge>
+              <template v-if="problem.my_best_score !== null && problem.my_best_score !== undefined">
+                最好得分 {{ Math.round(problem.my_best_score * 1000) / 10 }} 分
+              </template>
+            </p>
+            <div v-if="mySubmissions.length" class="oj-mine-subs">
+              <div
+                v-for="sub in mySubmissions"
+                :key="sub.run_id"
+                class="oj-mine-sub"
+              >
+                <SfxBadge
+                  :tone="sub.outcome === 'accepted' ? 'green' : 'amber'"
+                >{{ formatOutcome(sub.outcome) }}</SfxBadge>
+                <span class="sfx-t-caption sfx-t-secondary">
+                  {{ sub.passed_count }}/{{ sub.total_count }} 用例 ·
+                  {{ sub.cpu_time_ms === null ? '—' : `${sub.cpu_time_ms} ms` }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="oj-workbench">
+          <CodeWorkbench
+            v-if="workbenchExperiment && languages.length"
+            :experiment="workbenchExperiment"
+            :course-id="courseId"
+            :languages="languages"
+            mode="both"
+            @submit-complete="load"
+          />
+          <SfxEmpty
+            v-else
+            title="判题环境未就绪"
+            description="代码沙箱不可用或语言列表为空，稍后再试。"
+          />
+        </section>
+      </div>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.oj-detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
+}
+.oj-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--ui-sm-size);
+}
+.oj-back:hover { color: var(--ink-900); }
+.oj-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.oj-tag {
+  padding: 1px var(--space-2);
+  border: 1px solid var(--border-default);
+  font-size: var(--ui-sm-size);
+  color: var(--text-secondary);
+}
+.oj-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: var(--space-5);
+  align-items: start;
+  margin-top: var(--space-4);
+}
+.oj-problem-panel { display: flex; flex-direction: column; gap: var(--space-4); }
+.oj-limits { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.oj-description { font-size: var(--ui-md-size); line-height: 1.7; overflow-wrap: anywhere; }
+.oj-section-title {
+  font-size: var(--ui-sm-size);
+  font-weight: var(--ui-md-weight);
+  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: var(--space-2);
+}
+.oj-mine-subs { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
+.oj-mine-sub { display: flex; align-items: center; gap: var(--space-3); }
+.oj-workbench { min-width: 0; }
+@media (max-width: 1024px) {
+  .oj-detail-grid { grid-template-columns: 1fr; }
+}
+</style>

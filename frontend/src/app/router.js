@@ -83,6 +83,37 @@ export const shadowAppRoutes = [
             component: () => import('./pages/discipline/DisciplineKnowledgePage.vue'),
           },
 
+          // ── OJ 题库（PR-10/08/11：学生题库 / 我的提交 / 学情看板） ──
+          {
+            path: 'oj',
+            component: () => import('./pages/oj/OJLayout.vue'),
+            children: [
+              { path: '', redirect: '/app/oj/bank' },
+              {
+                path: 'bank',
+                name: 'app-oj-bank',
+                component: () => import('./pages/oj/OJBankPage.vue'),
+              },
+              {
+                path: 'submissions',
+                name: 'app-oj-submissions',
+                component: () => import('./pages/oj/OJSubmissionsPage.vue'),
+              },
+              {
+                path: 'analytics',
+                name: 'app-oj-analytics',
+                component: () => import('./pages/oj/OJAnalyticsPage.vue'),
+              },
+            ],
+          },
+
+          // 题目详情（独立路由，进 Workbench 时隐藏 L2 标签）
+          {
+            path: 'oj/problems/:experimentId',
+            name: 'app-oj-problem-detail',
+            component: () => import('./pages/oj/OJProblemDetailPage.vue'),
+          },
+
           // ── Nexus AI（CodeNexus 转型：课程外全局入口，复杂问题拆解与执行） ──
           {
             path: 'nexus',

@@ -1474,6 +1474,107 @@ test('F7 持续研究：任务＋预算＋取消（Ask/Auto 对等，实验为�
   assert.match(agent, /build_researcher_subagent/)
   assert.match(agent, /RESEARCHER_TOOL_NAMES/)
 })
+
+test('实验链F1：版本创建透传起始代码/证据开关，定义列表回显起始代码', () => {
+  const backend = read('backend/app/api/v1/endpoints/experiments.py')
+  // PR-03 拆分后 VersionService（起始代码消毒）在题目侧模块，路径随迁。
+  const service = read('backend/app/services/experiment_problem_service.py')
+  const contract = read('frontend/src/api/experimentPublishContract.js')
+  const panel = read('frontend/src/app/components/course/TeacherExperimentPanel.vue')
+  // 后端：请求模型接收起始代码并透传服务消毒持久化（列已存在，无迁移）。
+  assert.match(backend, /class VersionCreateRequest[\s\S]*?starter_code: dict/)
+  assert.match(backend, /starter_code=payload\.starter_code/)
+  assert.match(service, /starter_code=clean_starter/)
+  // 后端：定义列表/详情回显默认版本起始代码（学生重置链路的唯一来源）。
+  assert.match(backend, /"starter_code": dict\(default_starter_code or \{\}\)/)
+  // 前端：契约透传（证据开关默认开）；出题页在创建定义时提交知识点绑定，
+  // 并把"是否计入学习证据"显性化（v2 起为「运行限制」段的开关 + 发布检查清单，
+  // 取代旧的 evidenceReady 横幅）。
+  assert.match(contract, /writes_formal_evidence: form\.writesFormalEvidence !== false/)
+  assert.match(contract, /starter_code: sanitizeStarterCode\(form\.starterCode\)/)
+  assert.match(panel, /knowledge_node_ids: selectedKnowledgeIds\.value\.filter/)
+  assert.match(panel, /writesFormalEvidence/)
+  assert.match(panel, /计入学习证据/)
+  // v2 起版本详情必须回读起始代码与预览验证时间，否则重新打开任务会丢现场。
+  assert.match(backend, /"starter_code": dict\(v\.starter_code\)/)
+  assert.match(backend, /"reference_preview_verified_at"/)
+})
+
+test('实验链F2：学生列表带尝试聚合（筛选器与进度条目），教师视图无泄露', () => {
+  const backend = read('backend/app/api/v1/endpoints/experiments.py')
+  // PR-04 拆分后 AttemptService（student_summaries）在作答侧模块，路径随迁。
+  const service = read('backend/app/services/experiment_attempt_service.py')
+  const page = read('frontend/src/app/pages/course/CourseExperimentsPage.vue')
+  // 后端：只读聚合（CANCELLED 不计），仅学生视图附加，教师视图保持原样。
+  assert.match(service, /def student_summaries\(/)
+  assert.match(service, /AttemptStatus\.CANCELLED/)
+  assert.match(backend, /summaries = attempt_service\.student_summaries\(/)
+  assert.match(backend, /"student_summary": student_summary/)
+  // 前端：三态筛选器 + 条目字段（知识点/进度/最近结果/开始继续）+ 提交后刷新。
+  assert.match(page, /待完成｜进行中｜已完成/)
+  assert.match(page, /knowledgeNames\(item\)/)
+  assert.match(page, /attemptsText\(item\)/)
+  assert.match(page, /outcomeText\(item\)/)
+  assert.match(page, /@submit-complete="handleSubmitComplete"/)
+})
+
+test('实验链F3：终结化同步完成投影，学情加编程聚合', () => {
+  // PR-04 拆分后 FinalizeService 在作答侧模块，路径随迁。
+  const service = read('backend/app/services/experiment_attempt_service.py')
+  const facade = read('backend/app/api/v1/endpoints/facade.py')
+  const analytics = read('frontend/src/app/pages/course/CourseAnalyticsPage.vue')
+  // A：仅通过的终结化写显式完成事件（幂等键防重），映射不上跳过不猜，并刷新统计。
+  assert.match(service, /_project_completion_on_pass\(/)
+  assert.match(service, /LearningEventType\.EXPLICIT_COMPLETE/)
+  assert.match(service, /experiment_finalize\|\{attempt\.attempt_id\}/)
+  assert.match(service, /refresh_course_stats\(session, course_id=course_id, release_id=release_id\)/)
+  // 正式实验页的 attempt 无 release/outline 身份：经 active release + 知识映射
+  // 回退解析；统计投影异常不得阻断评分（non-blocking）。
+  assert.match(service, /_resolve_active_outlines\(/)
+  assert.match(service, /non-blocking/)
+  // B：学情课程级与单学生级均带 coding 聚合（可信终结记录口径）。
+  assert.match(facade, /def _coding_summary\(/)
+  assert.match(facade, /LabRecord\.trusted_source == True/)
+  assert.match(facade, /"coding": coding/)
+  assert.match(facade, /data\["coding"\] = next\(/)
+  // 前端：编程实战区块 + 学生行/明细编程行，无数据时不渲染区块。
+  assert.match(analytics, /编程实战/)
+  assert.match(analytics, /codingText\(student\.student_id\)/)
+  assert.match(analytics, /studentDetail\.coding/)
+})
+
+test('实验链F4：教师出题工作台的滚动契约与四段模型（防内容截断回归）', () => {
+  const panel = read('frontend/src/app/components/course/TeacherExperimentPanel.vue')
+  const page = read('frontend/src/app/pages/course/CourseExperimentsPage.vue')
+  const workflow = read('frontend/src/api/experimentPublishWorkflow.js')
+
+  // 页面 L3 根仍不滚动（design.md §5.1），滚动必须由工作台内部两列各自承担。
+  assert.match(page, /\.experiments-page \{[\s\S]*?overflow: hidden/)
+  // 属性必须落在 TeacherExperimentPanel 自己的标签内 —— 学生侧 CodeWorkbench 也带
+  // :languages，不加标签边界的话这条断言在旧代码上恒真（反向验证抓到过）。
+  assert.match(page, /<TeacherExperimentPanel(?:(?!\/>)[\s\S])*?:languages="languages"/)
+  assert.match(page, /<TeacherExperimentPanel(?:(?!\/>)[\s\S])*?:sandbox-available="sandboxAvailable && !sandboxLoading"/)
+
+  // 面板根必须能填满剩余高度：flex:1 + min-height:0，否则会被内容撑爆后被裁。
+  assert.match(panel, /\.sfx-teacher-experiments \{[\s\S]*?flex: 1;[\s\S]*?min-height: 0;/)
+  // 可滚动行必须用 minmax(0, 1fr)，直接写 1fr 会被内容撑开（design.md §5.2）。
+  assert.match(panel, /\.sfx-teacher-experiments \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\)/)
+  // 左右两列各自滚动，互不抢同一根滚动条。
+  assert.match(panel, /\.task-column \{[\s\S]*?min-height: 0;/)
+  assert.match(panel, /\.task-list \{[\s\S]*?overflow-y: auto;/)
+  assert.match(panel, /\.editor-column \{[\s\S]*?overflow-y: auto;/)
+
+  // 六步线性向导不得回潮；四段模型是唯一分段来源。
+  assert.doesNotMatch(panel, /stageOrder/)
+  assert.match(panel, /EXPERIMENT_SECTIONS/)
+  assert.match(workflow, /export const EXPERIMENT_SECTIONS = \['basics', 'tests', 'limits', 'publish'\]/)
+  // 权重自动均分与脏检查是"题目设置繁琐/静默清空"两项反馈的直接修复点。
+  assert.match(panel, /autoWeight/)
+  assert.match(panel, /isDirty/)
+  assert.match(workflow, /export function distributeWeights/)
+  assert.match(workflow, /export function pickTargetVersion/)
+})
+
 test('F8 受控对照：共同条件＋两组冻结配方＋只关联终态运行', () => {
   const client = read('frontend/src/api/nexus.js')
   const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
@@ -1527,6 +1628,57 @@ test('F9 配方身份：详情透传配方引用，工作台只读展示（空�
   assert.match(ws, /run\?\.recipeHash/)
   assert.match(ws, /历史未验证/)
 })
+
+test('F8 受控对照：面板接线与结论口径（只关联、不执行）', () => {
+  const panel = read('frontend/src/app/pages/nexus/components/NexusComparePanel.vue')
+  const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const client = read('frontend/src/api/nexus.js')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+
+  // 客户端路径与反代路由一一对应（创建/列表/详情/取消/关联运行）
+  assert.match(client, /\/nexus\/compares/)
+  assert.match(client, /\/nexus\/compares\/\$\{encodeURIComponent\(compareId\)\}/)
+  assert.match(client, /\/compares\/\$\{encodeURIComponent\(compareId\)\}\/link-run/)
+  assert.match(backend, /@router\.post\("\/compares"\)/)
+  assert.match(backend, /@router\.get\("\/compares"\)/)
+  assert.match(backend, /@router\.post\("\/compares\/\{compare_id\}\/link-run"\)/)
+
+  // 接线：工作台多一个「对照」视图，父组件负责取数并透传
+  assert.match(ws, /key: 'compare', label: '对照'/)
+  assert.match(ws, /compare-select|compare-link|compare-cancel/)
+  assert.match(page, /:compare="activeCompare"/)
+  assert.match(page, /@compare-link="linkCompareRun"/)
+
+  // 结论口径：verdict 只有两种；界面不得出现"更优/胜出/显著优于"等判定词
+  assert.match(panel, /descriptive_ready/)
+  assert.match(panel, /incomplete/)
+  assert.doesNotMatch(panel, /显著优于|更优|胜出|winner|best_arm/)
+
+  // 失败与缺失如实并列：不隐藏 failed、指标取不到显示缺失原因
+  assert.match(panel, /metrics_missing/)
+  assert.match(panel, /run_status/)
+  // 免责声明取服务端常量，前端不改写
+  assert.match(panel, /significance/)
+
+  // 主指标优先于"第一个 key"：primary 分支必须在回退之前，否则是死代码
+  const metricBody = panel.slice(panel.indexOf('function metricOf'), panel.indexOf('const rowMetrics'))
+  assert.ok(metricBody.length > 0, '需能定位 metricOf')
+  assert.ok(
+    metricBody.indexOf('primary') < metricBody.indexOf('keys[0]'),
+    'primary 判断必须排在 keys[0] 回退之前，否则永远走不到',
+  )
+
+  // scope 是否一致是跨组判断，行内不得自称"一致"——由 comparability_notes 说话
+  assert.doesNotMatch(panel, /一致 \$\{shortHash/)
+  // 干净验证不得恒灰：必须按值着色（空才落到"不适用"）
+  assert.match(panel, /cleanClass\(row\)/)
+  assert.doesNotMatch(panel, /<dt>干净验证<\/dt>\s*\n\s*<dd class="is-missing">/)
+  // incomplete 是"还没比完"，不是失败——不得用红，用琥珀
+  assert.doesNotMatch(panel, /is-incomplete \{ color: var\(--red-700\)/)
+  assert.match(panel, /is-incomplete \{ color: var\(--amber-700\)/)
+})
+
 test('对话 run 引用绑定：按钮锚定 run_id，后端验归属后投影（伪造剥离）', () => {
   const client = read('frontend/src/api/nexus.js')
   const adapter = read('frontend/src/api/nexusAdapter.js')
@@ -1559,6 +1711,7 @@ test('对话确认不再建重复卡：同方案待批审批直接复用', () =>
   assert.match(tool, /"deduped": True/)
   assert.match(tool, /"deduped": False/)
 })
+
 test('引用 ID 种类对齐：文本引用带 run_id，工具侧 job 号可反查（归属不变）', () => {
   const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
   const backend = read('backend/app/api/v1/endpoints/nexus_internal.py')
