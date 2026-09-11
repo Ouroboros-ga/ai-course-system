@@ -590,6 +590,29 @@ class OpenAIClient(BaseLLMClient):
                             continue
 
 
+class SparkCSLocalClient(OpenAIClient):
+    """本地部署的计算机科学微调模型（挑战杯 XH-202620）。
+
+    星火 X2.5-4B 基座＋CS 学科 LoRA，跑在自建 OpenAI 兼容推理服务
+    （vLLM/ollama 等）后面，本客户端只负责 OpenAI 兼容协议接线，
+    不做本地推理、不读权重文件。设 ``LLM_PROVIDER=local_cs`` 时启用。
+
+    配置（``backend/app/core/config.py``）：
+    ``LOCAL_CS_BASE_URL``（默认本机推理服务）、``LOCAL_CS_MODEL``
+    （服务端侧模型标识，默认 ``spark-x25-4b-cs``）、
+    ``LOCAL_CS_API_KEY``（本地服务无鉴权时留空；此时仍会发送空
+    Bearer 头，vLLM 等默认忽略，未配置鉴权密钥的服务端请确认忽略行为）。
+    服务未启动/不可达时按连接失败 fail-closed，不回退其他提供商。
+    """
+
+    def __init__(self):
+        self.api_key = settings.LOCAL_CS_API_KEY
+        self.base_url = ((settings.LOCAL_CS_BASE_URL or "").strip()
+                         or "http://127.0.0.1:8001/v1").rstrip("/")
+        self.model = settings.LOCAL_CS_MODEL or "spark-x25-4b-cs"
+        self.timeout = settings.LLM_TIMEOUT
+
+
 class LLMClient:
     _instance: Optional["LLMClient"] = None
     _client: Optional[BaseLLMClient] = None
@@ -623,6 +646,7 @@ class LLMClient:
             "openai": OpenAIClient,
             "spark": SparkClient,
             "deepseek": DeepSeekClient,
+            "local_cs": SparkCSLocalClient,
         }
 
         client_class = clients.get(provider)

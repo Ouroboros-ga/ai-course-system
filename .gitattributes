@@ -2,3 +2,8 @@
 # never rewrite their line endings, otherwise the manifest SHA-256 gate fails
 # on Windows checkouts with core.autocrlf enabled.
 /research/product1_graph_retrieval/datasets/** -text
+
+# Competition LoRA weight package: hashes in SHA256SUMS.txt must match repo
+# bytes exactly (incl. tokenizer JSON/CSV/MD text files), so disable all
+# line-ending conversion and diff for the whole directory.
+/competition/05-作品代码/model_spark_x25_4b/** -text -diff

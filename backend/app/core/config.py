@@ -78,6 +78,15 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
     DEEPSEEK_MODEL: str = "deepseek-chat"
+    # 本地部署的计算机科学微调模型（挑战杯 XH-202620：星火 X2.5-4B + CS 学科
+    # LoRA，OpenAI 兼容推理服务如 vLLM/ollama 自行部署）。
+    # 设 LLM_PROVIDER=local_cs 时启用；base_url 指向本地推理服务地址，
+    # 模型名为服务端侧的模型标识（如 spark-x25-4b-cs）；服务未启动时调用
+    # 按连接失败 fail-closed，不静默回退其他提供商。
+    # 权重与加载说明见 competition/05-作品代码/model_spark_x25_4b/README.md。
+    LOCAL_CS_BASE_URL: str = "http://127.0.0.1:8001/v1"
+    LOCAL_CS_MODEL: str = "spark-x25-4b-cs"
+    LOCAL_CS_API_KEY: str = ""
     # Course preparation has a shorter, explicit stage budget than the
     # generic LLM client and a separate end-to-end budget for all stages.
     COURSE_BUILD_STAGE_TIMEOUT_SECONDS: int = 240
