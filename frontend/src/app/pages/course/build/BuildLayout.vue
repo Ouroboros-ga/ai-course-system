@@ -144,10 +144,9 @@ const activeStep = computed(() => {
   }
   return steps.value[0]
 })
-// 舞台标题跟随侧栏可见步骤：学生端「知识」步骤以「结构视图」呈现
-const stageTitle = computed(() =>
-  canEditBuild.value ? activeStep.value.label : '结构视图',
-)
+// 舞台标题：学生端（无 course.edit）整块舞台头部不渲染，故这里只取当前步骤标题；
+// 建设角色下标题跟随所选建设步骤（2026-09-11 需求：学生端不再出现「结构视图」占位标题）。
+const stageTitle = computed(() => activeStep.value.label)
 // 知识步骤子菜单（知识工作区页面直达）展开状态；
 // 初始值：已处于知识工作区子页面时默认展开，保证选中标识可见
 const knowledgeOpen = ref(String(route.name || '').startsWith('app-course-build-knowledge'))
@@ -234,7 +233,9 @@ function onStepClick(step) {
       </button>
 
       <section class="build-stage" aria-live="polite">
-        <header class="stage-context">
+        <!-- 学生端（无 course.edit）舞台头部只剩「结构视图」一个占位标题，
+             STEP 编号与动作按钮均不出现，整块 header 不再渲染（2026-09-11 需求）。 -->
+        <header v-if="canEditBuild" class="stage-context">
           <div>
             <p v-if="canEditBuild" class="eyebrow">STEP {{ String(visibleSteps.findIndex((step) => step.key === activeStep.key) + 1).padStart(2, '0') }} · {{ activeStep.key.toUpperCase() }}</p>
             <h1>{{ stageTitle }}</h1>
