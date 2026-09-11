@@ -1,4 +1,4 @@
-﻿"""OJ 域（bounded context）。
+"""OJ 域（bounded context）。
 
 把仓库里以 ``experiment_*`` 命名的课程编程实验域，正式定义为 OJ 域。
 **不新建第二套 problem / submission 表**，见

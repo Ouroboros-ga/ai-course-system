@@ -1,4 +1,4 @@
-﻿"""判题语义子域。
+"""判题语义子域。
 
 - ``verdicts.py`` —— 状态 / 判定分离（PR-01）
 - ``providers/judge0.py`` —— **Judge0 的唯一 HTTP 出口**（PR-02 自
