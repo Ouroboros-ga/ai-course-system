@@ -277,7 +277,8 @@ def test_experiment_run_returns_202_with_task_id(client, session):
         ExperimentDefinition, ExperimentVersion, ExperimentAttempt,
         AttemptStatus, ExperimentPublishStatus,
     )
-    from app.services.experiment_service import definition_service, attempt_service
+    from app.services.experiment_problem_service import definition_service
+    from app.services.experiment_service import attempt_service
 
     teacher = _user(session, "p02_exp_teacher", UserRole.TEACHER)
     student = _user(session, "p02_exp_student", UserRole.STUDENT)

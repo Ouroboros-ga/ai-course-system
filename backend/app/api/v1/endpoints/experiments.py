@@ -30,13 +30,15 @@ from app.models.experiment_model import (
     RunOutcome,
 )
 from app.services.course_access_service import require_course_permission
+from app.services.experiment_problem_service import (
+    definition_service,
+    version_service,
+)
 from app.services.experiment_service import (
     attempt_service,
     coding_hint_service,
-    definition_service,
     finalize_service,
     run_service,
-    version_service,
 )
 from app.services.coding_eduagent_service import (
     build_rule_explanation,

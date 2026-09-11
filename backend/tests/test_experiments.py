@@ -44,13 +44,15 @@ from app.services.course_access_service import (
     activate_student_membership,
     establish_course_access_baseline,
 )
+from app.services.experiment_problem_service import (
+    definition_service,
+    version_service,
+)
 from app.services.experiment_service import (
     attempt_service,
     coding_hint_service,
-    definition_service,
     finalize_service,
     run_service,
-    version_service,
 )
 from app.services.task_service import task_service
 from app.domain.oj.judging.providers.judge0 import (

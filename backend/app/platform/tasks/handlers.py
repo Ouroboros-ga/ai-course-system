@@ -953,12 +953,12 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
         RunOutcome,
     )
     from app.services.coding_challenge_service import coding_challenge_service
+    from app.services.experiment_problem_service import version_service
     from app.services.experiment_service import (
         attempt_service,
         finalize_service,
         run_service,
         SandboxExecutionLeaseService,
-        version_service,
     )
     from app.services.learning_projection_outbox_service import (
         dispatch_learning_projection,
