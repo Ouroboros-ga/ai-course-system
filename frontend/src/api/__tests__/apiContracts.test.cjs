@@ -1518,3 +1518,35 @@ test('F9 配方身份：详情透传配方引用，工作台只读展示（空�
   assert.match(ws, /run\?\.recipeHash/)
   assert.match(ws, /历史未验证/)
 })
+test('对话 run 引用绑定：按钮锚定 run_id，后端验归属后投影（伪造剥离）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const adapter = read('frontend/src/api/nexusAdapter.js')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  // 客户端：runRef 只传引用声明，详情一律后端投影。
+  assert.match(client, /runRef = null/)
+  assert.match(client, /body\.context\.run_ref = \{ run_id:/)
+  assert.match(adapter, /runRef = null/)
+  assert.match(adapter, /runRef,/)
+  // 父组件：analyze/ask 锚定业务 run_id，一次性消费，发送即清零。
+  assert.match(page, /pendingRunRef = ref\(null\)/)
+  assert.match(page, /pendingRunRef\.value = null/)
+  assert.match(page, /runRef,/)
+  // 后端：客户端 run_ref 替换为服务端白名单投影，伪造剥离；未知 404、跨会话 403。
+  assert.match(backend, /await _inject_run_context\(payload, session, current_user\)/)
+  assert.match(backend, /context\.pop\("run_context", None\)/)
+  assert.match(backend, /detail="RUN_NOT_FOUND"/)
+  assert.match(backend, /detail="RUN_SESSION_MISMATCH"/)
+})
+
+test('对话确认不再建重复卡：同方案待批审批直接复用', () => {
+  const approval = read('nexus/src/nexus/approvals.py')
+  const tool = read('nexus/src/nexus/tools/reproduction.py')
+  // 查询面：同用户同会话同工具同 plan_hash＋未过期才命中。
+  assert.match(approval, /def find_pending_approval/)
+  assert.match(approval, /_is_expired\(approval, now\)/)
+  // 工具侧：无票据先查复用，命中标 deduped，不建新卡。
+  assert.match(tool, /find_pending_approval/)
+  assert.match(tool, /"deduped": True/)
+  assert.match(tool, /"deduped": False/)
+})

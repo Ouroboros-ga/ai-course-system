@@ -613,6 +613,9 @@ function parseSseFrames(buffer, onEvent) {
  * @param {number} [options.courseId]   绑定的课程 ID，接线预留（同上）
  * @param {string} [options.model]      模型 id（服务端 allowlist 内；缺省用默认模型）
  * @param {string[]} [options.attachmentIds] 本次对话引用的附件 id（≤5，服务端验主+绑定）
+ * @param {{run_id: string, step_id?: number|string} | null} [options.runRef]
+ *   本次对话锚定的运行（只传引用声明；后端验主＋验同会话后投影为 run_context，
+ *   伪造的 run_context 一律剥离；缺 run_id 即忽略，不阻断发送）
  * @param {(evt: {event: string, data: object}) => void} options.onEvent
  * @param {AbortSignal} [options.signal] 用于取消（组件卸载/用户中止）
  */
@@ -624,6 +627,7 @@ export async function streamNexusMessage({
   courseId = null,
   model = null,
   attachmentIds = [],
+  runRef = null,
   onEvent,
   signal,
 }) {
@@ -632,7 +636,17 @@ export async function streamNexusMessage({
   if (mode) body.mode = mode
   // T5 Ask/Auto：Research 显式发送本次 effective 值；General 不传。
   if (researchExecutionMode) body.research_execution_mode = researchExecutionMode
-  if (courseId != null) body.context = { course_id: courseId }
+  if (courseId != null || (runRef && runRef.run_id)) {
+    body.context = {}
+    if (courseId != null) body.context.course_id = courseId
+    // 运行引用声明：只传 id，详情一律由后端投影（防伪造）。
+    if (runRef && runRef.run_id) {
+      body.context.run_ref = { run_id: String(runRef.run_id).slice(0, 64) }
+      if (runRef.step_id !== undefined && runRef.step_id !== null && String(runRef.step_id).trim() !== '') {
+        body.context.run_ref.step_id = runRef.step_id
+      }
+    }
+  }
   // 模型网关 P0：服务端 allowlist 校验，清单外直接 400（见 NexusPage 模型下拉）。
   if (model) body.model = model
   // NX-A1：附件引用（服务端验主＋绑定会话后才透传给 Runtime）。

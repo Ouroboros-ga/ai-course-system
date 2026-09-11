@@ -416,7 +416,7 @@ export async function streamDemoMessage({ message, onEvent, signal }) {
  * 统一发送入口。
  *
  * real 模式透传 { message, session_id, mode, research_execution_mode,
- * context: { course_id }, model, attachment_ids } 到运行时；
+ * context: { course_id, run_ref }, model, attachment_ids } 到运行时；
  * demo 模式本地回放（附件/模型/执行模式选择不生效）。
  */
 export async function dispatchNexusMessage({
@@ -427,6 +427,7 @@ export async function dispatchNexusMessage({
   courseId = null,
   model = null,
   attachmentIds = [],
+  runRef = null,
   onEvent,
   signal,
 }) {
@@ -438,6 +439,7 @@ export async function dispatchNexusMessage({
       courseId,
       model,
       attachmentIds,
+      runRef,
       researchExecutionMode,
       onEvent,
       signal,

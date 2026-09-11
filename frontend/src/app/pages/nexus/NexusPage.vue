@@ -259,11 +259,16 @@ const askWindowOpen = ref(false)
 function openAskWindow() {
   askWindowOpen.value = true
 }
+// ── 运行引用绑定（run_ref）：对话锚定某次运行时，把业务 run_id 交给发送链；
+// 后端验主＋验同会话后投影为 run_context（伪造剥离），智能体据此可查详情。
+// 一次性消费：发送即清零，不泄漏到后续无关追问。文本引用保留（人类可读）。
+const pendingRunRef = ref(null)
 function onAskSend(text) {
   // 引用边界：只带明确的 run ID / 步骤，不复制全量日志、不混其他会话
   const run = activeRun.value?.run
   const ref = run ? `\n\n（引用：本次运行 ${run.job_id}· 第 ${run.currentStep ?? '—'} 步）` : ''
   draft.value = `${text}${ref}`
+  pendingRunRef.value = run?.run_id ? { run_id: run.run_id, step_id: run.currentStep ?? null } : null
   setWorkspaceView('chat')
   askWindowOpen.value = false
   send()
@@ -275,6 +280,11 @@ function analyzeRunResult(id) {
   const run = item?.run
   const verdict = run?.verdict ? `判定 ${run.verdict}` : '结果'
   draft.value = `请解释本次实验结果（${item?.name || '本次运行'} · ${verdict}），与预期有什么差异，下一步建议是什么？`
+  // 显示名解析不了 run_id（智能体只能查明确 ID）：把机器引用一并绑定，
+  // 发送时随请求透传，后端验归属后投影，智能体即可查询核实再作答。
+  pendingRunRef.value = (run?.run_id || item?.runId)
+    ? { run_id: run?.run_id || item?.runId }
+    : null
   setWorkspaceView('chat')
   nextTick(() => {
     const el = document.querySelector('.nx-composer-textarea')
@@ -2706,6 +2716,9 @@ async function runTurn(message) {
   scrollToBottom()
 
   try {
+    // 运行引用一次性消费：先取值再清零，发送失败也不泄漏到下一次追问。
+    const runRef = pendingRunRef.value
+    pendingRunRef.value = null
     await dispatchNexusMessage({
       // 修复：原先误写 message: msg（msg 不在作用域，真实链路必抛
       // ReferenceError）；与模型透传同批修正。
@@ -2718,6 +2731,9 @@ async function runTurn(message) {
       model: effectiveModel.value || null,
       // NX-A1：仅发送就绪附件 id；绑定与验主在服务端完成。
       attachmentIds: readyAttachmentIds(currentSession.value),
+      // 运行引用：analyze/ask 按钮锚定某次运行时带上业务 run_id；
+      // 后端验主＋验同会话后投影，伪造剥离；一次性消费，发送即清零。
+      runRef,
       signal: abortController.signal,
       onEvent: (evt) => handleEvent(turn, evt, currentSession.value),
     })
