@@ -785,10 +785,6 @@ async function handlePracticeExit() {
   await ws.refreshLearningContext().catch(() => {})
 }
 
-async function completeNode() {
-  await ws.completeCurrentNode()
-}
-
 // 知识图谱节点详情的「对应学习节点」快捷入口带锚点进入本页：
 // ?node=<outlineNodeId>&nodeIndex=<index>。锚点只在学习页数据加载完成后生效，
 // 定位到目标节点但不自动播放，避免学生刚进来就被打断。
@@ -867,13 +863,11 @@ onMounted(async () => {
           :cognitive-details="ws.cognitiveDetails.value"
           :cognitive-loading="ws.cognitiveLoading.value"
           :collapsed="trackCollapsed"
-          :can-complete="!previewMode && !!ws.currentNode.value?.outlineNodeId && !ws.completedNodes.value.includes(ws.currentNode.value.id)"
           @select="handleTrackSelect"
           @inspect="ws.toggleNodeCognition"
           @open-knowledge="handleOpenKnowledge"
           @recommendation-action="handleRecommendationAction"
           @toggle="handleTrackToggle"
-          @complete="completeNode"
         />
 
         <main class="sfx-learn-stage">
@@ -906,7 +900,6 @@ onMounted(async () => {
             :playback-rate="ws.playbackRate.value"
             :volume="ws.volume.value"
             :is-muted="ws.isMuted.value"
-            :captions-enabled="ws.captionsEnabled.value"
             :audio-url="media.audioUrl.value"
             :playlist="media.playlist.value"
             :playlist-index="playlistPlayback.activeIndex.value"
@@ -929,7 +922,6 @@ onMounted(async () => {
             @rate-change="ws.playbackRate.value = $event"
             @volume-change="ws.volume.value = $event"
             @mute-change="ws.isMuted.value = $event"
-            @captions-change="ws.captionsEnabled.value = $event"
           >
             <template v-if="learnState === LEARN_STATES.UNDERSTAND" #secondary>
               <CourseAgentPanel

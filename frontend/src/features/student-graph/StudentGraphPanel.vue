@@ -52,7 +52,6 @@ const snapshotMeta = computed(() => {
 })
 const nodes = computed(() => Array.isArray(snapshot.value?.nodes) ? snapshot.value.nodes : [])
 const relations = computed(() => Array.isArray(snapshot.value?.relations) ? snapshot.value.relations : [])
-const bundle = computed(() => graph.value?.bundle || null)
 const nodeByKey = computed(() =>
   new Map(nodes.value.map((node) => [String(node.id), node])),
 )
@@ -184,17 +183,6 @@ onMounted(loadGraph)
 
 <template>
   <section class="student-kg" aria-label="课程知识图谱">
-    <header class="student-kg__header">
-      <div class="student-kg__heading">
-        <p class="eyebrow">已激活知识包</p>
-        <h2 class="student-kg__title">课程知识图谱</h2>
-        <p v-if="bundle" class="muted">
-          Bundle v{{ bundle.version }} · {{ nodes.length }} 个节点 ·
-          {{ relations.length }} 条语义关系
-        </p>
-      </div>
-    </header>
-
     <div v-if="status === 'loading'" class="state" role="status">
       <LoaderCircle class="spin" :size="22" /> 正在读取已激活知识包…
     </div>
@@ -327,22 +315,6 @@ onMounted(loadGraph)
   flex: 1;
   min-height: 0;
   gap: var(--space-3, 12px);
-  color: var(--text-primary, #172033);
-}
-
-.student-kg__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4, 16px);
-  flex-shrink: 0;
-}
-
-.student-kg__title {
-  margin: var(--space-1, 4px) 0;
-  font-size: var(--title-2-size, 24px);
-  line-height: var(--title-2-line, 32px);
-  font-weight: var(--title-2-weight, 600);
   color: var(--text-primary, #172033);
 }
 
