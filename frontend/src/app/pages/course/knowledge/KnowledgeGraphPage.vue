@@ -119,9 +119,14 @@ function handleJumpNode(node) {
   router.push(`/app/course/${courseId.value}/build/knowledge/graph/${node.id}`)
 }
 
-function handleReturnAnchor() {
-  // 返回课程概览（无锚点时回退到概览）
-  router.push(`/app/course/${courseId.value}/overview`)
+function handleOpenLearnNode(node) {
+  // 原文引用页映射到的学习页节点：带锚点进入学习页并定位到该节点
+  if (!node) return
+  const query = {}
+  if (node.outlineNodeId != null) query.node = String(node.outlineNodeId)
+  if (Number.isInteger(node.index)) query.nodeIndex = String(node.index)
+  if (!Object.keys(query).length) return
+  router.push({ path: `/app/course/${courseId.value}/learn`, query })
 }
 
 // 教师预览模式：加载 refinement 质量报告（解决"refinement 质量报告尚未在教师页面完整展示"遗留）
@@ -218,7 +223,7 @@ onMounted(() => {
           :course-id="courseId"
           :node-id="nodeId"
           @jump-node="handleJumpNode"
-          @return-anchor="handleReturnAnchor"
+          @open-learn-node="handleOpenLearnNode"
         />
       </section>
 

@@ -428,6 +428,76 @@ test('StudentGraphPanel.vue: 快照不读取 policy_version（policy_version 属
   assert.match(snapshotMetaMatch[0], /snapshot\.value\.version/)
 })
 
+// ============================================================================
+// P1-2b: 学生图谱节点中文化 + 原文引用页 → 学习页快捷进入
+// ============================================================================
+
+test('nodeTypeLabels.js: 后端节点类型英文枚举映射为中文词表', () => {
+  const src = read('frontend/src/features/knowledge-bundle/nodeTypeLabels.js')
+  // 必须提供统一的中文映射与查询函数，避免英文枚举外露给学生
+  assert.match(src, /export\s+const\s+NODE_TYPE_LABELS\s*=/)
+  assert.match(src, /export\s+function\s+nodeTypeLabel\s*\(/)
+  assert.match(src, /concept:\s*['"]概念['"]/)
+  assert.match(src, /knowledge_point:\s*['"]知识点['"]/)
+  assert.match(src, /method:\s*['"]方法['"]/)
+  // 未知类型必须回落到通用标签，不允许返回 undefined
+  assert.match(src, /NODE_TYPE_LABELS\.default/)
+})
+
+test('StudentGraphPanel.vue: 节点类型走中文映射（列表 small + 详情 eyebrow）', () => {
+  const src = read('frontend/src/features/student-graph/StudentGraphPanel.vue')
+  assert.match(src, /import\s+\{\s*nodeTypeLabel\s*\}\s+from\s+['"]@\/features\/knowledge-bundle\/nodeTypeLabels\.js['"]/)
+  // 节点列表的 small 标签与详情 eyebrow 都必须经过中文映射
+  assert.match(src, /<small class="node-item__type">\{\{\s*nodeTypeLabel\(/)
+  assert.match(src, /class="eyebrow">\{\{\s*nodeTypeLabel\(/)
+})
+
+test('StudentGraphPanel.vue: 移除返回课程按钮与原文引用抽屉', () => {
+  const src = read('frontend/src/features/student-graph/StudentGraphPanel.vue')
+  // 返回课程按钮已删除：不再声明 return-anchor，也不再有 citation 抽屉
+  assert.doesNotMatch(src, /return-anchor/)
+  assert.doesNotMatch(src, /citationImageUrl/)
+  assert.doesNotMatch(src, /citation-drawer/)
+  assert.doesNotMatch(src, /class="citation-btn"/)
+  assert.doesNotMatch(src, /fetchProtectedImageUrl/)
+  // emits 收敛为 jump-node + open-learn-node
+  assert.match(src, /defineEmits\(\[[^\]]*['"]jump-node['"][^\]]*['"]open-learn-node['"]/)
+})
+
+test('StudentGraphPanel.vue: 引用页按 page_start/page_end 映射到学习页节点', () => {
+  const src = read('frontend/src/features/student-graph/StudentGraphPanel.vue')
+  // 学习页节点来源必须与学习页同源（/player/init + normalizePlayerData）
+  assert.match(src, /import\s+\{\s*getPlayerInitData\s*\}\s+from\s+['"]@\/api\/player\.js['"]/)
+  assert.match(src, /import\s+\{\s*normalizePlayerData\s*\}\s+from\s+['"]@\/features\/student-learning\/adapters\/playerWorkspaceAdapter\.js['"]/)
+  // 区间包含关系：page >= pageStart && page <= pageEnd
+  assert.match(src, /page\s*<\s*node\.pageStart\s*\|\|\s*page\s*>\s*node\.pageEnd/)
+  // 快捷进入通过 open-learn-node 事件交回页面路由
+  assert.match(src, /@click="emit\('open-learn-node'/)
+})
+
+test('KnowledgeGraphPage.vue: 学习节点快捷进入带锚点路由到学习页', () => {
+  const src = read('frontend/src/app/pages/course/knowledge/KnowledgeGraphPage.vue')
+  // 返回课程按钮已删除，对应 handler 一并移除
+  assert.doesNotMatch(src, /handleReturnAnchor/)
+  // 必须监听新的 open-learn-node 事件
+  assert.match(src, /@open-learn-node="handleOpenLearnNode"/)
+  assert.match(src, /function\s+handleOpenLearnNode\s*\(/)
+  // 目标地址为学习页，并携带 node / nodeIndex 锚点
+  assert.match(src, /\/app\/course\/\$\{courseId\.value\}\/learn/)
+  assert.match(src, /query\.node\s*=/)
+  assert.match(src, /query\.nodeIndex\s*=/)
+})
+
+test('LearnPage.vue: 支持 ?node / ?nodeIndex 锚点定位到学习节点', () => {
+  const src = read('frontend/src/app/pages/learn/LearnPage.vue')
+  // 必须读取路由锚点，并在学习数据加载完成后定位（不自动播放）
+  assert.match(src, /route\.query\.node/)
+  assert.match(src, /route\.query\.nodeIndex/)
+  assert.match(src, /node\.outlineNodeId/)
+  assert.match(src, /applyAnchorFromRoute\(\)/)
+  assert.match(src, /handleTrackSelect\(index,\s*\{\s*play:\s*false\s*\}\)/)
+})
+
 test('backend: graph_production_service.py serialize_snapshot 返回 relations 与 version/ontology_version', () => {
   const src = read('backend/app/services/graph_production_service.py')
   // 必须返回 relations（不是 edges）
@@ -463,9 +533,20 @@ test('router.js: 注册 /app/course/:courseId/build/knowledge/graph/:nodeId? 路
 
 test('CourseLayout.vue: builders enter knowledge through construction while learners retain the knowledge tab', () => {
   const src = read('frontend/src/app/pages/course/CourseLayout.vue')
-  assert.match(src, /if\s*\(!allowed\.value\[['"]course\.edit['"]\]\)[\s\S]*?key:\s*['"]knowledge['"]/)
+  // 学生/观察者（无 analytics.view_course）：原「学习分析」置灰位改为「结构视图」
+  assert.match(
+    src,
+    /if\s*\(allowed\.value\[['"]analytics\.view_course['"]\]\)[\s\S]*?else\s*\{[\s\S]*?key:\s*['"]knowledge['"][\s\S]*?label:\s*['"]结构视图['"]/,
+  )
+  // 助教（有 analytics.view_course 但无 course.edit）：保留「知识」入口进入结构视图
+  assert.match(
+    src,
+    /if\s*\(!allowed\.value\[['"]course\.edit['"]\]\s*&&\s*allowed\.value\[['"]analytics\.view_course['"]\]\)[\s\S]*?key:\s*['"]knowledge['"]/,
+  )
   // 学生知识入口指向并入建设布局后的新地址
   assert.match(src, /to:\s*`\/app\/course\/\$\{courseId\.value\}\/build\/knowledge\/graph`/)
+  // 建设者（course.edit）不再重复顶部「知识」，改由建设导航进入
+  assert.match(src, /if\s*\(allowed\.value\[['"]course\.edit['"]\]\)[\s\S]*?key:\s*['"]build['"]/)
   assert.match(src, /if\s*\(route\.path\.includes\(['"]\/build\/knowledge['"]\)\)[\s\S]*?return allowed\.value\[['"]course\.edit['"]\]\s*\?\s*['"]build['"]\s*:\s*['"]knowledge['"]/)
 })
 

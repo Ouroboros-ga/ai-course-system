@@ -789,9 +789,39 @@ async function completeNode() {
   await ws.completeCurrentNode()
 }
 
+// 知识图谱节点详情的「对应学习节点」快捷入口带锚点进入本页：
+// ?node=<outlineNodeId>&nodeIndex=<index>。锚点只在学习页数据加载完成后生效，
+// 定位到目标节点但不自动播放，避免学生刚进来就被打断。
+function resolveAnchorNodeIndex() {
+  const outlineNodeId = route.query.node != null ? String(route.query.node) : ''
+  const rawIndex = route.query.nodeIndex != null ? Number(route.query.nodeIndex) : Number.NaN
+  const nodes = ws.nodes.value
+  if (!nodes.length) return -1
+  if (outlineNodeId) {
+    const matched = nodes.findIndex((node) => String(node.outlineNodeId ?? '') === outlineNodeId)
+    if (matched >= 0) return matched
+  }
+  if (Number.isInteger(rawIndex) && rawIndex >= 0 && rawIndex < nodes.length) return rawIndex
+  return -1
+}
+
+function applyAnchorFromRoute() {
+  const index = resolveAnchorNodeIndex()
+  if (index < 0) return
+  handleTrackSelect(index, { play: false })
+}
+
+watch(
+  () => [route.query.node, route.query.nodeIndex],
+  () => {
+    if (ws.nodes.value.length) applyAnchorFromRoute()
+  },
+)
+
 onMounted(async () => {
   await Promise.all([ws.load(), media.load()])
   await Promise.all([restoreActiveLearningAdjustment(), restoreCodingChallenge()])
+  applyAnchorFromRoute()
 })
 </script>
 

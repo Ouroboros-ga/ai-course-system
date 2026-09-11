@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nodeTypeLabel } from '@/features/knowledge-bundle/nodeTypeLabels.js'
 
 const props = defineProps({
   nodes: { type: Array, default: () => [] },
@@ -34,27 +35,8 @@ const relationColors = {
   RELATED_TO:      '#73839B',
 }
 // 节点类型中文化（解决"部分标题仍为英文或语义较弱"遗留问题）
-const TYPE_LABELS = {
-  concept: '概念',
-  knowledge_point: '知识点',
-  skill: '技能',
-  topic: '主题',
-  chapter: '章节',
-  section: '小节',
-  method: '方法',
-  principle: '原理',
-  formula: '公式',
-  example: '示例',
-  definition: '定义',
-  theorem: '定理',
-  algorithm: '算法',
-  procedure: '流程',
-  assessment: '考核',
-  default: '节点',
-}
-function typeLabel(type) {
-  return TYPE_LABELS[String(type || '').toLowerCase()] || TYPE_LABELS.default
-}
+// 词表与节点列表/详情面板共用，统一维护在 nodeTypeLabels.js
+const typeLabel = nodeTypeLabel
 // 关系类型中文化（解决"部分标题仍为英文或语义较弱"遗留问题）
 const RELATION_LABELS = {
   PREREQUISITE_OF: '先修',
