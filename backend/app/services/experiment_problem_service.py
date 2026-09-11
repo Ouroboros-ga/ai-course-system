@@ -209,9 +209,9 @@ class ExperimentDefinitionService:
         definition.updated_at = utcnow_aware()
         session.add(definition)
         session.flush()
-        # 延迟导入：ExperimentLabProjectionService 同时被 attempt/run 终结流程使用
-        # （留在 experiment_service），模块级导入会成环；PR-04 拆 attempt/run 时收口。
-        from app.services.experiment_service import ExperimentLabProjectionService
+        # ExperimentLabProjectionService 已随作答侧迁至 experiment_attempt_service
+        # （PR-04 收口 PR-03 的延迟导入；作答侧 → 题目侧单向依赖，不成环）。
+        from app.services.experiment_attempt_service import ExperimentLabProjectionService
 
         ExperimentLabProjectionService().ensure_projection(
             session,

@@ -276,7 +276,7 @@ async def create_coding_challenge_run(
         course_id=course_id,
         student_id=user_id,
     )
-    from app.services.experiment_service import run_service
+    from app.services.experiment_attempt_service import run_service
     from app.services.task_service import TaskCreateRequest, task_service
 
     run = await run_service.create_run(

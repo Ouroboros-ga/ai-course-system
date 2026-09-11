@@ -15,6 +15,13 @@
 的边界一致：域层定义「规则是什么」，服务层决定「何时读写数据库」。
 """
 
+from app.domain.oj.intelligence.hints import (
+    CODING_HINT_POLICY_VERSION,
+    FULL_SOLUTION_LEVEL,
+    HINT_REVIEW_DECISIONS,
+    assert_full_solution_allowed,
+    normalize_review_decision,
+)
 from app.domain.oj.intelligence.rules import (
     DIAGNOSIS_ERROR_CLASSES,
     DIAGNOSIS_POLICY_VERSION,
@@ -28,13 +35,18 @@ from app.domain.oj.intelligence.rules import (
 )
 
 __all__ = [
+    "CODING_HINT_POLICY_VERSION",
     "DIAGNOSIS_ERROR_CLASSES",
     "DIAGNOSIS_POLICY_VERSION",
+    "FULL_SOLUTION_LEVEL",
     "DiagnosisInput",
+    "HINT_REVIEW_DECISIONS",
     "classify_run",
     "confidence_for",
     "debug_steps_for",
     "hints_for",
     "line_from_text",
     "normalize_outcome",
+    "normalize_review_decision",
+    "assert_full_solution_allowed",
 ]

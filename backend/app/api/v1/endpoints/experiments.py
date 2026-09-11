@@ -34,12 +34,12 @@ from app.services.experiment_problem_service import (
     definition_service,
     version_service,
 )
-from app.services.experiment_service import (
+from app.services.experiment_attempt_service import (
     attempt_service,
-    coding_hint_service,
     finalize_service,
     run_service,
 )
+from app.services.experiment_service import coding_hint_service
 from app.services.coding_eduagent_service import (
     build_rule_explanation,
     coding_eduagent,

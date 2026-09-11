@@ -204,7 +204,7 @@ class TestCodeSubmissionIdEndToEndFlow:
 class TestAutomaticCodingDiagnosis:
     def test_terminal_run_gets_diagnosed_without_client_replay(self) -> None:
         from app.models.experiment_model import ExperimentRun, RunOutcome
-        from app.services.experiment_service import ExperimentRunService
+        from app.services.experiment_attempt_service import ExperimentRunService
         from app.services.coding_eduagent_service import coding_eduagent
 
         run = MagicMock(spec=ExperimentRun)
@@ -225,7 +225,7 @@ class TestAutomaticCodingDiagnosis:
 
     def test_pending_run_does_not_create_diagnosis(self) -> None:
         from app.models.experiment_model import ExperimentRun, RunOutcome
-        from app.services.experiment_service import ExperimentRunService
+        from app.services.experiment_attempt_service import ExperimentRunService
         from app.services.coding_eduagent_service import coding_eduagent
 
         run = MagicMock(spec=ExperimentRun)

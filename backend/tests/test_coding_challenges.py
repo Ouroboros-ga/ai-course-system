@@ -620,7 +620,7 @@ def test_run_source_hash_normalizes_formatting_only_revisions(
     session.add(attempt)
     session.commit()
 
-    from app.services.experiment_service import run_service
+    from app.services.experiment_attempt_service import run_service
 
     first = asyncio.run(run_service.create_run(
         session,
@@ -689,7 +689,7 @@ def test_same_server_error_signature_does_not_inflate_effective_revisions(
     session.add(first)
     session.commit()
 
-    from app.services.experiment_service import run_service
+    from app.services.experiment_attempt_service import run_service
 
     run_service.record_terminal_evidence_quality(session, first)
     session.add(second)
