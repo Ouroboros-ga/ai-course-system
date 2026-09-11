@@ -474,6 +474,96 @@ class TestExperimentVersion:
         assert "stdin" not in hidden_s[0]
         assert "expected_stdout" not in hidden_s[0]
 
+    def test_version_detail_returns_starter_code_and_preview_state(
+        self, client, session, teacher_user,
+    ):
+        """版本详情必须回传起始代码与预览验证时间。
+
+        教师工作台「继续配置」依赖这两个字段恢复现场：
+        - 定义级 starter_code 取的是"默认版本"，而默认版本只在锁定后产生，
+          所以未锁定的草稿版本只能从版本自身回读，否则开始代码会被静默清空。
+        - 发布校验要求 reference_preview_verified_at 非空，不回传就会迫使教师
+          在每次刷新后重跑一遍参考解预览才能拿到锁定按钮。
+        """
+        course = _course(session, teacher_user.id)
+        _enable_experiment_capabilities(session, course.id)
+        token = _token(teacher_user)
+
+        d = _create_definition_via_api(client, token, course.id)
+        payload = {
+            "label": "v1",
+            "cpu_time_limit": 5,
+            "memory_limit": 128_000,
+            "wall_time_limit": 10,
+            "max_processes": 30,
+            "max_file_size": 1024,
+            "passing_score": 1.0,
+            "writes_formal_evidence": True,
+            "starter_code": {"python3": "a, b = map(int, input().split())"},
+            "test_cases": [
+                {"case_name": "basic", "stdin": "1 2\n", "expected_stdout": "3\n", "is_hidden": False, "weight": 0.5},
+                {"case_name": "edge", "stdin": "0 0\n", "expected_stdout": "0\n", "is_hidden": True, "weight": 0.5},
+            ],
+            "activate": True,
+        }
+        created = client.post(
+            f"{EXPERIMENTS}/{d['experiment_id']}/versions?course_id={course.id}",
+            json=payload,
+            headers=_auth(token),
+        )
+        assert created.status_code == 200, created.text
+        version_id = created.json()["data"]["version_id"]
+
+        def _detail() -> dict:
+            resp = client.get(
+                f"{EXPERIMENTS}/versions/{version_id}?course_id={course.id}",
+                headers=_auth(token),
+            )
+            assert resp.status_code == 200, resp.text
+            return resp.json()["data"]
+
+        before = _detail()
+        assert before["starter_code"] == {"python3": "a, b = map(int, input().split())"}
+        assert before["reference_preview_verified_at"] is None
+
+        # 预览成功后的持久化结果经同一出口可见（教师刷新后不必重跑预览）。
+        _mark_version_publish_ready(session, version_id)
+        after = _detail()
+        assert after["reference_preview_verified_at"] is not None
+
+    def test_zero_weight_case_is_accepted_and_documented(
+        self, client, session, teacher_user,
+    ):
+        """已知行为锚点：服务端只校验权重总和，不校验单条权重为正。
+
+        在"全量通过才算过"的规则下，权重为 0 的用例即使失败也不影响判定，
+        等于一条静默失效的用例。前端对此只提示不拦截（客户端规则不严于服务端），
+        所以这里把它固化成显式契约，避免将来被误当成"已修复"或当成新缺陷。
+        """
+        course = _course(session, teacher_user.id)
+        _enable_experiment_capabilities(session, course.id)
+        token = _token(teacher_user)
+
+        d = _create_definition_via_api(client, token, course.id)
+        version = _create_version_via_api(
+            client, token, course.id, d["experiment_id"],
+            test_cases=[
+                {"case_name": "scored", "stdin": "1\n", "expected_stdout": "1\n", "is_hidden": False, "weight": 0.5},
+                {"case_name": "scored2", "stdin": "2\n", "expected_stdout": "2\n", "is_hidden": False, "weight": 0.5},
+                {"case_name": "silently-ignored", "stdin": "3\n", "expected_stdout": "999\n", "is_hidden": True, "weight": 0.0},
+            ],
+        )
+        assert version["version_id"].startswith("expv_")
+
+        resp = client.get(
+            f"{EXPERIMENTS}/versions/{version['version_id']}?course_id={course.id}",
+            headers=_auth(token),
+        )
+        cases = resp.json()["data"]["test_cases"]
+        assert len(cases) == 3
+        assert sum(c["weight"] for c in cases) == pytest.approx(1.0)
+        assert [c for c in cases if c["weight"] == 0][0]["case_name"] == "silently-ignored"
+
 
 # ---------------------------------------------------------------------------
 # 学生尝试

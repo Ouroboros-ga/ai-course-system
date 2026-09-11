@@ -87,6 +87,9 @@ class VersionCreateRequest(BaseModel):
     max_file_size: int = Field(default=1024, ge=1, le=8192)
     passing_score: float = Field(default=1.0, ge=1.0, le=1.0)
     writes_formal_evidence: bool = True
+    # 学生工作台重置用起始代码：{language: source}。服务端只做形状消毒
+    # （键转 str、值截断），不编译不执行；读取经默认版本序列化回显。
+    starter_code: dict = Field(default_factory=dict)
     test_cases: list[dict] = Field(default_factory=list)
     activate: bool = True
 
@@ -122,7 +125,7 @@ class ReferencePreviewRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _serialize_definition(d) -> dict[str, Any]:
+def _serialize_definition(d, default_starter_code=None, student_summary=None) -> dict[str, Any]:
     return {
         "experiment_id": d.experiment_id,
         "course_id": d.course_id,
@@ -138,12 +141,30 @@ def _serialize_definition(d) -> dict[str, Any]:
         # SQL NULL，而 `d.tags` 会是 None；前端不该为此多写一处判空。
         "difficulty": d.difficulty,
         "tags": list(d.tags or []),
+        # 学生工作台重置用起始代码（取默认版本；无版本时为空对象）。
+        "starter_code": dict(default_starter_code or {}),
+        # 学生视图专属：该生在此实验下的尝试聚合（教师视图为 None）。
+        "student_summary": student_summary,
         "max_attempts": d.max_attempts,
         "cooldown_minutes": d.cooldown_minutes,
         "created_by": d.created_by,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }
+
+
+def _default_version_starter(session, course_id: int, version_id) -> dict:
+    """读取默认版本的起始代码；缺失/异常时返回空对象（学生端回退空编辑器）。"""
+    if not version_id:
+        return {}
+    try:
+        version = version_service.get_version(
+            session, course_id=course_id, version_id=version_id,
+        )
+    except Exception:
+        return {}
+    code = getattr(version, "starter_code", None)
+    return dict(code) if isinstance(code, dict) else {}
 
 
 def _serialize_version(v, include_test_cases: bool = False, include_hidden: bool = False) -> dict[str, Any]:
@@ -161,8 +182,19 @@ def _serialize_version(v, include_test_cases: bool = False, include_hidden: bool
         "enable_network": v.enable_network,
         "passing_score": v.passing_score,
         "writes_formal_evidence": v.writes_formal_evidence,
+        # 版本自有的起始代码。定义级 starter_code 取的是"默认版本"，而默认版本
+        # 只有锁定后才产生，所以未锁定的草稿版本必须从版本自身回读，否则教师
+        # 重新打开任务编排下一个版本时会丢失已填的开始代码。
+        "starter_code": dict(v.starter_code) if isinstance(v.starter_code, dict) else {},
         "is_locked": v.is_locked,
         "is_active": v.is_active,
+        # 参考解预览的通过时间。发布校验要求该字段非空；教师工作台据此在刷新后
+        # 恢复「预览已通过」状态，不必为了拿到锁定按钮而重跑一次预览。
+        "reference_preview_verified_at": (
+            v.reference_preview_verified_at.isoformat()
+            if getattr(v, "reference_preview_verified_at", None)
+            else None
+        ),
         "created_by": v.created_by,
         "created_at": v.created_at.isoformat() if v.created_at else None,
     }
@@ -300,12 +332,28 @@ async def list_definitions(
     definitions = definition_service.list_definitions(
         session, course_id=course_id, publish_status=publish_status,
     )
+    # 学生视图附加尝试聚合（筛选器与进度展示用；教师视图不计算，无泄露）。
+    summaries: dict = {}
+    if context.role is not None and context.role.value == "student":
+        summaries = attempt_service.student_summaries(
+            session, course_id=course_id, student_id=int(current_user["user_id"]),
+        )
+    items = [
+        _serialize_definition(
+            d,
+            default_starter_code=_default_version_starter(
+                session, course_id=course_id, version_id=d.default_version_id,
+            ),
+            student_summary=summaries.get(d.experiment_id),
+        )
+        for d in definitions
+    ]
     return unified_response(
         code=200,
         message="获取实验列表成功",
         data={
             "course_id": course_id,
-            "items": [_serialize_definition(d) for d in definitions],
+            "items": items,
             "total": len(definitions),
         },
     )
@@ -362,7 +410,12 @@ async def get_definition(
     return unified_response(
         code=200,
         message="获取实验详情成功",
-        data=_serialize_definition(definition),
+        data=_serialize_definition(
+            definition,
+            default_starter_code=_default_version_starter(
+                session, course_id=course_id, version_id=definition.default_version_id,
+            ),
+        ),
     )
 
 
@@ -504,6 +557,7 @@ async def create_version(
         max_file_size=payload.max_file_size,
         passing_score=payload.passing_score,
         writes_formal_evidence=payload.writes_formal_evidence,
+        starter_code=payload.starter_code,
         created_by=user_id,
         test_cases=payload.test_cases,
         activate=payload.activate,
