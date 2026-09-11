@@ -589,8 +589,13 @@ test('KnowledgeGraphPage.vue: 基于 analyticsEligible 分流，预览视角 stu
   assert.match(src, /analyticsEligible\.value\s*\?\s*\(counter\.userData\?\.id\s*\?\?\s*null\)\s*:\s*null/)
   // loadRecommendations 必须在预览视角短路
   assert.match(src, /if\s*\(isPreview\.value\s*\|\|\s*studentId\.value\s*==\s*null\)/)
-  // 模板必须有 v-if="isPreview" 分支（隐藏学生私有数据）
-  assert.match(src, /v-if="isPreview"/)
+  // 模板必须把学生私有面板挡在预览视角之外：预览视角只保留已发布知识图谱快照。
+  // 2026-09-11：原 `v-if="isPreview"` 的教师预览工具区是空壳，已随 2bee94cb 删除；
+  // 该分流语义现由学生私有面板的 `v-if="!isPreview"` 承担，故断言改为对面板本体
+  // 的等价校验（直接校验面板内容，强度不低于原断言，见审计表对应条目）。
+  const privatePanel = src.match(/<aside v-if="!isPreview"[\s\S]*?<\/aside>/)
+  assert.ok(privatePanel, '必须存在 v-if="!isPreview" 的学生私有面板分支')
+  assert.match(privatePanel[0], /CognitiveDashboard/)
   assert.match(src, /v-else/)
 })
 

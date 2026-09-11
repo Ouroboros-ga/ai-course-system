@@ -350,7 +350,14 @@ onMounted(loadGraph)
   gap: var(--space-3, 12px);
   flex: 1;
   min-height: 0;
-  min-block-size: 650px;
+}
+
+/* design.md §5.1 L3：本面板必须整体塞入可用高度——画布随容器收缩，目录与详情
+   各自在内部局部滚动；不再用固定最小高度把内容顶出，避免页面右侧出现整页滚动条。
+   仅作用于图谱面板内的画布实例，不影响评审页复用的同一画布组件。 */
+.canvas-shell :deep(.canvas-frame) {
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .rail {
@@ -521,7 +528,9 @@ onMounted(loadGraph)
   .workspace { grid-template-columns: 236px minmax(0, 1fr); }
 }
 @container (max-width: 680px) {
-  .workspace { grid-template-columns: 1fr; grid-template-rows: 250px minmax(430px, 1fr); }
+  /* 窄容器下目录在上、画布在下，按 1:2 分配可用高度；仍不使用固定像素高度，
+     保证整页塞下时不会再次撑出滚动条。 */
+  .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 2fr); }
   .detail { top: 52px; bottom: 132px; }
 }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
