@@ -343,8 +343,9 @@ export function useLearningWorkspace(courseId, options = {}) {
         role: msg.role === 'assistant' ? 'assistant' : 'user',
         content: String(msg.content || ''),
         citations: Array.isArray(msg.citations) ? msg.citations : [],
-        // 历史回看兼容：后端 Conversation Domain 仅持久化课程 citations，
-        // 学科参考缺席时为空数组，不伪造引用。
+        // 历史回看：后端 Conversation Domain 同时持久化课程 citations 与
+        // 学科参考展示快照（is_supplementary），此处按原样回放；两者任一
+        // 缺席时为空数组，不伪造引用。V1 回退路径只落 citations。
         disciplineReferences: Array.isArray(msg.discipline_references) ? msg.discipline_references : [],
         conceptId: msg.concept_id ?? null,
         restored: true,
