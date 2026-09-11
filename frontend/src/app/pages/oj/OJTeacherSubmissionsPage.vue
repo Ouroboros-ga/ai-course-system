@@ -159,4 +159,8 @@ onMounted(async () => {
 .oj-table { width: 100%; border-collapse: collapse; }
 .oj-table th, .oj-table td { text-align: left; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border-default); white-space: nowrap; }
 .oj-table th { color: var(--text-secondary); font-size: var(--ui-sm-size); }
+
+/* 基础样式 .sfx-input/.sfx-select 是 width:100%（base.css）——横向行里必须
+   显式约束宽度，否则每个控件各占一行（2026-09-11 截图复核发现）。 */
+.oj-filters .sfx-input, .oj-filters .sfx-select { width: auto; flex: 0 0 auto; min-width: 150px; }
 </style>

@@ -347,4 +347,8 @@ onMounted(async () => {
   margin: 0;
 }
 .oj-output { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* 基础样式 .sfx-input/.sfx-select 是 width:100%（base.css）——横向行里必须
+   显式约束宽度，否则每个控件各占一行（2026-09-11 截图复核发现）。 */
+.oj-filters .sfx-input, .oj-filters .sfx-select { width: auto; flex: 0 0 auto; min-width: 150px; }
 </style>

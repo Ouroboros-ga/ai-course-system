@@ -362,4 +362,8 @@ onMounted(async () => {
 .oj-scope-row { border-top: 1px solid var(--border-default); padding-top: var(--space-3); }
 .oj-table { width: 100%; border-collapse: collapse; }
 .oj-table th, .oj-table td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-default); }
+
+/* 基础样式 .sfx-input/.sfx-select 是 width:100%（base.css）——横向行里必须
+   显式约束宽度，否则每个控件各占一行（2026-09-11 截图复核发现）。 */
+.oj-form-row .sfx-input, .oj-form-row .sfx-select { width: auto; flex: 0 0 auto; min-width: 150px; }
 </style>

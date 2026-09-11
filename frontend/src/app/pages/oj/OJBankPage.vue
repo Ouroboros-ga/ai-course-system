@@ -338,4 +338,8 @@ onMounted(async () => {
 .oj-pager { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); color: var(--text-secondary); }
 .oj-page-num { padding: 2px var(--space-2); cursor: pointer; border: 1px solid transparent; }
 .oj-page-num.is-active { border-color: var(--ink-900); color: var(--ink-900); }
+
+/* 基础样式 .sfx-input/.sfx-select 是 width:100%（base.css）——横向行里必须
+   显式约束宽度，否则每个控件各占一行（2026-09-11 截图复核发现）。 */
+.oj-filters-row .sfx-input, .oj-filters-row .sfx-select { width: auto; flex: 0 0 auto; min-width: 150px; }
 </style>

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import request from '@/utils/request.js'
+import { listFacadeCourses } from '@/api/facade.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -242,4 +243,8 @@ onMounted(async () => {
 .oj-action { color: var(--text-secondary); cursor: pointer; font-size: var(--ui-sm-size); text-decoration: none; }
 .oj-action:hover { color: var(--ink-900); }
 .oj-hint { padding: var(--space-3) var(--space-4); }
+
+/* 基础样式 .sfx-input/.sfx-select 是 width:100%（base.css）——横向行里必须
+   显式约束宽度，否则每个控件各占一行（2026-09-11 截图复核发现）。 */
+.oj-filters .sfx-input, .oj-filters .sfx-select { width: auto; flex: 0 0 auto; min-width: 150px; }
 </style>
