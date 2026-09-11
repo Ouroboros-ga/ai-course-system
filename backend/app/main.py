@@ -159,6 +159,7 @@ from app.api.v1.endpoints import (
     practice_recommendation,  # 阶段5 题库、练习推荐、正式学习证据
     experiments,        # 阶段6 课程实验与 TeachingAgent 代码能力兼容接口
     experiment_activities,  # PR-08：OJ Activity 管理 API（同挂 /api/v1/experiments 前缀）
+    experiment_student,   # PR-10：学生题库 façade（同挂 /api/v1/experiments 前缀）
     resources,          # 阶段7 资源库
     labs,               # 阶段7 平台实验室目录
     agent_governance,   # 阶段9 Agent 工具治理与教师安全阀
@@ -510,6 +511,13 @@ app.include_router(
     experiment_activities.activity_router,
     prefix="/api/v1/experiments",
     tags=["阶段6 OJ 活动管理"],
+)
+
+# PR-10：学生题库 façade（前缀不变，ADR-0001 决定 6）
+app.include_router(
+    experiment_student.student_router,
+    prefix="/api/v1/experiments",
+    tags=["阶段6 OJ 学生题库"],
 )
 
 # 阶段7：资源库
