@@ -169,7 +169,7 @@ def build_experiment_report(
     # clean：调用方显式传入原样透出（纯函数兼容旧单测）；规则版本门在
     # build_stored_report 的持久化路径执行（旧规则→历史记录，不算新通过）。
     clean_verdict = str((clean or {}).get("status") or "not_run")
-    if clean_verdict not in ("passed", "failed"):
+    if clean_verdict not in ("passed", "failed", "incomplete"):
         clean_verdict = "not_run"
     clean_note = str((clean or {}).get("note") or "")
     clean_rule = str((clean or {}).get("rule") or "")
@@ -240,6 +240,15 @@ def build_experiment_report(
         "duration_s": duration_s,
         "license": dict(license_info or {"spdx": "", "status": "unknown"}),
         "recipe": recipe,
+        # F5：行冻结引用直通（generate 内先冻结后构建，故此处已有值）。
+        "frozen_recipe": {
+            "recipe_hash": str(run.get("recipe_hash") or ""),
+            "recipe_status": str(run.get("recipe_status") or ""),
+            "recipe_artifact_id": str(run.get("recipe_artifact_id") or ""),
+            "recipe_patch_id": str(run.get("recipe_patch_id") or ""),
+            "recipe_id": (f"rcp-{str(run.get('recipe_hash') or '')[:12]}"
+                          if run.get("recipe_hash") else ""),
+        },
     }
 
 
@@ -384,6 +393,11 @@ def render_report_markdown(report: dict[str, Any]) -> str:
             )
     lines.append(f"干净验证（B）：{report['clean_verification']}"
                  + (f"（{report['clean_note']}）" if report.get("clean_note") else ""))
+    frozen = report.get("frozen_recipe") or {}
+    if frozen.get("recipe_hash"):
+        lines.append(
+            f"冻结配方：`{frozen.get('recipe_id', '')}`（{frozen.get('recipe_status', '')}；"
+            f"hash `{str(frozen.get('recipe_hash') or '')[:16]}…`）")
     lines += ["", "## 如何再跑", "",
               "完整可重复指令见配方产物（与本报告一同生成，同属本 run）；"
               "按配方顺序执行即可重现本次环境操作。",
@@ -428,8 +442,9 @@ async def build_stored_report(
                       "note": "提案未持久化 License 结论；复现引用前需核验允许复现用途"}
     # SR6：clean 取 run 持久化干净B结论（无→not_run）。
     # F1：旧规则结论仅作“历史命令一致性记录”，不得当作新规则干净通过。
+    # F5：incomplete 为终态结论之一（配方缺关键项），同样透出。
     persisted_clean: dict[str, Any] | None = None
-    if str(run.get("clean_status") or "") in ("passed", "failed"):
+    if str(run.get("clean_status") or "") in ("passed", "failed", "incomplete"):
         from nexus import experiment_clean as clean_module
 
         current_rule = str(getattr(clean_module, "CLEAN_RULE_VERSION", ""))
@@ -474,11 +489,41 @@ async def generate_run_report(
     - 只接受终态 succeeded/failed 的 run（running→RUN_NOT_FINISHED，
       cancelled→RUN_CANCELLED；跨用户→RUN_FORBIDDEN）；
     - scope 取提案冻结值（提案不可读→RUN Proposal 缺失则拒绝，不编造）；
-    - 两个产物都写入成功后才调控制 cancel 回收；写入失败抛
-      REPORT_ARTIFACT_WRITE_FAILED 且不回收。
+    - F5：先冻结配方（容器存活时采集；产物先落盘后落行），再写报告产物；
+      全部产物写入成功后才调控制 cancel 回收；任一写入失败抛
+      REPORT_ARTIFACT_WRITE_FAILED 且不回收（保留恢复窗口）。
     """
+    from nexus import experiment_runs as runs_module
+    from nexus import proposals as proposals_module
+
+    pre_run = runs_module.get_run(run_id)
+    pre_proposal = proposals_module.get_proposal(
+        (pre_run or {}).get("proposal_id", "")) if pre_run else None
+    pre_scope = dict((pre_proposal or {}).get("scope") or {})
+    frozen: dict[str, Any] = {"deduped": True, "recipe_status": "",
+                              "recipe_hash": "", "recipe_artifact_id": "",
+                              "patch_artifact_id": ""}
+    # 先冻结（容器存活时采集）再构建报告；门校验由 build_stored_report
+    # 完整执行——此处仅做轻门，避免对未终态 run 产生冻结副作用。
+    if pre_run is not None and (pre_run.get("status") or "") in (
+            "succeeded", "failed") and pre_proposal is not None \
+            and pre_proposal.get("kind") == "autonomous_experiment":
+        try:
+            from nexus import experiment_clean as clean_module
+
+            frozen = await clean_module.ensure_frozen_recipe(
+                run_id=run_id, user_id=user_id, scope=pre_scope,
+                proposal=pre_proposal, backend=backend, curated=None)
+        except clean_module.CleanError as error:
+            raise ReportError(
+                "RECIPE_FREEZE_FAILED",
+                f"配方冻结失败（{error.code}）：{error}；未写产物，未回收。"[:300]) from error
     report, markdown, recipe_md = await build_stored_report(
         run_id=run_id, user_id=user_id, backend=backend)
+    # build 读取冻结后的行引用（含 frozen_recipe）。
+    run = runs_module.get_run(run_id) or {}
+    proposal = proposals_module.get_proposal(run.get("proposal_id", ""))
+    scope = dict((proposal or {}).get("scope") or {})
     title_base = f"自主实验报告 · {run_id[:12]}"
     artifacts: list[dict[str, Any]] = []
     for artifact_type, title, content in (
@@ -493,6 +538,13 @@ async def generate_run_report(
                 "REPORT_ARTIFACT_WRITE_FAILED",
                 f"产物写入失败（{written.get('code', '')}）：{written.get('detail', '')}"[:300])
         artifacts.append(written["artifact"])
+    for key in ("recipe_artifact_id", "patch_artifact_id"):
+        artifact_id = str(frozen.get(key) or "")
+        if artifact_id:
+            artifacts.append({"artifact_id": artifact_id,
+                              "artifact_type": "json",
+                              "title": ("冻结配方" if key == "recipe_artifact_id"
+                                        else "冻结配方（补丁束）")})
     # 保存后才回收：控制 cancel best-effort（失败只记日志，不推翻已落盘产物）。
     if backend is not None:
         try:
@@ -500,6 +552,7 @@ async def generate_run_report(
         except Exception as error:  # noqa: BLE001
             logger.warning("report recycle cancel failed for %s: %s",
                            run_id, type(error).__name__)
+    frozen_view = report.get("frozen_recipe") or {}
     return {
         "run_id": run_id,
         "content_version": REPORT_CONTENT_VERSION,
@@ -515,6 +568,11 @@ async def generate_run_report(
         "legacy_target": bool(report.get("legacy_target", False)),
         "metric_note": report.get("metric_note", ""),
         "metric_basis": report.get("metric_basis", "none"),
+        "recipe_hash": str(frozen_view.get("recipe_hash") or ""),
+        "recipe_status": str(frozen_view.get("recipe_status") or ""),
+        "recipe_artifact_id": str(frozen_view.get("recipe_artifact_id") or ""),
+        "patch_artifact_id": str(frozen_view.get("recipe_patch_id") or ""),
+        "frozen_recipe": frozen_view,
         "artifacts": artifacts,
     }
 
@@ -530,13 +588,14 @@ class FormatError(Exception):
 async def generate_run_formats(*, run_id: str, user_id: str) -> dict[str, Any]:
     """生成 run 正式格式产物（Word .docx＋LaTeX .tex）并关联本 run。
 
-    - 同报告门：只接受本人终态 succeeded/failed 的 run（门码与报告一致，
-      便于调用方统一处理）；
-    - 内容与 T6 Markdown 同源（build_stored_report），derived_from 标记
-      experiment-report/1；转换不改写事实；
-    - 两个产物都写入成功才返回；任一失败抛 FORMAT_ARTIFACT_WRITE_FAILED。
-      不触碰沙箱（纯渲染），Ask 下可用。
+    F6 兼容薄适配：经 DocumentJob 渲染（模板 experiment_report，同一冻结
+    快照），返回沿用旧形状（artifacts/checks/derived_from/clean_verification）
+    ＋ job_id/job_status/formats，便于旧调用方零改动。
+    - 同报告门：只接受本人终态 succeeded/failed 的 run（门码与报告一致）；
+    - 内容与 T6 Markdown 同源（build_stored_report）；转换不改写事实；
+    - 任一失败抛 FORMAT_ARTIFACT_WRITE_FAILED。不触碰沙箱，Ask 下可用。
     """
+    from nexus import document_jobs as jobs_module
     from nexus import document_output as formats_module
 
     # 只读 lifecycle 取镜像来源（不执行任何命令）；控制面不可达如实留空。
@@ -553,44 +612,65 @@ async def generate_run_formats(*, run_id: str, user_id: str) -> dict[str, Any]:
     except ReportError as error:
         raise FormatError(error.code, str(error)) from error
     title_base = f"自主实验报告 · {run_id[:12]}"
+    combined = (f"{markdown.rstrip()}\n\n---\n\n"
+                f"# 附录：实验配方\n\n{recipe_md.strip()}\n")
     try:
-        built = formats_module.build_formats(markdown, recipe_md, title_base)
-    except Exception as error:  # noqa: BLE001 - 转换异常 fail-closed
+        frozen = formats_module.freeze_document(
+            markdown=combined, title=title_base,
+            template="experiment_report",
+            source={"kind": "run_report", "run_id": run_id})
+    except formats_module.DocumentRenderError as error:
         raise FormatError("FORMAT_BUILD_FAILED",
-                          f"格式构建失败（{type(error).__name__}）") from error
-    artifacts: list[dict[str, Any]] = []
-    written = await artifact_client.write_binary_artifact_via_backend(
-        artifact_type="word", title=title_base, raw=built["docx_bytes"],
-        user_id=user_id, run_id=run_id)
-    if written.get("status") != "success":
+                          f"内容冻结失败（{error.code}）") from error
+    try:
+        created = await jobs_module.create_and_render(
+            owner=user_id, session_id=str(report.get("session_id", "") or ""),
+            frozen=frozen, formats=["word", "latex"],
+            template="experiment_report",
+            idempotency_key=f"run-formats:{run_id}:{frozen['content_hash'][:12]}",
+            source={"kind": "run_report", "run_id": run_id})
+    except jobs_module.DocumentError as error:
+        raise FormatError("FORMAT_ARTIFACT_WRITE_FAILED",
+                          f"文档作业失败（{error.code}）：{error}") from error
+    job = created["job"]
+    view = jobs_module.public_job_view(job)
+    formats_view = view.get("formats") or {}
+    word = formats_view.get("word") or {}
+    latex = formats_view.get("latex") or {}
+    if view.get("status") == "failed":
         raise FormatError(
             "FORMAT_ARTIFACT_WRITE_FAILED",
-            f"Word 产物写入失败（{written.get('code', '')}）：{written.get('detail', '')}"[:300])
-    artifacts.append(written["artifact"])
-    written_tex = await artifact_client.write_artifact_via_backend(
-        artifact_type="latex", title=f"{title_base}（LaTeX）",
-        content=built["tex"], user_id=user_id, run_id=run_id)
-    if written_tex.get("status") != "success":
+            f"Word 失败（{word.get('detail', '')}）；"
+            f"LaTeX 失败（{latex.get('detail', '')}）"[:300])
+    if word.get("status") != "succeeded" or latex.get("status") != "succeeded":
+        # partial：保留成功格式的产物，失败格式如实报错（不伪装全成）。
         raise FormatError(
             "FORMAT_ARTIFACT_WRITE_FAILED",
-            f"LaTeX 产物写入失败（{written_tex.get('code', '')}）：{written_tex.get('detail', '')}"[:300])
-    artifacts.append(written_tex["artifact"])
-    checks = built["checks"]
+            f"部分格式失败（word={word.get('status')} latex={latex.get('status')}）"[:300])
+    artifacts = [
+        {"artifact_id": str(word.get("artifact_id") or ""),
+         "artifact_type": "word", "title": title_base},
+        {"artifact_id": str(latex.get("artifact_id") or ""),
+         "artifact_type": "latex", "title": f"{title_base}（LaTeX）"},
+    ]
     return {
         "run_id": run_id,
         "content_version": REPORT_CONTENT_VERSION,
-        "derived_from": built["derived_from"],
+        "derived_from": formats_module.FORMATS_CONTENT_VERSION,
         "clean_verification": report["clean_verification"],
         "artifacts": artifacts,
         "checks": {
-            "docx": {"ok": bool(checks["docx"].get("ok")),
-                     "detail": str(checks["docx"].get("detail") or ""),
-                     "paragraphs": int(checks["docx"].get("checks", {}).get("paragraphs") or 0),
-                     "tables": int(checks["docx"].get("checks", {}).get("tables") or 0)},
-            "tex": {"ok": bool(checks["tex"].get("ok")),
-                    "detail": str(checks["tex"].get("detail") or "")},
-            "compile": {"compiled": bool(checks["compile"].get("compiled")),
-                        "code": str(checks["compile"].get("code") or ""),
-                        "detail": str(checks["compile"].get("detail") or "")},
+            "docx": {"ok": bool(word.get("structural_valid", False)),
+                     "detail": str(word.get("detail") or ""),
+                     "engine": str(word.get("engine") or "")},
+            "tex": {"ok": bool(latex.get("structural_valid", False)),
+                    "detail": str(latex.get("detail") or ""),
+                    "engine": str(latex.get("engine") or "")},
+            "compile": {"compiled": str(latex.get("compile_code") or "") == "COMPILED",
+                        "code": str(latex.get("compile_code") or ""),
+                        "detail": ""},
         },
+        "job_id": str(view.get("job_id") or ""),
+        "job_status": str(view.get("status") or ""),
+        "formats": formats_view,
     }

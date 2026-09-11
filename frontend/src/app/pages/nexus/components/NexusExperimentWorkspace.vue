@@ -25,6 +25,7 @@ import {
   TriangleAlert
 } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import NexusComparePanel from './NexusComparePanel.vue'
 import {
   reproCancellable,
   reproElapsed,
@@ -52,10 +53,17 @@ const props = defineProps({
   noting: { type: Boolean, default: false },
   /** T5 Ask/Auto：Ask 下禁用新启动/复跑（服务端同样拒绝，双保险） */
   executionMode: { type: String, default: 'ask' },
+  /** F8：当前对照详情（public_compare_view）；无对照时 null */
+  compare: { type: Object, default: null },
+  /** F8：本会话对照列表（摘要），多对照时可切换 */
+  compares: { type: Array, default: () => [] },
+  /** F8：关联提交中（父调 API） */
+  linking: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['switch', 'cancel', 'ask', 'analyze', 'rerun', 'rename', 'add-note',
-  'report', 'formats', 'clean-verify', 'resume', 'interrupt-op'])
+  'report', 'formats', 'clean-verify', 'resume', 'interrupt-op',
+  'compare-select', 'compare-link', 'compare-cancel'])
 
 const tab = ref('logs')
 
@@ -70,8 +78,16 @@ const TABS = [
   { key: 'logs', label: '日志' },
   { key: 'metrics', label: '指标' },
   { key: 'artifacts', label: '产物' },
-  { key: 'notes', label: '备注' }
+  { key: 'notes', label: '备注' },
+  { key: 'compare', label: '对照' }
 ]
+
+/* F8：传给对照面板的"当前 run" —— run_id 才是关联用的真身（job_id 只用于取消/报告） */
+const activeRunRef = computed(() => ({
+  id: active.value?.id || '',
+  runId: active.value?.run?.run_id || '',
+  name: active.value?.name || '',
+}))
 
 /* ── 重命名（NX-LB1）：就地编辑，父组件负责调 PATCH 与乐观锁冲突处理 ──
    真实请求在父组件；这里只管输入与反馈，失败由父通过 onError 回传。 */
@@ -472,6 +488,7 @@ const isReportable = computed(() => {
             {{ t.label }}
             <b v-if="t.key === 'artifacts' && artifacts.length" class="nxw-tabn">{{ artifacts.length }}</b>
             <b v-else-if="t.key === 'notes' && notes.length" class="nxw-tabn">{{ notes.length }}</b>
+            <b v-else-if="t.key === 'compare' && compares.length" class="nxw-tabn">{{ compares.length }}</b>
           </span>
           <span class="nxw-spacer" />
           <span v-if="tab === 'logs' && logText" class="nxw-logsrc">{{ reproLogSource(run) }}</span>
@@ -547,6 +564,13 @@ const isReportable = computed(() => {
               干净验证
             </SfxButton>
             <span v-if="run?.cleanStatus" class="nxw-note">干净验证：{{ run.cleanStatus === 'verifying' ? '运行中' : run.cleanStatus }}</span>
+            <!-- F9：冻结配方身份（只读展示；空=未冻结/历史未验证，不反推执行事实）。 -->
+            <span v-if="run?.recipeHash" class="nxw-note">配方：{{ String(run.recipeHash).slice(0, 12) }} · {{ run.recipeStatus || '未知状态' }}</span>
+            <span v-else class="nxw-note">配方：未冻结（历史未验证）</span>
+            <!-- F6：文档作业身份＋分格式引擎/状态（只读展示，源：服务端作业视图）。 -->
+            <span v-if="run?.formatsJobId" class="nxw-note">文档作业：{{ run.formatsJobId }} · {{ run.formatsJobStatus || '—' }}</span>
+            <span v-if="run?.formatsByKind?.word" class="nxw-note">Word：{{ run.formatsByKind.word.status || '—' }}（{{ run.formatsByKind.word.engine || '未知引擎' }}）</span>
+            <span v-if="run?.formatsByKind?.latex" class="nxw-note">LaTeX：{{ run.formatsByKind.latex.status || '—' }}（{{ run.formatsByKind.latex.engine || '未知引擎' }}）</span>
           </div>
           <table v-if="run.comparison && run.comparison.length" class="nxw-table">
             <thead>
@@ -607,6 +631,20 @@ const isReportable = computed(() => {
               >添加备注</SfxButton>
             </div>
           </div>
+        </div>
+
+        <!-- F8 受控对照：跨 run 的受控比较视图。只关联、不执行；
+             结论只有 descriptive_ready / incomplete，界面只并列实测、不做优劣判定。 -->
+        <div v-else-if="tab === 'compare'" class="nxw-pane nxcmp-host">
+          <NexusComparePanel
+            :compare="compare"
+            :compares="compares"
+            :active-run="activeRunRef"
+            :linking="linking"
+            @select="(id) => emit('compare-select', id)"
+            @link="(payload) => emit('compare-link', payload)"
+            @cancel="(id) => emit('compare-cancel', id)"
+          />
         </div>
 
         <!-- 产物 -->

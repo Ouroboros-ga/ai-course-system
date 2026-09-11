@@ -182,3 +182,58 @@ async def write_artifact_via_backend(
             "download_path": f"/api/v1/nexus/artifacts/{artifact_id}/download",
         },
     }
+
+
+async def read_artifact_via_backend(
+    *, artifact_id: str, user_id: str | None,
+) -> dict[str, Any]:
+    """F5：经 Backend 内部端点读文本产物（干净B消费冻结配方/补丁）。
+
+    返回 status=success + artifact{...}+content/truncated，或 unavailable +
+    code/detail（404 他人物品与不存在同等拒绝；截断内容不得当完整配方）。
+    """
+    ready = _settings_ready()
+    if ready is None:
+        return {"status": "unavailable", "code": "ARTIFACT_UNAVAILABLE",
+                "detail": "产物存储未配置；不得声称已读取。"}
+    artifact_id = (artifact_id or "").strip()[:64]
+    if not artifact_id:
+        return {"status": "unavailable", "code": "ARTIFACT_ID_EMPTY",
+                "detail": "产物 id 为空。"}
+    url, token = ready
+    headers: dict[str, str] = {
+        "Authorization": f"Bearer {token}",
+        **({"X-Nexus-User-Id": user_id} if user_id else {}),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+            response = await client.get(
+                f"{url}/api/v1/nexus-internal/artifacts/{artifact_id}",
+                headers=headers,
+            )
+    except Exception as error:  # noqa: BLE001 - fail-closed
+        logger.warning("read_artifact_via_backend failed: %s", type(error).__name__)
+        return {"status": "unavailable", "code": "ARTIFACT_UNAVAILABLE",
+                "detail": f"产物读取失败（{type(error).__name__}）。"}
+    if response.status_code == 404:
+        return {"status": "unavailable", "code": "ARTIFACT_NOT_FOUND",
+                "detail": "产物不存在或无权读取。"}
+    if response.status_code != 200:
+        return {"status": "unavailable", "code": "ARTIFACT_UNAVAILABLE",
+                "detail": f"产物读取被拒（HTTP {response.status_code}）"
+                          f"{_error_detail(response)}。"}
+    try:
+        data = response.json().get("data") or {}
+    except ValueError:
+        return {"status": "unavailable", "code": "ARTIFACT_UNAVAILABLE",
+                "detail": "产物读取返回非 JSON 响应。"}
+    return {"status": "success",
+            "artifact": {
+                "artifact_id": str(data.get("artifact_id", "")),
+                "artifact_type": str(data.get("artifact_type", "")),
+                "title": str(data.get("title", "")),
+                "size_bytes": data.get("size_bytes", 0),
+                "sha256": str(data.get("sha256", "")),
+            },
+            "content": str(data.get("content") or ""),
+            "truncated": bool(data.get("truncated", False))}

@@ -130,3 +130,119 @@ _registry = EvidenceRegistry()
 
 def get_registry() -> EvidenceRegistry:
     return _registry
+
+
+def _evidence_pg_settings() -> tuple[str, str] | None:
+    from nexus.experiment_runs import _pg_settings as runs_pg_settings
+
+    try:
+        return runs_pg_settings()
+    except Exception:  # noqa: BLE001 - 配置不可读即跳过持久化
+        return None
+
+
+def persist_evidences(
+    *, user_id: str, session_id: str, task_id: str = "",
+    attachment_id: str = "", source_title: str = "",
+    source_version: str = "", evidences: list[dict[str, Any]] | None = None,
+) -> int:
+    """F7：证据持久化（来源版本＋内容 hash＋locator＋覆盖范围＋权限）。
+
+    best-effort：PG 不可用即跳过（内存登记不受影响），调用方不得因此失败。
+    返回实际写入行数。复用既有解析块（excerpt 原样，不重新解析）。
+    """
+    import hashlib as _hashlib
+    import logging as _logging
+    import time as _time
+
+    items = list(evidences or [])
+    if not items or not (user_id or "").strip():
+        return 0
+    pg = _evidence_pg_settings()
+    if pg is None:
+        return 0
+    dsn, schema = pg
+    rows = []
+    now = _time.time()
+    for evidence in items:
+        if not isinstance(evidence, dict):
+            continue
+        eid = str(evidence.get("evidence_id") or "")[:64]
+        if not eid:
+            continue
+        excerpt = str(evidence.get("excerpt") or "")
+        rows.append((
+            eid, (user_id or "").strip()[:64], (session_id or "").strip()[:128],
+            (task_id or "").strip()[:64], (attachment_id or "").strip()[:16],
+            str(source_title or evidence.get("source_title") or "")[:120],
+            str(source_version or "")[:64],
+            _hashlib.sha1(excerpt.encode("utf-8")).hexdigest(),
+            str(evidence.get("locator") or "")[:120], excerpt,
+            str(evidence.get("coverage") or "")[:32],
+            bool(evidence.get("truncated", False)), now,
+        ))
+    if not rows:
+        return 0
+    try:
+        import psycopg
+
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    f"INSERT INTO {schema}.nexus_research_evidence "
+                    f"(evidence_id, owner, session_id, task_id, attachment_id, "
+                    f"source_title, source_version, content_hash, locator, "
+                    f"excerpt, coverage, truncated, created_at) "
+                    f"VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                    f"ON CONFLICT (evidence_id) DO NOTHING",
+                    rows,
+                )
+                return int(cur.rowcount or 0)
+    except Exception as error:  # noqa: BLE001 - 持久化失败不阻断研究
+        _logging.getLogger("nexus.paper_evidence").warning(
+            "evidence persist failed: %s", error)
+        return 0
+
+
+def resolve_persisted(
+    evidence_id: str, *, user_id: str, session_id: str,
+) -> dict[str, Any] | None:
+    """F7：持久化证据回读（内存登记缺失时的恢复路径；归属一致才返回）。"""
+    import logging as _logging
+
+    eid = (evidence_id or "").strip()[:64]
+    if not eid:
+        return None
+    pg = _evidence_pg_settings()
+    if pg is None:
+        return None
+    dsn, schema = pg
+    try:
+        import psycopg
+
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT evidence_id, attachment_id, source_title, locator, "
+                    f"excerpt, coverage, truncated FROM {schema}.nexus_research_evidence "
+                    f"WHERE evidence_id=%s AND owner=%s AND session_id=%s",
+                    (eid, (user_id or "").strip(), (session_id or "").strip()),
+                )
+                found = cur.fetchone()
+        if found is None:
+            return None
+        return {
+            "evidence_id": str(found[0] or ""),
+            "attachment_id": str(found[1] or ""),
+            "source_title": str(found[2] or ""),
+            "source_kind": "upload_label",
+            "locator": str(found[3] or "") or None,
+            "excerpt": str(found[4] or ""),
+            "coverage": str(found[5] or ""),
+            "truncated": bool(found[6]),
+            "is_supplementary": True,
+        }
+    except Exception as error:  # noqa: BLE001
+        _logging.getLogger("nexus.paper_evidence").warning(
+            "evidence resolve failed: %s", error)
+        return None

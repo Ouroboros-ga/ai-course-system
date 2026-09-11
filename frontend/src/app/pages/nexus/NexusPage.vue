@@ -60,7 +60,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, requestNexusRunFormats, requestNexusRunCleanVerify, requestNexusRunResume, cancelNexusRunOperation, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, requestNexusRunFormats, requestNexusRunCleanVerify, requestNexusRunResume, cancelNexusRunOperation, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval, listNexusCompares, getNexusCompare, linkNexusCompareRun, cancelNexusCompare } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -259,11 +259,16 @@ const askWindowOpen = ref(false)
 function openAskWindow() {
   askWindowOpen.value = true
 }
+// ── 运行引用绑定（run_ref）：对话锚定某次运行时，把业务 run_id 交给发送链；
+// 后端验主＋验同会话后投影为 run_context（伪造剥离），智能体据此可查详情。
+// 一次性消费：发送即清零，不泄漏到后续无关追问。文本引用保留（人类可读）。
+const pendingRunRef = ref(null)
 function onAskSend(text) {
   // 引用边界：只带明确的 run ID / 步骤，不复制全量日志、不混其他会话
   const run = activeRun.value?.run
   const ref = run ? `\n\n（引用：本次运行 ${run.job_id}· 第 ${run.currentStep ?? '—'} 步）` : ''
   draft.value = `${text}${ref}`
+  pendingRunRef.value = run?.run_id ? { run_id: run.run_id, step_id: run.currentStep ?? null } : null
   setWorkspaceView('chat')
   askWindowOpen.value = false
   send()
@@ -275,6 +280,11 @@ function analyzeRunResult(id) {
   const run = item?.run
   const verdict = run?.verdict ? `判定 ${run.verdict}` : '结果'
   draft.value = `请解释本次实验结果（${item?.name || '本次运行'} · ${verdict}），与预期有什么差异，下一步建议是什么？`
+  // 显示名解析不了 run_id（智能体只能查明确 ID）：把机器引用一并绑定，
+  // 发送时随请求透传，后端验归属后投影，智能体即可查询核实再作答。
+  pendingRunRef.value = (run?.run_id || item?.runId)
+    ? { run_id: run?.run_id || item?.runId }
+    : null
   setWorkspaceView('chat')
   nextTick(() => {
     const el = document.querySelector('.nx-composer-textarea')
@@ -505,8 +515,84 @@ watch(
   { immediate: true }
 )
 watch(isLabView, (v) => {
-  if (v) loadRunNotes(activeRun.value?.runId || '')
+  if (v) {
+    loadRunNotes(activeRun.value?.runId || '')
+    loadCompares()
+  }
 })
+
+/* ── F8 受控对照 ───────────────────────────────────────────────
+   对照不执行任何东西：只建规格、关联终态运行、并列报告。
+   结论只有 descriptive_ready / incomplete，界面不出现"显著/更优/提升"。 */
+const compares = ref([])
+const activeCompare = ref(null)
+const activeCompareId = ref('')
+const linking = ref(false)
+
+async function loadCompares() {
+  if (nexusDataSourceMode.value !== 'real') {
+    compares.value = []
+    activeCompare.value = null
+    return
+  }
+  try {
+    const res = await listNexusCompares(activeSessionId.value || '')
+    const list = Array.isArray(res) ? res : (res?.compares || res?.items || [])
+    compares.value = list
+    const pick = activeCompareId.value
+      ? list.find((c) => c.compare_id === activeCompareId.value)
+      : list[0]
+    if (pick?.compare_id) await selectCompare(pick.compare_id)
+    else {
+      activeCompareId.value = ''
+      activeCompare.value = null
+    }
+  } catch {
+    // fail-closed：取不到就当没有对照，不回退演示数据
+    compares.value = []
+    activeCompare.value = null
+  }
+}
+
+async function selectCompare(compareId) {
+  if (!compareId) return
+  activeCompareId.value = compareId
+  try {
+    const res = await getNexusCompare(compareId)
+    activeCompare.value = res?.compare || res || null
+  } catch (err) {
+    activeCompare.value = null
+    showToast(err?.message || '对照详情加载失败', 'error')
+  }
+}
+
+/** 关联终态运行：三道硬门（终态/有冻结配方/配方一致）全在服务端，前端只传 arm + run_id */
+async function linkCompareRun({ armName, runId }) {
+  const compareId = activeCompare.value?.compare_id
+  if (!compareId || !armName || !runId || linking.value) return
+  linking.value = true
+  try {
+    await linkNexusCompareRun(compareId, armName, runId)
+    await selectCompare(compareId)
+    showToast(`已关联 ${armName}`, 'success')
+  } catch (err) {
+    // 拒绝码（COMPARE_RECIPE_MISMATCH 等）原样透出，不翻译成"成功"
+    showToast(err?.message || '关联失败', 'error')
+  } finally {
+    linking.value = false
+  }
+}
+
+async function cancelCompareById(compareId) {
+  if (!compareId) return
+  try {
+    await cancelNexusCompare(compareId)
+    await selectCompare(compareId)
+    showToast('对照已取消；已关联结果保留', 'success')
+  } catch (err) {
+    showToast(err?.message || '取消失败', 'error')
+  }
+}
 
 async function addRunNote({ content, onError, onDone }) {
   const runId = activeRun.value?.runId
@@ -562,6 +648,7 @@ async function requestAutoReport(id) {
 }
 
 // ── SR6 正式格式产物：Word .docx＋LaTeX .tex（确定性转换，不经 LLM） ──
+// F6：经 DocumentJob 渲染（同一冻结快照；返回沿用旧形状＋job 字段）。
 async function requestRunFormats(id) {
   const item = sessionRuns.value.find((r) => r.id === id)
   const run = item?.run
@@ -575,6 +662,10 @@ async function requestRunFormats(id) {
         item.turn.artifacts = [...(item.turn.artifacts || []), a]
       }
     }
+    // F6：作业身份＋分格式状态只读存 run（工作台据此展示引擎/partial，不计算）。
+    if (res?.job_id) run.formatsJobId = res.job_id
+    if (res?.job_status) run.formatsJobStatus = res.job_status
+    if (res?.formats && typeof res.formats === 'object') run.formatsByKind = res.formats
     persistSessions()
     showToast(`正式格式已生成：Word ${res?.checks?.docx?.ok ? '通过' : '异常'} · LaTeX ${res?.checks?.tex?.ok ? '通过' : '异常'} · 编译${res?.checks?.compile?.code || '—'}`, 'success')
   } catch (err) {
@@ -1704,6 +1795,11 @@ function applyRunDetail(turn, detail) {
   // F2：恢复状态随详情直通（UI 不做新枚举分支，只读展示）。
   if (typeof detail.live?.recovery_status === 'string') run.recoveryStatus = detail.live.recovery_status
   if (typeof detail.live?.completion_reason === 'string') run.completionReason = detail.live.completion_reason
+  // F9：冻结配方身份随详情直通（空=未冻结/历史未验证；工作台只读展示短 hash）。
+  if (typeof detail.recipe_hash === 'string') run.recipeHash = detail.recipe_hash
+  if (typeof detail.live?.recipe_hash === 'string') run.recipeHash = detail.live.recipe_hash
+  if (typeof detail.recipe_status === 'string') run.recipeStatus = detail.recipe_status
+  if (typeof detail.live?.recipe_status === 'string') run.recipeStatus = detail.live.recipe_status
   // F3：在途增量合并（游标按 op 推进；reset 即替换缓冲）。
   const increments = detail.live?.log_increments
   if (increments && typeof increments === 'object') {
@@ -2620,6 +2716,9 @@ async function runTurn(message) {
   scrollToBottom()
 
   try {
+    // 运行引用一次性消费：先取值再清零，发送失败也不泄漏到下一次追问。
+    const runRef = pendingRunRef.value
+    pendingRunRef.value = null
     await dispatchNexusMessage({
       // 修复：原先误写 message: msg（msg 不在作用域，真实链路必抛
       // ReferenceError）；与模型透传同批修正。
@@ -2632,6 +2731,9 @@ async function runTurn(message) {
       model: effectiveModel.value || null,
       // NX-A1：仅发送就绪附件 id；绑定与验主在服务端完成。
       attachmentIds: readyAttachmentIds(currentSession.value),
+      // 运行引用：analyze/ask 按钮锚定某次运行时带上业务 run_id；
+      // 后端验主＋验同会话后投影，伪造剥离；一次性消费，发送即清零。
+      runRef,
       signal: abortController.signal,
       onEvent: (evt) => handleEvent(turn, evt, currentSession.value),
     })
@@ -3203,6 +3305,12 @@ const emptySuggestions = computed(() =>
         :preset="activePreset"
         :noting="noting"
         :execution-mode="execMode"
+        :compare="activeCompare"
+        :compares="compares"
+        :linking="linking"
+        @compare-select="selectCompare"
+        @compare-link="linkCompareRun"
+        @compare-cancel="cancelCompareById"
         @switch="switchActiveRun"
         @cancel="cancelRunFromWorkspace"
         @ask="openAskWindow"

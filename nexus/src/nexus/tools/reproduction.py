@@ -687,6 +687,25 @@ async def run_reproduction(preset_id: str) -> dict[str, Any]:
     if not approval_id:
         # 提案：归属（user/session/tool/preset/plan hash/预算）此刻落库，
         # 不依赖提交后的 best-effort 登记；Worker 零接触。
+        # 去重：同用户同会话同方案已有未过期 pending 审批即复用，不再建卡
+        # （对话里确认只表达意向，不能每次确认都长出一张新卡）。
+        existing = approvals.find_pending_approval(
+            user_id=user_id, session_id=session_id,
+            tool="run_reproduction",
+            plan_hash=approvals.plan_hash_for(preset))
+        if existing is not None:
+            return {
+                "status": "approval_required",
+                "code": "APPROVAL_REQUIRED",
+                "detail": (
+                    "复现执行需要用户本次批准。同方案已有待批审批，"
+                    "直接复用，未新建审批卡；用户在审批卡批准后，"
+                    "服务端核销票据才会提交 Worker。"
+                ),
+                "approval": _public_approval(existing, preset),
+                "deduped": True,
+                "is_supplementary": True,
+            }
         proposal = approvals.create_approval(
             user_id=user_id,
             session_id=session_id,
@@ -702,6 +721,7 @@ async def run_reproduction(preset_id: str) -> dict[str, Any]:
                 "用户在审批卡批准后，服务端核销票据才会提交 Worker。"
             ),
             "approval": _public_approval(proposal, preset),
+            "deduped": False,
             "is_supplementary": True,
         }
     try:

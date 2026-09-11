@@ -1140,12 +1140,16 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   // NX-R1a：Research-only 集合扩展至 5 工具（新增上传论文证据薄链两工具）。
   // NX-LB4/LB5：再扩展至 11 工具（新增 6 个运行操作与提案工具；General 仍不可见）。
   // T3：再 +1（prepare_experiment 无 preset 入口，只准备不执行；Ask 保留）。
-  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",[\s\S]*?"collect_paper_evidence",[\s\S]*?"write_research_report",[\s\S]*?"get_reproduction_run",[\s\S]*?"cancel_reproduction_run",[\s\S]*?"add_reproduction_note",[\s\S]*?"create_reproduction_proposal",[\s\S]*?"update_reproduction_proposal",[\s\S]*?"request_reproduction_approval",[\s\S]*?"prepare_experiment",\s*\}\s*\)/)
+  // F6/F7：+ create_document_output（双模式）不在此集合；+ read_paper_more /
+  // 持续研究循环七工具（Research-only）。
+  // F8：+ plan_compare / link_compare_run / get_compare / cancel_compare
+  // （受控对照，只关联不执行；Research-only）。
+  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",[\s\S]*?"collect_paper_evidence",[\s\S]*?"read_paper_more",[\s\S]*?"write_research_report",[\s\S]*?"get_reproduction_run",[\s\S]*?"cancel_reproduction_run",[\s\S]*?"add_reproduction_note",[\s\S]*?"create_reproduction_proposal",[\s\S]*?"update_reproduction_proposal",[\s\S]*?"request_reproduction_approval",[\s\S]*?"prepare_experiment",[\s\S]*?"plan_research_task",[\s\S]*?"advance_research_task",[\s\S]*?"submit_research_result",[\s\S]*?"complete_research_task",[\s\S]*?"link_experiment_run",[\s\S]*?"cancel_research_task",[\s\S]*?"get_research_task",[\s\S]*?"plan_compare",[\s\S]*?"link_compare_run",[\s\S]*?"get_compare",[\s\S]*?"cancel_compare",\s*\}\s*\)/)
   const cfgSrc = read('frontend/src/api/nexusAdapter.js')
   assert.match(cfgSrc, /model = null,/)
   assert.match(cfgSrc, /model,/)
-  assert.match(cfgSrc, /\[NEXUS_MODES\.GENERAL\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'read_attachment'\]/)
-  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment',\s*'collect_paper_evidence',\s*'write_research_report',\s*'get_reproduction_run',\s*'cancel_reproduction_run',\s*'add_reproduction_note',\s*'create_reproduction_proposal',\s*'update_reproduction_proposal',\s*'request_reproduction_approval',\s*'prepare_experiment'\]/)
+  assert.match(cfgSrc, /\[NEXUS_MODES\.GENERAL\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'create_document_output',\s*'read_attachment'\]/)
+  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'create_document_output',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment',\s*'collect_paper_evidence',\s*'read_paper_more',\s*'write_research_report',\s*'get_reproduction_run',\s*'cancel_reproduction_run',\s*'add_reproduction_note',\s*'create_reproduction_proposal',\s*'update_reproduction_proposal',\s*'request_reproduction_approval',\s*'prepare_experiment',\s*'plan_research_task',\s*'advance_research_task',\s*'submit_research_result',\s*'complete_research_task',\s*'link_experiment_run',\s*'cancel_research_task',\s*'get_research_task',\s*'plan_compare',\s*'link_compare_run',\s*'get_compare',\s*'cancel_compare'\]/)
 
   assert.match(main, /nexus_proxy\.router, prefix="\/api\/v1\/nexus"/)
 })
@@ -1224,7 +1228,10 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // SR6：+runs/{id}/formats 正式格式＋runs/{id}/clean-verify 干净验证 → 38 个。
   // F2：+runs/{id}/resume 恢复认领 → 39 个。
   // F3：+runs/{id}/operations/{op}/cancel 操作级取消 → 40 个。
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 40)
+  // F6：+documents/jobs 创建/查询/取消/重试 → 44 个。
+  // F7：+research/tasks 创建/列表/详情/取消 → 48 个。
+  // F8：+compares 创建/列表/详情/取消/关联运行 → 53 个。
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 53)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })
@@ -1399,4 +1406,147 @@ test('F3 操作级中断＋增量 Console（会话语义，整体取消保留）
   assert.match(page, /requestInterruptOp/)
   assert.match(page, /@interrupt-op=/)
   assert.match(page, /opLogCursors/)
+})
+
+test('F6 正式文档：一份冻结内容多格式输出（模板＋幂等＋重试）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const runtime = read('nexus/src/nexus/main.py')
+  const tool = read('nexus/src/nexus/tools/artifact.py')
+  // 客户端：作业创建/查询/取消/重试，与报告链同形状。
+  assert.match(client, /export function createNexusDocumentJob\(payload\)/)
+  assert.match(client, /\/nexus\/documents\/jobs/)
+  assert.match(client, /export function getNexusDocumentJob\(jobId\)/)
+  assert.match(client, /export function cancelNexusDocumentJob\(jobId\)/)
+  assert.match(client, /export function retryNexusDocumentJob\(jobId\)/)
+  // 后端：四反代路由（D10 门数 44 另行锁定）＋模板/格式白名单。
+  assert.match(backend, /@router\.post\("\/documents\/jobs"\)/)
+  assert.match(backend, /@router\.get\("\/documents\/jobs\/\{job_id\}"\)/)
+  assert.match(backend, /@router\.post\("\/documents\/jobs\/\{job_id\}\/cancel"\)/)
+  assert.match(backend, /@router\.post\("\/documents\/jobs\/\{job_id\}\/retry"\)/)
+  // Runtime：作业创建/查询/取消/重试端点。
+  assert.match(runtime, /nexus_document_job_create/)
+  assert.match(runtime, /nexus_document_job_get/)
+  assert.match(runtime, /nexus_document_job_cancel/)
+  assert.match(runtime, /nexus_document_job_retry/)
+  // 工具：Ask 可用的正式输出工具（纯渲染，非执行授权）。
+  assert.match(tool, /create_document_output/)
+})
+
+test('F7 持续研究：任务＋预算＋取消（Ask/Auto 对等，实验为分支）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const runtime = read('nexus/src/nexus/main.py')
+  const loop = read('nexus/src/nexus/research_loop.py')
+  const agent = read('nexus/src/nexus/agent.py')
+  // 客户端：任务创建/列表/详情/取消，与文档作业链同形状。
+  assert.match(client, /export function createNexusResearchTask\(payload\)/)
+  assert.match(client, /\/nexus\/research\/tasks/)
+  assert.match(client, /export function listNexusResearchTasks\(sessionId\)/)
+  assert.match(client, /export function getNexusResearchTask\(taskId\)/)
+  assert.match(client, /export function cancelNexusResearchTask\(taskId\)/)
+  // 后端：四反代路由（D10 门数 48 另行锁定）。
+  assert.match(backend, /@router\.post\("\/research\/tasks"\)/)
+  assert.match(backend, /@router\.get\("\/research\/tasks"\)/)
+  assert.match(backend, /@router\.get\("\/research\/tasks\/\{task_id\}"\)/)
+  assert.match(backend, /@router\.post\("\/research\/tasks\/\{task_id\}\/cancel"\)/)
+  // Runtime：任务创建/列表/详情/取消端点。
+  assert.match(runtime, /nexus_research_task_create/)
+  assert.match(runtime, /nexus_research_task_list/)
+  assert.match(runtime, /nexus_research_task_get/)
+  assert.match(runtime, /nexus_research_task_cancel/)
+  // 循环工具：计划/交办/回收/交付/关联/取消/读取（Research-only）。
+  assert.match(loop, /plan_research_task/)
+  assert.match(loop, /advance_research_task/)
+  assert.match(loop, /submit_research_result/)
+  assert.match(loop, /complete_research_task/)
+  assert.match(loop, /link_experiment_run/)
+  // 主管装配只读 researcher（受限角色，不解除全局收敛）。
+  assert.match(agent, /build_researcher_subagent/)
+  assert.match(agent, /RESEARCHER_TOOL_NAMES/)
+})
+test('F8 受控对照：共同条件＋两组冻结配方＋只关联终态运行', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const runtime = read('nexus/src/nexus/main.py')
+  const state = read('nexus/src/nexus/experiment_compare.py')
+  const tool = read('nexus/src/nexus/tools/compare.py')
+  // 客户端：创建/列表/详情/取消/关联运行，与任务链同形状。
+  assert.match(client, /export function createNexusCompare\(payload\)/)
+  assert.match(client, /\/nexus\/compares/)
+  assert.match(client, /export function listNexusCompares\(sessionId\)/)
+  assert.match(client, /export function getNexusCompare\(compareId\)/)
+  assert.match(client, /export function cancelNexusCompare\(compareId\)/)
+  assert.match(client, /export function linkNexusCompareRun\(compareId, armName, runId\)/)
+  // 后端：五反代路由（D10 门数 53 另行锁定）。
+  assert.match(backend, /@router\.post\("\/compares"\)/)
+  assert.match(backend, /@router\.get\("\/compares"\)/)
+  assert.match(backend, /@router\.get\("\/compares\/\{compare_id\}"\)/)
+  assert.match(backend, /@router\.post\("\/compares\/\{compare_id\}\/cancel"\)/)
+  assert.match(backend, /@router\.post\("\/compares\/\{compare_id\}\/link-run"\)/)
+  // Runtime：创建/列表/详情/取消/关联端点。
+  assert.match(runtime, /nexus_compare_create/)
+  assert.match(runtime, /nexus_compare_list/)
+  assert.match(runtime, /nexus_compare_get/)
+  assert.match(runtime, /nexus_compare_cancel/)
+  assert.match(runtime, /nexus_compare_link_run/)
+  // 状态域：只关联终态＋配方一致门（排错改方案即拒绝）。
+  assert.match(state, /COMPARE_RECIPE_MISMATCH/)
+  assert.match(state, /COMPARE_RUN_NOT_TERMINAL/)
+  assert.match(state, /COMPARE_RUN_UNFROZEN/)
+  // 报告只做描述性并列，永不声称显著提升。
+  assert.match(state, /descriptive_ready/)
+  assert.match(state, /SIGNIFICANCE_DISCLAIMER/)
+  // 循环工具：建对照/关联/读取/取消（Research-only，只关联不执行）。
+  assert.match(tool, /plan_compare/)
+  assert.match(tool, /link_compare_run/)
+  assert.match(tool, /get_compare/)
+  assert.match(tool, /cancel_compare/)
+})
+
+test('F9 配方身份：详情透传配方引用，工作台只读展示（空即历史未验证）', () => {
+  const ws = read('frontend/src/app/pages/nexus/components/NexusExperimentWorkspace.vue')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  // 后端：console 合并层直通配方引用（与 clean_status 同模式，只读投影）。
+  assert.match(backend, /merged\["recipe_hash"\] = console\.get\("recipe_hash", ""\)/)
+  assert.match(backend, /merged\["recipe_status"\] = console\.get\("recipe_status", ""\)/)
+  // 父组件：详情透传（空即未冻结，不反推执行事实）。
+  assert.match(page, /run\.recipeHash = /)
+  assert.match(page, /run\.recipeStatus = /)
+  // 工作台：短 hash 只读展示；无配方显历史未验证。
+  assert.match(ws, /run\?\.recipeHash/)
+  assert.match(ws, /历史未验证/)
+})
+test('对话 run 引用绑定：按钮锚定 run_id，后端验归属后投影（伪造剥离）', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const adapter = read('frontend/src/api/nexusAdapter.js')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  // 客户端：runRef 只传引用声明，详情一律后端投影。
+  assert.match(client, /runRef = null/)
+  assert.match(client, /body\.context\.run_ref = \{ run_id:/)
+  assert.match(adapter, /runRef = null/)
+  assert.match(adapter, /runRef,/)
+  // 父组件：analyze/ask 锚定业务 run_id，一次性消费，发送即清零。
+  assert.match(page, /pendingRunRef = ref\(null\)/)
+  assert.match(page, /pendingRunRef\.value = null/)
+  assert.match(page, /runRef,/)
+  // 后端：客户端 run_ref 替换为服务端白名单投影，伪造剥离；未知 404、跨会话 403。
+  assert.match(backend, /await _inject_run_context\(payload, session, current_user\)/)
+  assert.match(backend, /context\.pop\("run_context", None\)/)
+  assert.match(backend, /detail="RUN_NOT_FOUND"/)
+  assert.match(backend, /detail="RUN_SESSION_MISMATCH"/)
+})
+
+test('对话确认不再建重复卡：同方案待批审批直接复用', () => {
+  const approval = read('nexus/src/nexus/approvals.py')
+  const tool = read('nexus/src/nexus/tools/reproduction.py')
+  // 查询面：同用户同会话同工具同 plan_hash＋未过期才命中。
+  assert.match(approval, /def find_pending_approval/)
+  assert.match(approval, /_is_expired\(approval, now\)/)
+  // 工具侧：无票据先查复用，命中标 deduped，不建新卡。
+  assert.match(tool, /find_pending_approval/)
+  assert.match(tool, /"deduped": True/)
+  assert.match(tool, /"deduped": False/)
 })

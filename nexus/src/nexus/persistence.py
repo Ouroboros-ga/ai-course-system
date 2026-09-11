@@ -67,6 +67,13 @@ NEXUS_TABLES = (
     # F2：操作意图＋执行租约（持久执行账本，见 0002 迁移）。
     "nexus_operation_intents",
     "nexus_execution_leases",
+    # F6：文档作业（冻结快照＋分格式状态，见 0004 迁移）。
+    "nexus_document_jobs",
+    # F7：研究任务＋证据持久化（见 0005 迁移）。
+    "nexus_research_tasks",
+    "nexus_research_evidence",
+    # F8：受控对照（对照说明＋两组配方引用＋关联结果，见 0006 迁移）。
+    "nexus_compares",
 )
 
 

@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NexusLab · F8 受控对照 设计板 v2（对齐系统令牌）</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   v2 修订：v1 用了深色暖炭 + 琥珀，与系统不符。
+   本版全部取自 frontend/src/app/styles/tokens.css 真实令牌：
+     底 --surface-page #F7F5EF（暖米白，非深色）
+     accent --nexus-accent #007AF4（品牌蓝，非琥珀）
+     状态 --green-700 #3F6B52 / --red-700 #8B3A3A / --amber-700 #9B6618
+     字体 --font-sans Inter / --font-mono JetBrains Mono（不另引字体）
+   视觉词沿用既有：1px 发丝线分区、mono 大写小标、去卡片化、无重阴影。
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  /* 表面 */
+  --surface-page:   #F7F5EF;
+  --surface-canvas: #FBFAF7;
+  --surface-panel:  #FFFFFF;
+  --surface-soft:   #F0EDE6;
+  --surface-cool:   #F7F8FA;
+  --code-bg:        #101820;
+
+  /* 文字 */
+  --text-primary:   #172033;
+  --text-secondary: #4E5969;
+  --text-muted:     #5E6776;
+  --text-disabled:  #A7AFBC;
+
+  /* 发丝线 */
+  --border-default: #DDE2E8;
+  --border-strong:  #C9CFD8;
+  --border-subtle:  #EDF0F3;
+
+  /* Nexus 品牌蓝（唯一强调色） */
+  --nexus-accent:        #007AF4;
+  --nexus-accent-strong: #0563C4;
+  --nexus-accent-soft:   #E8F2FE;
+  --nexus-accent-line:   #A1D0FF;
+
+  /* 状态色（低饱和，沿用系统） */
+  --green-700: #3F6B52; --green-500: #5E8C61; --green-300: #A8C3A5; --green-100: #EDF5EE;
+  --red-700:   #8B3A3A; --red-500:   #B85C5C; --red-300:   #D9A3A3; --red-100:   #FAEEEE;
+  --amber-700: #9B6618; --amber-500: #C68B2C; --amber-300: #E5B95C; --amber-100: #FBF3DE;
+
+  --font-sans: Inter, "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
+
+  --fs-micro: 10px; --fs-caption: 11px; --fs-sm: 12px;
+  --fs-body: 13px;  --fs-md: 15px;      --fs-lg: 19px; --fs-metric: 30px;
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 48px;
+
+  --radius-sm: 3px;
+  --duration-fast: 120ms;    /* design.md §4 */
+  --duration-normal: 200ms;
+  --duration-slow: 320ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--surface-page); color: var(--text-primary);
+  font-family: var(--font-sans); font-size: var(--fs-body); line-height: 1.7;
+  letter-spacing: .01em; min-height: 100vh;
+}
+
+/* ── 氛围：暖米白纸感 + 极淡网格 + 顶部一缕品牌蓝 ────────────── */
+.atmos { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+.atmos::before {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(23,32,51,.026) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23,32,51,.026) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+.glow {
+  position: fixed; top: -260px; left: 6%; width: 760px; height: 460px;
+  pointer-events: none; z-index: 0;
+  background: radial-gradient(closest-side, rgba(0,122,244,.07), transparent 70%);
+}
+
+.shell { position: relative; z-index: 1; max-width: 1320px; margin: 0 auto; padding: var(--space-6) var(--space-6) 96px; }
+
+/* ── 通用：mono 大写小标（既有视觉词） ───────────────────────── */
+.eyebrow {
+  font-family: var(--font-mono); font-size: var(--fs-micro); font-weight: 500;
+  text-transform: uppercase; letter-spacing: .14em; color: var(--text-disabled);
+}
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+:focus-visible { outline: 2px solid var(--nexus-accent); outline-offset: 2px; border-radius: 2px; }
+
+/* ═══ 头部 ═══════════════════════════════════════════════════ */
+.cmp-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--space-5); padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-strong); position: relative;
+}
+/* 破格：进度线压在分界线上，宽度 = 已关联组数 / 总组数 */
+.cmp-head::after {
+  content: ""; position: absolute; left: 0; bottom: -1px; height: 2px;
+  width: var(--progress, 0%); background: var(--nexus-accent);
+  transition: width var(--duration-slow) var(--ease-out);
+}
+.cmp-title {
+  margin: 0; font-family: var(--font-mono); font-size: var(--fs-lg);
+  font-weight: 700; letter-spacing: -.01em; color: var(--text-primary);
+}
+.cmp-title span { color: var(--nexus-accent); }
+.cmp-sub { margin: 6px 0 0; font-size: var(--fs-caption); color: var(--text-muted); }
+.cmp-sub .mono { color: var(--text-secondary); }
+.cmp-actions { display: flex; align-items: center; gap: var(--space-3); }
+
+/* 状态徽标：浅底 + 发丝线，沿用 .nxw-st 的做法 */
+.badge {
+  font-family: var(--font-mono); font-size: var(--fs-micro); font-weight: 500;
+  text-transform: uppercase; letter-spacing: .12em;
+  padding: 4px 9px; border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+  color: var(--text-secondary); background: var(--surface-panel);
+}
+.badge.is-open    { color: var(--nexus-accent-strong); border-color: var(--nexus-accent-line); background: var(--nexus-accent-soft); }
+.badge.is-running { color: var(--nexus-accent-strong); border-color: var(--nexus-accent-line); background: var(--nexus-accent-soft); }
+.badge.is-cancel  { color: var(--text-disabled); border-style: dashed; background: transparent; }
+
+/* 按钮：26–28px 控件（既有规范），SfxButton tertiary 手感 */
+.btn {
+  font-family: var(--font-sans); font-size: var(--fs-caption); font-weight: 500;
+  color: var(--text-secondary); background: var(--surface-panel);
+  border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+  min-height: 28px; padding: 0 12px; cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out),
+              background var(--duration-fast) var(--ease-out);
+}
+.btn:hover { color: var(--text-primary); border-color: var(--border-strong); background: var(--surface-soft); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ═══ 设计板状态切换（落地删除） ═══════════════════════════════ */
+.switcher {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin: var(--space-5) 0 0; padding: 10px 12px;
+  background: var(--surface-canvas); border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+.switcher .eyebrow { margin-right: 4px; }
+.chip {
+  font-family: var(--font-mono); font-size: var(--fs-caption);
+  padding: 4px 10px; border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+  background: var(--surface-panel); color: var(--text-muted); cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.chip:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.chip[aria-pressed="true"] {
+  color: var(--nexus-accent-strong); border-color: var(--nexus-accent-line);
+  background: var(--nexus-accent-soft);
+}
+
+/* ═══ 对照目标 ═════════════════════════════════════════════════ */
+.objective {
+  margin: var(--space-5) 0 0; padding: var(--space-4) var(--space-5);
+  background: var(--surface-panel); border: 1px solid var(--border-default);
+  border-left: 2px solid var(--nexus-accent); border-radius: var(--radius-sm);
+}
+.objective p { margin: 6px 0 0; font-size: var(--fs-md); line-height: 1.7; color: var(--text-primary); }
+
+/* ═══ 主体：左规格 / 右并列 ═══════════════════════════════════ */
+.cmp-body {
+  display: grid; grid-template-columns: 320px 1fr; gap: var(--space-5);
+  margin-top: var(--space-5); align-items: start;
+}
+
+/* 左：对照规格 */
+.spec {
+  position: relative; padding: var(--space-5) var(--space-4);
+  background: var(--surface-panel); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+/* 四角括号 → 改为品牌蓝细线，浅底上比琥珀协调 */
+.spec::before, .spec::after {
+  content: ""; position: absolute; width: 10px; height: 10px; pointer-events: none;
+}
+.spec::before { top: -1px; left: -1px;  border-top: 1px solid var(--nexus-accent); border-left: 1px solid var(--nexus-accent); }
+.spec::after  { bottom: -1px; right: -1px; border-bottom: 1px solid var(--nexus-accent); border-right: 1px solid var(--nexus-accent); }
+
+.spec-block { padding: var(--space-3) 0; border-bottom: 1px solid var(--border-subtle); }
+.spec-block:first-of-type { padding-top: 0; }
+.spec-block:last-of-type  { border-bottom: 0; padding-bottom: 0; }
+.spec-kv { display: grid; grid-template-columns: 82px 1fr; gap: var(--space-2); margin: 6px 0 0; align-items: baseline; }
+.spec-kv dt { font-size: var(--fs-caption); color: var(--text-muted); }
+.spec-kv dd { margin: 0; font-family: var(--font-mono); font-size: var(--fs-caption); color: var(--text-primary); word-break: break-all; }
+.spec-kv dd.is-muted { color: var(--text-disabled); }
+
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tag {
+  font-family: var(--font-mono); font-size: var(--fs-caption);
+  padding: 2px 8px; border: 1px solid var(--nexus-accent-line); border-radius: 2px;
+  color: var(--nexus-accent-strong); background: var(--nexus-accent-soft);
+}
+
+/* 右：并列报告 */
+.report-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--space-3); padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-default);
+}
+.verdict { font-family: var(--font-mono); font-size: var(--fs-caption); font-weight: 500; letter-spacing: .04em; }
+/* 结论刻意不用绿色：descriptive_ready 只是"可以并列了"，不是"谁赢了" */
+.verdict.is-ready      { color: var(--text-primary); }
+.verdict.is-incomplete { color: var(--red-700); }
+
+.arms { display: grid; gap: var(--space-3); margin-top: var(--space-4);
+        grid-template-columns: repeat(auto-fit, minmax(272px, 1fr)); }
+.arm {
+  position: relative; padding: var(--space-4);
+  background: var(--surface-panel); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--duration-normal) var(--ease-out),
+              transform var(--duration-normal) var(--ease-out);
+}
+.arm:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.arm.is-failed  { border-left: 2px solid var(--red-700); }
+.arm.is-current { border-left: 2px solid var(--green-700); }
+.arm.is-empty   { border-style: dashed; background: var(--surface-canvas); }
+
+.arm-name {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2);
+  font-family: var(--font-mono); font-size: var(--fs-body); font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase; color: var(--text-primary);
+}
+.arm-varied { margin: 6px 0 0; font-family: var(--font-mono); font-size: var(--fs-caption); color: var(--nexus-accent-strong); }
+.arm-recipe { margin: 8px 0 0; font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-disabled); }
+
+.arm-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2);
+  padding: 5px 0; border-top: 1px solid var(--border-subtle); font-size: var(--fs-caption);
+}
+.arm-row dt { color: var(--text-muted); }
+.arm-row dd { margin: 0; font-family: var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.arm-row dd.is-ok      { color: var(--green-700); }
+.arm-row dd.is-failed  { color: var(--red-700); }
+.arm-row dd.is-missing { color: var(--text-disabled); font-style: italic; }
+
+.metric { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-strong); }
+.metric-label { font-size: var(--fs-caption); color: var(--text-muted); }
+.metric-value {
+  font-family: var(--font-mono); font-size: var(--fs-metric); font-weight: 500;
+  font-variant-numeric: tabular-nums; letter-spacing: -.03em; line-height: 1.15;
+  color: var(--text-primary); margin-top: 2px;
+}
+.metric-value.is-missing {
+  font-size: var(--fs-sm); font-style: italic; color: var(--text-disabled);
+  letter-spacing: 0; line-height: 1.65; font-weight: 400;
+}
+.metric-verdict { margin: 4px 0 0; font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-muted); }
+
+.arm-empty-note { margin: var(--space-4) 0 0; font-size: var(--fs-caption); color: var(--text-muted); line-height: 1.75; }
+.arm-empty-note b { display: block; color: var(--text-secondary); font-family: var(--font-mono); font-weight: 500; margin-bottom: 4px; }
+.arm-link { margin-top: var(--space-4); }
+
+/* 可比性注记：琥珀（注意），不是错误 */
+.notes {
+  margin-top: var(--space-5); padding: var(--space-4);
+  background: var(--amber-100); border: 1px solid var(--amber-300);
+  border-left: 2px solid var(--amber-700); border-radius: var(--radius-sm);
+}
+.notes .eyebrow { color: var(--amber-700); }
+.notes ul { margin: 8px 0 0; padding-left: 18px; }
+.notes li { font-size: var(--fs-caption); color: var(--text-primary); line-height: 1.8; }
+.notes li::marker { color: var(--amber-700); }
+
+/* 实测差（非显著性）：只并列，不判定 */
+.delta {
+  margin-top: var(--space-4); padding: var(--space-3) var(--space-4);
+  background: var(--surface-cool); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap;
+}
+.delta-num { font-family: var(--font-mono); font-size: var(--fs-md); font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.delta-cap { font-size: var(--fs-caption); color: var(--text-muted); }
+.delta-cap b { font-family: var(--font-mono); font-weight: 500; color: var(--red-700); }
+
+/* ═══ 常驻免责条：sticky 吸底、不可关闭 ═══════════════════════════ */
+.disclaimer {
+  position: sticky; bottom: 0; z-index: 2;
+  margin-top: var(--space-6); padding: 12px var(--space-4);
+  background: var(--surface-panel); border: 1px solid var(--amber-300);
+  border-left: 2px solid var(--amber-700); border-radius: var(--radius-sm);
+  display: flex; align-items: center; gap: var(--space-3);
+}
+.disclaimer .mark { font-family: var(--font-mono); font-size: var(--fs-caption); font-weight: 700; color: var(--amber-700); flex: none; }
+.disclaimer p { margin: 0; font-size: var(--fs-caption); color: var(--text-secondary); line-height: 1.7; }
+
+/* ═══ 设计说明（落地删除） ═════════════════════════════════════ */
+.notes-doc { margin-top: var(--space-7); border-top: 1px solid var(--border-strong); padding-top: var(--space-5); }
+.notes-doc details {
+  background: var(--surface-panel); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-3);
+}
+.notes-doc summary {
+  cursor: pointer; font-family: var(--font-mono); font-size: var(--fs-caption);
+  text-transform: uppercase; letter-spacing: .12em; color: var(--text-secondary);
+}
+.notes-doc summary:hover { color: var(--nexus-accent-strong); }
+.notes-doc table { width: 100%; border-collapse: collapse; margin-top: var(--space-3); font-size: var(--fs-caption); }
+.notes-doc th, .notes-doc td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+.notes-doc th { color: var(--text-muted); font-family: var(--font-mono); font-weight: 500; text-transform: uppercase; font-size: var(--fs-micro); letter-spacing: .1em; }
+.notes-doc td { color: var(--text-secondary); }
+.notes-doc code { font-family: var(--font-mono); background: var(--surface-soft); padding: 1px 5px; border-radius: 2px; color: var(--nexus-accent-strong); }
+
+/* ═══ 入场序列：4 组错峰，只动 opacity / transform ═════════════ */
+.reveal { opacity: 0; transform: translateY(12px); }
+.reveal.in {
+  opacity: 1; transform: none;
+  transition: opacity var(--duration-normal) var(--ease-out), transform var(--duration-normal) var(--ease-out);
+}
+.reveal[data-d="1"] { transition-delay: 0ms; }
+.reveal[data-d="2"] { transition-delay: 80ms; }
+.reveal[data-d="3"] { transition-delay: 160ms; }
+.reveal[data-d="4"] { transition-delay: 240ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal, .reveal.in { opacity: 1; transform: none; transition: none; }
+  .arm:hover { transform: none; }
+  .cmp-head::after { transition: none; }
+}
+
+/* ═══ 响应式 375 / 768 / 1440 ═════════════════════════════════ */
+@media (max-width: 1024px) {
+  .cmp-body { grid-template-columns: 1fr; }
+  .shell { padding: var(--space-5) var(--space-4) 96px; }
+}
+@media (max-width: 640px) {
+  .cmp-head { flex-direction: column; align-items: flex-start; gap: var(--space-3); }
+  .arms { grid-template-columns: 1fr; }
+  .switcher { flex-wrap: wrap; }
+  .metric-value { font-size: 26px; }
+}
+</style>
+</head>
+<body>
+
+<div class="atmos" aria-hidden="true"></div>
+<div class="glow" aria-hidden="true"></div>
+
+<main class="shell">
+
+  <header class="cmp-head reveal" data-d="1" id="head">
+    <div>
+      <h1 class="cmp-title">受控对照 <span>·</span> CONTROLLED COMPARISON</h1>
+      <p class="cmp-sub">
+        <span class="mono" id="cmpId">cmp-3f2a9c71b04e</span>
+        · 规格版本 <span class="mono">compare-spec/1</span>
+        · 创建于 <span class="mono">2026-09-10 11:24</span>
+      </p>
+    </div>
+    <div class="cmp-actions">
+      <span class="badge" id="cmpBadge">OPEN</span>
+      <button class="btn" type="button" id="btnCancel">取消对照</button>
+    </div>
+  </header>
+
+  <div class="switcher reveal" data-d="1">
+    <span class="eyebrow">设计板状态</span>
+    <button class="chip" type="button" data-state="open"    aria-pressed="false">① open · 两组待关联</button>
+    <button class="chip" type="button" data-state="partial" aria-pressed="false">② running · 部分关联</button>
+    <button class="chip" type="button" data-state="ready"   aria-pressed="true">③ descriptive_ready · 2/2</button>
+  </div>
+
+  <section class="objective reveal" data-d="2">
+    <span class="eyebrow">对照目标 / objective</span>
+    <p id="objText">在 nanogpt 上比较学习率 3e-4 与 1e-3 对验证损失的影响；其余参数与数据完全一致。</p>
+  </section>
+
+  <div class="cmp-body">
+
+    <aside class="spec reveal" data-d="2">
+      <span class="eyebrow">对照规格 · 已锁定</span>
+
+      <div class="spec-block">
+        <span class="eyebrow">共同数据</span>
+        <dl class="spec-kv">
+          <dt>data_ref</dt><dd>shard-nanogpt-openwebtext/v3</dd>
+          <dt>data_hash</dt><dd class="is-muted">a91f4c7d2e88b3106f5a</dd>
+        </dl>
+      </div>
+
+      <div class="spec-block">
+        <span class="eyebrow">指标政策</span>
+        <dl class="spec-kv">
+          <dt>primary</dt><dd>val_loss</dd>
+          <dt>direction</dt><dd>lower_is_better</dd>
+        </dl>
+      </div>
+
+      <div class="spec-block">
+        <span class="eyebrow">允许变化</span>
+        <div class="tags"><span class="tag">lr</span></div>
+      </div>
+
+      <div class="spec-block">
+        <span class="eyebrow">预算说明</span>
+        <dl class="spec-kv">
+          <dt>est</dt><dd>5 min / arm</dd>
+          <dt>approval</dt><dd class="is-muted">apr-7c1e（只记不验）</dd>
+        </dl>
+      </div>
+    </aside>
+
+    <section class="reveal" data-d="3">
+      <div class="report-head">
+        <span class="eyebrow">并列报告 · 描述性</span>
+        <span class="verdict" id="verdict">VERDICT: DESCRIPTIVE_READY</span>
+      </div>
+
+      <div class="arms" id="arms"></div>
+      <div class="delta" id="delta"></div>
+      <div class="notes" id="notes"></div>
+    </section>
+  </div>
+
+  <!-- 常驻免责条：文案 = SIGNIFICANCE_DISCLAIMER 原文，不可关闭 -->
+  <div class="disclaimer reveal" data-d="4">
+    <span class="mark" aria-hidden="true">!</span>
+    <p>本对照只做描述性并列；未设计统计检验、重复次数不足，不声称任何显著提升，结论以各组实测与缺失说明为准。</p>
+  </div>
+
+  <div class="notes-doc">
+    <details open>
+      <summary>v2 修订说明（相对 v1）</summary>
+      <table>
+        <tr><th>v1 问题</th><th>v2 修正</th></tr>
+        <tr><td>深色暖炭底 #131211 —— 与系统明暗相反</td><td>改用 <code>--surface-page #F7F5EF</code> 暖米白 + <code>--surface-panel #FFFFFF</code></td></tr>
+        <tr><td>琥珀强调 #E8A33D —— 把 PPT 暖橙偏好错搬进界面</td><td>改用 <code>--nexus-accent #007AF4</code> 品牌蓝（Nexus logo v1.2）</td></tr>
+        <tr><td>外引 IBM Plex Sans —— 系统里不存在</td><td>只用 <code>--font-sans Inter</code> + <code>--font-mono JetBrains Mono</code></td></tr>
+        <tr><td>自造状态色（赭红/中性灰绿）</td><td>沿用 <code>--green-700 #3F6B52</code> / <code>--red-700 #8B3A3A</code> / <code>--amber-700 #9B6618</code></td></tr>
+        <tr><td>噪点纹理在浅底上显脏</td><td>去掉噪点，保留极淡网格 + 一缕品牌蓝光晕</td></tr>
+        <tr><td>免责条用赭红 —— 语义像"出错"</td><td>改用琥珀（注意/声明），不是错误</td></tr>
+      </table>
+    </details>
+
+    <details>
+      <summary>设计定调</summary>
+      <table>
+        <tr><th>目的</th><td>给"两种配置谁更好"一个可比的说法：条件一致、配方锁定、失败可见、结论不吹。受众是做算法实验的研究者。</td></tr>
+        <tr><th>方向</th><td><b>工业实用 + 系统既有编辑感</b>：发丝线分区、mono 大写小标、等宽数字、去卡片化、无重阴影。不引入新视觉语言。</td></tr>
+        <tr><th>配色纪律</th><td>唯一强调色 = 品牌蓝，只给"当前组 / 关键动作"。运行成败沿用系统绿红；<b>对照结论刻意不用绿</b>——descriptive_ready 只是"可以并列了"，不是"谁赢了"。</td></tr>
+        <tr><th>记忆点</th><td><b>吸底免责条</b>（不可关闭）+ <b>Δ 值强制挂"非显著性"标签</b>。系统里"显著性"永远说不出口，这句话在视觉上就不能消失。</td></tr>
+      </table>
+    </details>
+
+    <details>
+      <summary>契约映射（字段来自 experiment_compare.py 实测）</summary>
+      <table>
+        <tr><th>UI 元素</th><th>契约字段</th></tr>
+        <tr><td>目标 / 共同数据 / 指标政策 / 预算</td><td><code>objective</code>、<code>common.{data_ref,data_hash,metric_policy,budget}</code></td></tr>
+        <tr><td>允许变化标签</td><td><code>allowed_varied</code>（≤16）</td></tr>
+        <tr><td>组名 / 变化参数 / 配方</td><td><code>arms[].{name,varied_params,recipe_hash}</code>（hash ≥7 位）</td></tr>
+        <tr><td>状态 / 退出码 / scope / 版本 / 干净 B</td><td><code>rows[].{run_status,exit_code,scope_hash,proposal_version,clean_status}</code></td></tr>
+        <tr><td>指标或缺失原因</td><td><code>rows[].metrics</code> / <code>rows[].metrics_missing</code>（取不到即标缺失，不填 0）</td></tr>
+        <tr><td>结论徽标</td><td><code>verdict</code>（仅 descriptive_ready / incomplete）</td></tr>
+        <tr><td>可比性注记</td><td><code>comparability_notes[]</code></td></tr>
+        <tr><td>免责条文案</td><td><code>significance</code> = SIGNIFICANCE_DISCLAIMER 常量（L41）</td></tr>
+      </table>
+    </details>
+
+    <details>
+      <summary>反 AI 味自检（12 项）</summary>
+      <table>
+        <tr><th>#</th><th>项</th><th>结果</th></tr>
+        <tr><td>1</td><td>展示字体</td><td>✅ JetBrains Mono（系统 --font-mono 本就是它），非自造</td></tr>
+        <tr><td>2</td><td>配色</td><td>✅ 暖米白 + 品牌蓝，取系统令牌，无渐变</td></tr>
+        <tr><td>3</td><td>布局</td><td>✅ 非对称左规格右并列，无三卡 hero</td></tr>
+        <tr><td>4</td><td>卡片</td><td>✅ 组卡用发丝线 + 左侧状态条区分，非统一阴影圆角</td></tr>
+        <tr><td>5</td><td>图标</td><td>✅ 仅免责条一个 "!"，承载声明语义</td></tr>
+        <tr><td>6</td><td>文案</td><td>✅ 无"无缝赋能/新一代"</td></tr>
+        <tr><td>7</td><td>动效</td><td>✅ 4 组错峰 80ms，非齐刷刷淡入</td></tr>
+        <tr><td>8</td><td>层次</td><td>✅ 网格 + 光晕，浅底克制不加噪点</td></tr>
+        <tr><td>9</td><td>人格</td><td>✅ 吸底免责条 + Δ 非显著性标签为独占元素</td></tr>
+        <tr><td>10</td><td>状态</td><td>✅ 空组 / 失败 / 指标缺失 / 取消 / 悬停 / 聚焦 全覆盖</td></tr>
+        <tr><td>11</td><td>记忆点</td><td>✅ 免责条 + Δ 标签</td></tr>
+        <tr><td>12</td><td>可访问性</td><td>✅ 正文 #4E5969 于 #FFFFFF ≈ 7.5:1；焦点 2px 描边；reduced-motion 降级</td></tr>
+      </table>
+    </details>
+  </div>
+
+</main>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   三态数据：字段严格对齐 experiment_compare.py 的 compare_report()
+   ═══════════════════════════════════════════════════════════════ */
+const STATES = {
+  open: {
+    badge: 'OPEN', badgeClass: 'is-open', progress: 0,
+    verdict: 'VERDICT: INCOMPLETE', verdictClass: 'is-incomplete',
+    arms: [
+      { name: 'A · lr=3e-4', varied: 'lr = 3e-4', recipe: 'rcp_9f2a41c7e0b8', linked: false },
+      { name: 'B · lr=1e-3', varied: 'lr = 1e-3', recipe: 'rcp_4d18bb62af31', linked: false }
+    ],
+    delta: null,
+    notes: [
+      '以下组尚未关联终态运行，结果缺失：A · lr=3e-4、B · lr=1e-3。',
+      '关联前请确保每组都用各自声明的冻结配方跑完——未终态或无冻结配方会被服务端拒绝（COMPARE_RUN_NOT_TERMINAL / COMPARE_RUN_UNFROZEN）。'
+    ]
+  },
+
+  partial: {
+    badge: 'RUNNING', badgeClass: 'is-running', progress: 50,
+    verdict: 'VERDICT: INCOMPLETE', verdictClass: 'is-incomplete',
+    arms: [
+      { name: 'A · lr=3e-4', varied: 'lr = 3e-4', recipe: 'rcp_9f2a41c7e0b8', linked: true,
+        runStatus: 'succeeded', exitCode: 0, scopeOk: true, proposalVersion: 2, clean: '不适用',
+        metrics: { val_loss: 1.842 }, metricVerdict: 'measured', missing: '' },
+      { name: 'B · lr=1e-3', varied: 'lr = 1e-3', recipe: 'rcp_4d18bb62af31', linked: false }
+    ],
+    delta: null,
+    notes: [
+      '以下组尚未关联终态运行，结果缺失：B · lr=1e-3。',
+      '目前只关联了一组，无法对照；至少两组才有并列意义。'
+    ]
+  },
+
+  ready: {
+    badge: 'RUNNING', badgeClass: 'is-running', progress: 100,
+    verdict: 'VERDICT: DESCRIPTIVE_READY', verdictClass: 'is-ready',
+    arms: [
+      { name: 'A · lr=3e-4', varied: 'lr = 3e-4', recipe: 'rcp_9f2a41c7e0b8', linked: true,
+        runStatus: 'succeeded', exitCode: 0, scopeOk: true, proposalVersion: 2, clean: '不适用',
+        metrics: { val_loss: 1.842 }, metricVerdict: 'measured', missing: '' },
+      { name: 'B · lr=1e-3', varied: 'lr = 1e-3', recipe: 'rcp_4d18bb62af31', linked: true,
+        runStatus: 'failed', exitCode: 1, scopeOk: true, proposalVersion: 2, clean: '不适用',
+        metrics: null, metricVerdict: '', missing: '运行报告不可用（ReportUnavailable），指标缺失' }
+    ],
+    delta: { text: 'A 1.842 / B 缺失 → 无法计算实测差', note: '非显著性' },
+    notes: [
+      '以下组运行失败，失败如实并列：B · lr=1e-3。',
+      'B 组指标缺失（运行报告不可用），不填 0、不画占位。',
+      '两组 scope 一致（9f2a…）、proposal_version 均为 2，执行条件可比。'
+    ]
+  }
+};
+
+const $ = (id) => document.getElementById(id);
+
+function armCard(arm, index) {
+  if (!arm.linked) {
+    return `
+      <article class="arm is-empty reveal" data-d="${3 + index}">
+        <div class="arm-name">
+          <span>${arm.name}</span>
+          <span style="font-size:10px;letter-spacing:.1em;color:var(--text-disabled)">未关联</span>
+        </div>
+        <p class="arm-varied">${arm.varied}</p>
+        <p class="arm-recipe">recipe ${arm.recipe}</p>
+        <p class="arm-empty-note"><b>等待终态运行</b>
+          该组需关联一个已跑完、且实际配方 hash 与本组声明一致的 run。未终态、无冻结配方、配方不一致都会被拒绝。</p>
+        <div class="arm-link"><button class="btn" type="button">关联终态运行</button></div>
+      </article>`;
+  }
+
+  const failed = arm.runStatus === 'failed';
+  const hasM   = arm.metrics && typeof arm.metrics.val_loss === 'number';
+
+  return `
+    <article class="arm ${failed ? 'is-failed' : 'is-current'} reveal" data-d="${3 + index}">
+      <div class="arm-name">
+        <span>${arm.name}</span>
+        <span style="font-size:10px;letter-spacing:.1em;color:${failed ? 'var(--red-700)' : 'var(--green-700)'}">
+          ${arm.runStatus.toUpperCase()}
+        </span>
+      </div>
+      <p class="arm-varied">${arm.varied}</p>
+      <p class="arm-recipe">recipe ${arm.recipe}</p>
+
+      <dl class="arm-row"><dt>exit_code</dt><dd class="${failed ? 'is-failed' : 'is-ok'}">${arm.exitCode}</dd></dl>
+      <dl class="arm-row"><dt>scope</dt><dd class="${arm.scopeOk ? 'is-ok' : 'is-missing'}">${arm.scopeOk ? '一致 9f2a…' : '不一致'}</dd></dl>
+      <dl class="arm-row"><dt>proposal</dt><dd>v${arm.proposalVersion}</dd></dl>
+      <dl class="arm-row"><dt>干净验证</dt><dd class="is-missing">${arm.clean}</dd></dl>
+
+      <div class="metric">
+        <span class="metric-label">val_loss · lower is better</span>
+        ${hasM
+          ? `<div class="metric-value">${arm.metrics.val_loss.toFixed(3)}</div>`
+          : `<div class="metric-value is-missing">${arm.missing || '存储报告无实测指标'}</div>`}
+        ${arm.metricVerdict ? `<p class="metric-verdict">判定：${arm.metricVerdict}</p>` : ''}
+      </div>
+    </article>`;
+}
+
+function render(key) {
+  const s = STATES[key];
+
+  $('cmpBadge').textContent = s.badge;
+  $('cmpBadge').className   = 'badge ' + s.badgeClass;
+  $('verdict').textContent  = s.verdict;
+  $('verdict').className    = 'verdict ' + s.verdictClass;
+  $('head').style.setProperty('--progress', s.progress + '%');
+
+  $('arms').innerHTML = s.arms.map(armCard).join('');
+
+  $('delta').style.display = s.delta ? 'flex' : 'none';
+  if (s.delta) {
+    $('delta').innerHTML =
+      `<span class="eyebrow">实测差</span>
+       <span class="delta-num">${s.delta.text}</span>
+       <span class="delta-cap">标注：<b>${s.delta.note}</b> · 本对照不声称任何显著提升</span>`;
+  }
+
+  $('notes').innerHTML =
+    `<span class="eyebrow">可比性注记 · comparability_notes</span>
+     <ul>${s.notes.map((t) => `<li>${t}</li>`).join('')}</ul>`;
+
+  document.querySelectorAll('.reveal').forEach((el) => el.classList.remove('in'));
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.reveal').forEach((el) => el.classList.add('in'));
+  });
+}
+
+document.querySelectorAll('.chip').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', 'false'));
+    chip.setAttribute('aria-pressed', 'true');
+    render(chip.dataset.state);
+  });
+});
+
+$('btnCancel').addEventListener('click', () => {
+  $('cmpBadge').textContent = 'CANCELLED';
+  $('cmpBadge').className   = 'badge is-cancel';
+  $('btnCancel').disabled   = true;
+});
+
+requestAnimationFrame(() => {
+  document.querySelectorAll('.reveal').forEach((el) => el.classList.add('in'));
+});
+render('ready');
+</script>
+
+</body>
+</html>

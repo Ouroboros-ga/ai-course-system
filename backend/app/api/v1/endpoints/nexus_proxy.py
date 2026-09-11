@@ -1575,6 +1575,9 @@ def _merge_run_console(
     # SR6：干净B结论直通（只读投影；""=未验证/verifying=运行中）。
     merged["clean_status"] = console.get("clean_status", "")
     merged["clean_note"] = console.get("clean_note", "")
+    # F9：冻结配方身份直通（只读投影；""=未冻结/历史未验证，UI 不反推执行事实）。
+    merged["recipe_hash"] = console.get("recipe_hash", "")
+    merged["recipe_status"] = console.get("recipe_status", "")
     console_status = console.get("console_status", "unknown")
     merged["live"] = {
         "status": console_status,
@@ -1984,6 +1987,294 @@ async def nexus_run_clean_verify(
         request, current_user, "POST",
         f"/api/v1/nexus/repro/runs/{run['run_id']}/clean-verify",
         body={"research_execution_mode": payload.research_execution_mode},
+    )
+
+
+class NexusDocumentJobCreate(BaseModel):
+    """F6 文档作业创建代理体：成果引用＋格式＋模板＋幂等键。
+
+    extra=allow：容忍签名键 time/enc；未声明字段由 _reject_unknown_fields
+    422；转发上游时只带声明字段（Runtime 侧 extra=forbid 仍兜底）。
+    """
+
+    source_kind: str = Field(default="markdown", max_length=16)
+    run_id: str = Field(default="", max_length=64)
+    artifact_id: str = Field(default="", max_length=64)
+    markdown: str = Field(default="", max_length=512 * 1024)
+    title: str = Field(default="", max_length=120)
+    template: str = Field(default="tech_doc", max_length=32)
+    formats: list[str] = Field(default_factory=lambda: ["markdown", "word", "latex"])
+    idempotency_key: str = Field(default="", max_length=128)
+
+    model_config = {"extra": "allow"}
+
+
+_ALLOWED_DOCUMENT_TEMPLATES = ("tech_doc", "research_review", "experiment_report")
+_ALLOWED_DOCUMENT_FORMATS = ("markdown", "word", "latex", "pdf")
+
+
+@router.post("/documents/jobs")
+async def nexus_document_job_create(
+    payload: NexusDocumentJobCreate,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F6：文档作业创建代理（一份冻结内容，多格式正式输出）。
+
+    不要求先有实验 run（Ask 下可用）；归属校验在 Runtime 来源解析处
+    执行（run/产物非本人即 404 语义）。判定语义由 Runtime 原样返回。
+    """
+    _reject_unknown_fields(NexusDocumentJobCreate, payload.model_dump())
+    if (payload.template or "") not in _ALLOWED_DOCUMENT_TEMPLATES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="TEMPLATE_UNKNOWN")
+    for fmt in payload.formats or []:
+        if str(fmt or "") not in _ALLOWED_DOCUMENT_FORMATS:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="FORMAT_UNKNOWN")
+    return await _proxy_json(
+        request, current_user, "POST",
+        "/api/v1/nexus/document-jobs",
+        body={
+            "source_kind": payload.source_kind,
+            "run_id": payload.run_id,
+            "artifact_id": payload.artifact_id,
+            "markdown": payload.markdown,
+            "title": payload.title,
+            "template": payload.template,
+            "formats": list(payload.formats or []),
+            "idempotency_key": payload.idempotency_key,
+        },
+    )
+
+
+@router.get("/documents/jobs/{job_id}")
+async def nexus_document_job_get(
+    job_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F6：文档作业查询代理（本人；跨用户/不存在由 Runtime 404）。"""
+    return await _proxy_json(
+        request, current_user, "GET",
+        f"/api/v1/nexus/document-jobs/{job_id.strip()[:64]}",
+    )
+
+
+@router.post("/documents/jobs/{job_id}/cancel")
+async def nexus_document_job_cancel(
+    job_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F6：文档作业取消代理（仅非终态有效）。"""
+    return await _proxy_json(
+        request, current_user, "POST",
+        f"/api/v1/nexus/document-jobs/{job_id.strip()[:64]}/cancel",
+    )
+
+
+@router.post("/documents/jobs/{job_id}/retry")
+async def nexus_document_job_retry(
+    job_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F6：文档作业重试代理（只跑失败格式；成功格式保留不重写）。"""
+    return await _proxy_json(
+        request, current_user, "POST",
+        f"/api/v1/nexus/document-jobs/{job_id.strip()[:64]}/retry",
+    )
+
+
+class NexusResearchTaskCreate(BaseModel):
+    """F7 研究任务创建代理体：Brief＋子问题＋预算。
+
+    extra=allow：容忍签名键 time/enc；未声明字段由 _reject_unknown_fields
+    422；转发上游时只带声明字段（Runtime 侧 extra=forbid 仍兜底）。
+    """
+
+    objective: str = Field(min_length=1, max_length=500)
+    dimensions: str = Field(default="", max_length=600)
+    data_range: str = Field(default="", max_length=200)
+    time_range: str = Field(default="", max_length=200)
+    delivery_format: str = Field(default="", max_length=120)
+    questions: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
+    budget: dict[str, Any] = Field(default_factory=dict)
+    parent_task_id: str = Field(default="", max_length=64)
+
+    model_config = {"extra": "allow"}
+
+
+@router.post("/research/tasks")
+async def nexus_research_task_create(
+    payload: NexusResearchTaskCreate,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F7：研究任务创建代理（只建任务、不执行；归属由 Runtime 登记）。"""
+    _reject_unknown_fields(NexusResearchTaskCreate, payload.model_dump())
+    return await _proxy_json(
+        request, current_user, "POST",
+        "/api/v1/nexus/research-tasks",
+        body={
+            "objective": payload.objective,
+            "dimensions": payload.dimensions,
+            "data_range": payload.data_range,
+            "time_range": payload.time_range,
+            "delivery_format": payload.delivery_format,
+            "questions": [item for item in (payload.questions or [])
+                          if isinstance(item, dict)][:12],
+            "budget": dict(payload.budget or {}),
+            "parent_task_id": payload.parent_task_id,
+        },
+    )
+
+
+@router.get("/research/tasks")
+async def nexus_research_task_list(
+    request: Request,
+    session_id: str = "",
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F7：研究任务列表代理（本人；中断恢复查看入口）。"""
+    from urllib.parse import quote as _quote
+
+    suffix = f"?session_id={_quote(session_id[:128], safe='')}" if session_id else ""
+    return await _proxy_json(
+        request, current_user, "GET",
+        f"/api/v1/nexus/research-tasks{suffix}",
+    )
+
+
+@router.get("/research/tasks/{task_id}")
+async def nexus_research_task_get(
+    task_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F7：研究任务详情代理（本人；含预算余量＋交付核对）。"""
+    return await _proxy_json(
+        request, current_user, "GET",
+        f"/api/v1/nexus/research-tasks/{task_id.strip()[:64]}",
+    )
+
+
+@router.post("/research/tasks/{task_id}/cancel")
+async def nexus_research_task_cancel(
+    task_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F7：研究任务取消代理（置旗即停；已保存材料保留）。"""
+    return await _proxy_json(
+        request, current_user, "POST",
+        f"/api/v1/nexus/research-tasks/{task_id.strip()[:64]}/cancel",
+    )
+
+
+class NexusCompareCreate(BaseModel):
+    """F8 受控对照创建代理体：对照说明＋两组冻结配方引用。
+
+    extra=allow：容忍签名键 time/enc；未声明字段由 _reject_unknown_fields
+    422；转发上游时只带声明字段（Runtime 侧 extra=forbid 仍兜底）。
+    """
+
+    objective: str = Field(min_length=1, max_length=500)
+    common: dict[str, Any] = Field(default_factory=dict)
+    allowed_varied: list[str] = Field(default_factory=list, max_length=16)
+    arms: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+    approval_ref: str = Field(default="", max_length=64)
+
+    model_config = {"extra": "allow"}
+
+
+class NexusCompareLink(BaseModel):
+    """F8 对照组关联运行代理体：只关联终态运行。"""
+
+    arm_name: str = Field(min_length=1, max_length=64)
+    run_id: str = Field(min_length=1, max_length=64)
+
+    model_config = {"extra": "allow"}
+
+
+@router.post("/compares")
+async def nexus_compare_create(
+    payload: NexusCompareCreate,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F8：受控对照创建代理（只建对照、不执行；归属由 Runtime 登记）。"""
+    _reject_unknown_fields(NexusCompareCreate, payload.model_dump())
+    return await _proxy_json(
+        request, current_user, "POST",
+        "/api/v1/nexus/compares",
+        body={
+            "objective": payload.objective,
+            "common": dict(payload.common or {}),
+            "allowed_varied": [str(item) for item in (payload.allowed_varied or [])][:16],
+            "arms": [item for item in (payload.arms or [])
+                     if isinstance(item, dict)][:8],
+            "approval_ref": payload.approval_ref,
+        },
+    )
+
+
+@router.get("/compares")
+async def nexus_compare_list(
+    request: Request,
+    session_id: str = "",
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F8：受控对照列表代理（本人；中断恢复查看入口）。"""
+    from urllib.parse import quote as _quote
+
+    suffix = f"?session_id={_quote(session_id[:128], safe='')}" if session_id else ""
+    return await _proxy_json(
+        request, current_user, "GET",
+        f"/api/v1/nexus/compares{suffix}",
+    )
+
+
+@router.get("/compares/{compare_id}")
+async def nexus_compare_get(
+    compare_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F8：受控对照详情代理（本人；含并列报告）。"""
+    return await _proxy_json(
+        request, current_user, "GET",
+        f"/api/v1/nexus/compares/{compare_id.strip()[:64]}",
+    )
+
+
+@router.post("/compares/{compare_id}/cancel")
+async def nexus_compare_cancel(
+    compare_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F8：受控对照取消代理（置终态；已关联结果保留）。"""
+    return await _proxy_json(
+        request, current_user, "POST",
+        f"/api/v1/nexus/compares/{compare_id.strip()[:64]}/cancel",
+    )
+
+
+@router.post("/compares/{compare_id}/link-run")
+async def nexus_compare_link_run(
+    compare_id: str,
+    payload: NexusCompareLink,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """F8：对照组关联运行代理（只关联终态；配方不一致即拒绝）。"""
+    _reject_unknown_fields(NexusCompareLink, payload.model_dump())
+    return await _proxy_json(
+        request, current_user, "POST",
+        f"/api/v1/nexus/compares/{compare_id.strip()[:64]}/link-run",
+        body={"arm_name": payload.arm_name, "run_id": payload.run_id},
     )
 
 

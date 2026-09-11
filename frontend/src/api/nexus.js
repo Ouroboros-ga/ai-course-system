@@ -355,6 +355,162 @@ export function cancelNexusRunOperation(runId, operationId) {
 }
 
 /**
+ * 文档作业创建（F6）：一份冻结内容，多格式正式输出。
+ * 不要求先有实验 run（Ask 下可用）；同幂等键同内容去重。
+ */
+export function createNexusDocumentJob(payload) {
+  return request.post('/nexus/documents/jobs', {
+    source_kind: payload?.source_kind || 'markdown',
+    run_id: payload?.run_id || '',
+    artifact_id: payload?.artifact_id || '',
+    markdown: payload?.markdown || '',
+    title: payload?.title || '',
+    template: payload?.template || 'tech_doc',
+    formats: payload?.formats || ['markdown', 'word', 'latex'],
+    idempotency_key: payload?.idempotency_key || '',
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 文档作业查询（F6）：本人；含每格式独立状态/引擎/产物。
+ */
+export function getNexusDocumentJob(jobId) {
+  return request.get(`/nexus/documents/jobs/${encodeURIComponent(jobId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 文档作业取消（F6）：仅非终态有效。
+ */
+export function cancelNexusDocumentJob(jobId) {
+  return request.post(`/nexus/documents/jobs/${encodeURIComponent(jobId)}/cancel`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 文档作业重试（F6）：只跑失败格式；成功格式保留不重写。
+ */
+export function retryNexusDocumentJob(jobId) {
+  return request.post(`/nexus/documents/jobs/${encodeURIComponent(jobId)}/retry`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 研究任务创建（F7）：Brief＋子问题＋预算；只建任务、不执行。
+ */
+export function createNexusResearchTask(payload) {
+  return request.post('/nexus/research/tasks', {
+    objective: payload?.objective || '',
+    dimensions: payload?.dimensions || '',
+    data_range: payload?.data_range || '',
+    time_range: payload?.time_range || '',
+    delivery_format: payload?.delivery_format || '',
+    questions: payload?.questions || [],
+    budget: payload?.budget || {},
+    parent_task_id: payload?.parent_task_id || '',
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 研究任务列表（F7）：本人；中断恢复查看入口。
+ */
+export function listNexusResearchTasks(sessionId) {
+  const params = {}
+  if (sessionId) params.session_id = sessionId
+  return request.get('/nexus/research/tasks', {
+    params,
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 研究任务详情（F7）：含预算余量＋交付核对。
+ */
+export function getNexusResearchTask(taskId) {
+  return request.get(`/nexus/research/tasks/${encodeURIComponent(taskId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 研究任务取消（F7）：置旗即停；已保存材料保留。
+ */
+export function cancelNexusResearchTask(taskId) {
+  return request.post(`/nexus/research/tasks/${encodeURIComponent(taskId)}/cancel`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 受控对照创建（F8）：对照说明＋两组冻结配方引用；只建对照、不执行。
+ */
+export function createNexusCompare(payload) {
+  return request.post('/nexus/compares', {
+    objective: payload?.objective || '',
+    common: payload?.common || {},
+    allowed_varied: payload?.allowed_varied || [],
+    arms: payload?.arms || [],
+    approval_ref: payload?.approval_ref || '',
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 受控对照列表（F8）：本人；中断恢复查看入口。
+ */
+export function listNexusCompares(sessionId) {
+  const params = {}
+  if (sessionId) params.session_id = sessionId
+  return request.get('/nexus/compares', {
+    params,
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 受控对照详情（F8）：含并列报告。
+ */
+export function getNexusCompare(compareId) {
+  return request.get(`/nexus/compares/${encodeURIComponent(compareId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 受控对照取消（F8）：置终态；已关联结果保留。
+ */
+export function cancelNexusCompare(compareId) {
+  return request.post(`/nexus/compares/${encodeURIComponent(compareId)}/cancel`, {}, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
+ * 对照组关联运行（F8）：只关联终态；配方不一致即拒绝。
+ */
+export function linkNexusCompareRun(compareId, armName, runId) {
+  return request.post(`/nexus/compares/${encodeURIComponent(compareId)}/link-run`, {
+    arm_name: armName,
+    run_id: runId,
+  }, {
+    allowFlatResponse: true,
+  })
+}
+
+/**
  * 追加运行备注（NX-LB5）：requestId 幂等；content ≤4000 字符。
  */
 export function createNexusRunNote(runId, content, requestId = '') {
@@ -457,6 +613,9 @@ function parseSseFrames(buffer, onEvent) {
  * @param {number} [options.courseId]   绑定的课程 ID，接线预留（同上）
  * @param {string} [options.model]      模型 id（服务端 allowlist 内；缺省用默认模型）
  * @param {string[]} [options.attachmentIds] 本次对话引用的附件 id（≤5，服务端验主+绑定）
+ * @param {{run_id: string, step_id?: number|string} | null} [options.runRef]
+ *   本次对话锚定的运行（只传引用声明；后端验主＋验同会话后投影为 run_context，
+ *   伪造的 run_context 一律剥离；缺 run_id 即忽略，不阻断发送）
  * @param {(evt: {event: string, data: object}) => void} options.onEvent
  * @param {AbortSignal} [options.signal] 用于取消（组件卸载/用户中止）
  */
@@ -468,6 +627,7 @@ export async function streamNexusMessage({
   courseId = null,
   model = null,
   attachmentIds = [],
+  runRef = null,
   onEvent,
   signal,
 }) {
@@ -476,7 +636,17 @@ export async function streamNexusMessage({
   if (mode) body.mode = mode
   // T5 Ask/Auto：Research 显式发送本次 effective 值；General 不传。
   if (researchExecutionMode) body.research_execution_mode = researchExecutionMode
-  if (courseId != null) body.context = { course_id: courseId }
+  if (courseId != null || (runRef && runRef.run_id)) {
+    body.context = {}
+    if (courseId != null) body.context.course_id = courseId
+    // 运行引用声明：只传 id，详情一律由后端投影（防伪造）。
+    if (runRef && runRef.run_id) {
+      body.context.run_ref = { run_id: String(runRef.run_id).slice(0, 64) }
+      if (runRef.step_id !== undefined && runRef.step_id !== null && String(runRef.step_id).trim() !== '') {
+        body.context.run_ref.step_id = runRef.step_id
+      }
+    }
+  }
   // 模型网关 P0：服务端 allowlist 校验，清单外直接 400（见 NexusPage 模型下拉）。
   if (model) body.model = model
   // NX-A1：附件引用（服务端验主＋绑定会话后才透传给 Runtime）。

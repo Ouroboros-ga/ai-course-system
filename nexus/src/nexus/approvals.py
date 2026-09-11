@@ -135,6 +135,33 @@ def _is_expired(row: dict[str, Any], now: float | None = None) -> bool:
     return (now if now is not None else _now()) >= float(row["expires_at"])
 
 
+def find_pending_approval(
+    *, user_id: str, session_id: str, tool: str, plan_hash: str,
+) -> dict[str, Any] | None:
+    """找同方案未过期待批审批（对话确认不再建重复卡）。
+
+    匹配键：同用户＋同会话＋同工具＋同 plan_hash＋pending＋未过期。
+    命中即复用（调用方标 deduped），未命中返回 None 由调用方新建。
+    跨用户不可见（list_approvals 本就按用户过滤）；过期不复活。
+    """
+    wanted_tool = (tool or "").strip()
+    wanted_hash = (plan_hash or "").strip()
+    if not wanted_tool or not wanted_hash:
+        return None
+    now = _now()
+    for approval in list_approvals(
+            user_id=user_id or "", status="pending",
+            session_id=session_id or ""):
+        if str(approval.get("tool") or "") != wanted_tool:
+            continue
+        if str(approval.get("plan_hash") or "") != wanted_hash:
+            continue
+        if _is_expired(approval, now):
+            continue
+        return approval
+    return None
+
+
 def _pg_settings() -> tuple[str, str] | None:
     """PG 可用返回 (dsn, schema)，否则 None（调用方走内存）。"""
     from nexus.config import get_settings

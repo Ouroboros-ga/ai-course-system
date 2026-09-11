@@ -248,8 +248,10 @@ async def test_generate_writes_artifacts_then_recycles(monkeypatch):
     result = await report_module.generate_run_report(
         run_id=run["run_id"], user_id="u-t6", backend=_FakeBackend())
     assert result["content_version"] == "experiment-report/1"
-    assert len(result["artifacts"]) == 2
-    assert [c[0] for c in calls] == ["write", "write", "cancel"]
+    # F5：报告 2 Markdown＋冻结配方/补丁 2 JSON（产物先落盘后回收）。
+    assert len(result["artifacts"]) == 4
+    assert result["recipe_hash"] == runs_module.get_run(run["run_id"])["recipe_hash"]
+    assert [c[0] for c in calls] == ["write", "write", "write", "write", "cancel"]
     # 写入失败 → 不回收，调用方得 502 语义（此处抛 ReportError）。
     async def _failing_write(**kwargs):
         calls.append(("write-fail",))
@@ -316,7 +318,7 @@ async def test_report_http_endpoint(monkeypatch):
         body = ok_resp.json()
         assert body["execution_succeeded"] is True
         assert body["metric_verdict"] == "not_evaluated"
-        assert len(body["artifacts"]) == 2
+        assert len(body["artifacts"]) == 4
         assert body["content_version"] == "experiment-report/1"
         # 跨用户 → 404（不区分不存在/他人）。
         cross = await client.post(

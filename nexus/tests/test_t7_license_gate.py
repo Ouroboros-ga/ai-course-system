@@ -203,7 +203,8 @@ async def test_verified_proposal_executes_and_report_uses_persisted_license(monk
     out = await report_module.generate_run_report(
         run_id=aid, user_id="u-t7", backend=None)
     assert out["execution_succeeded"] is True
-    assert len(out["artifacts"]) == 2
+    # F5：报告 2 Markdown＋冻结配方/补丁 2 JSON。
+    assert len(out["artifacts"]) == 4
     assert run is not None
     # 报告 Markdown 含已核验 MIT（非"未知"占位）。
     full = report_module.build_experiment_report(

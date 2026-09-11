@@ -91,13 +91,15 @@ async def test_mode_tool_surfaces(monkeypatch: pytest.MonkeyPatch):
     research = build_agent(mode="research", execution_mode="auto")
     general = build_agent(mode="general")
     product = {t.name for t in NEXUS_TOOLS}
-    assert set(_registry(research)) == {"read_file", "write_todos"} | product
+    # F7：research 面另有 `task`（仅调只读 researcher；General 无）。
+    assert set(_registry(research)) == {"read_file", "write_todos", "task"} | product
     # General 含课程/CS 检索、产物写入与附件读取（普通模式 → 检索 + 资料 +
     # Artifact），仅排除 research-only 五工具；write_todos 提示词约束使用
     # 频率（简单 General 不强制建计划），工具本身两模式同置。
     assert set(_registry(general)) == {
         "read_file", "write_todos", "web_search", "search_course_materials",
-        "search_cs_knowledge", "write_artifact", "read_attachment",
+        "search_cs_knowledge", "write_artifact", "create_document_output",
+        "read_attachment",
     }
     # 模型可见面同执行器注册表（research-only 工具结构性不绑定）。
     await general.ainvoke(
