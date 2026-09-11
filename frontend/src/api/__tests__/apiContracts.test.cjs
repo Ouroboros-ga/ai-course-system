@@ -1640,3 +1640,13 @@ test('对话确认不再建重复卡：同方案待批审批直接复用', () =>
   assert.match(tool, /"deduped": True/)
   assert.match(tool, /"deduped": False/)
 })
+test('引用 ID 种类对齐：文本引用带 run_id，工具侧 job 号可反查（归属不变）', () => {
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_internal.py')
+  // 前端：引用文本同时带业务 run_id 与 job 号；缺 run_id 回退旧形状。
+  assert.match(page, /run_id \$\{run\.run_id\} · job \$\{run\.job_id\}/)
+  assert.match(page, /run_id \$\{runId\}/)
+  // 后端：run_id miss 且仅 404 时才按归属反查 job，跨用户仍 404，会话绑定不变。
+  assert.match(backend, /get_run_by_job/)
+  assert.match(backend, /status\.HTTP_404_NOT_FOUND/)
+})

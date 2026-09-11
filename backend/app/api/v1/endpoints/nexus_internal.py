@@ -614,10 +614,24 @@ async def nexus_internal_run_status(
     只读，不触发任何执行。
     """
     from app.api.v1.endpoints.nexus_proxy import _build_run_context
+    from app.services import nexus_run_service
 
     _require_service_token(authorization)
     user_id = str(_require_user_identity(x_nexus_user_id))
-    run = _internal_run_scope(session, user_id, run_id, x_nexus_session_id)
+    clean_id = (run_id or "").strip()[:64]
+    try:
+        run = _internal_run_scope(session, user_id, clean_id, x_nexus_session_id)
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+        # job 号兼容：引用文本里带的是 Worker job_id 时，按归属反查业务 run；
+        # 跨用户不可见（miss 仍 404 不区分），归属＋会话绑定与 run_id 路径一致。
+        linked = nexus_run_service.get_run_by_job(
+            session, user_id=user_id, job_id=clean_id)
+        if linked is None:
+            raise
+        run = _internal_run_scope(
+            session, user_id, str(linked.get("run_id") or ""), x_nexus_session_id)
     context = await _build_run_context(
         session, {"user_id": user_id}, run["session_id"],
         {"run_id": run["run_id"], **({"step_id": step_id} if step_id is not None else {})},

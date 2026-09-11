@@ -66,6 +66,7 @@ from app.domain.oj.judging.providers.judge0 import (
     sandbox_client,
 )
 from app.domain.oj.judging.verdicts import reason_for_status
+from app.domain.oj.problems.metadata import normalize_difficulty, normalize_tags
 from app.services.learning_evidence_context_service import upsert_learning_evidence_context
 from app.domain.learning.evidence import EvidenceType
 
@@ -96,6 +97,47 @@ def _require_formal_experiment_capabilities(session: Session, *, course_id: int)
 
 
 # ---------------------------------------------------------------------------
+# PR-09：题目元数据（难度 / 标签）的服务层适配
+# ---------------------------------------------------------------------------
+#
+# 规则本身在 `domain/oj/problems/metadata.py`（域层：合法取值是什么、怎么规范化）。
+# 这里只做两件域层不该管的事：
+#
+# 1. **把 `ValueError` 翻成 `reject_validation_failed`** —— 域层不 import
+#    `app.core.exceptions`（与 `domain/oj` 其余部分的边界一致），所以"抛什么
+#    异常"是调用方的责任。翻译放在单点，避免每个调用处各写一份 try。
+# 2. **决定"什么时候校验"** —— create 恒校验（没填也会规范化成默认值），
+#    update 是 PATCH 语义：`None` 表示"别动这一列"，空 list 表示"清空标签"。
+#    这个区分是业务策略，域层看不到，因此留在 service。
+
+
+def _validated_difficulty(value: Optional[str]) -> str:
+    """规范化难度；非法取值转成 422 而不是 500。
+
+    `normalize_difficulty` 对非法值**抛错不兜底**是刻意的（见其 docstring）：
+    教师显式填错必须让他知道。这里只负责把异常翻译成 API 层的校验失败。
+    """
+    try:
+        return normalize_difficulty(value)
+    except ValueError as exc:
+        reject_validation_failed(str(exc))
+        raise  # 不可达：reject_validation_failed 必定抛 HTTPException。仅为类型收敛。
+
+
+def _validated_tags(values: Optional[list[str]]) -> list[str]:
+    """规范化标签；空 `None` → 空列表（"没填"），非法则 422。
+
+    注意 `None` 与 `[]` 在这里**同义**（都得到 `[]`）—— 需要区分二者的是
+    `update_definition` 的调用点，那里已在 `if tags is not None` 处判过。
+    """
+    try:
+        return normalize_tags(values)
+    except ValueError as exc:
+        reject_validation_failed(str(exc))
+        raise
+
+
+# ---------------------------------------------------------------------------
 # 实验定义服务
 # ---------------------------------------------------------------------------
 
@@ -112,6 +154,8 @@ class ExperimentDefinitionService:
         description: str = "",
         language_whitelist: Optional[list[str]] = None,
         knowledge_node_ids: Optional[list[int]] = None,
+        difficulty: Optional[str] = None,
+        tags: Optional[list[str]] = None,
         max_attempts: int = 3,
         cooldown_minutes: int = 30,
         created_by: int,
@@ -128,6 +172,8 @@ class ExperimentDefinitionService:
             description=description,
             language_whitelist=whitelist,
             knowledge_node_ids=list(knowledge_node_ids or []),
+            difficulty=_validated_difficulty(difficulty),
+            tags=_validated_tags(tags),
             max_attempts=max_attempts,
             cooldown_minutes=cooldown_minutes,
             publish_status=ExperimentPublishStatus.DRAFT,
@@ -179,6 +225,8 @@ class ExperimentDefinitionService:
         title: Optional[str] = None,
         description: Optional[str] = None,
         language_whitelist: Optional[list[str]] = None,
+        difficulty: Optional[str] = None,
+        tags: Optional[list[str]] = None,
         max_attempts: Optional[int] = None,
         cooldown_minutes: Optional[int] = None,
     ) -> ExperimentDefinition:
@@ -192,6 +240,10 @@ class ExperimentDefinitionService:
             definition.title = title
         if description is not None:
             definition.description = description
+        if difficulty is not None:
+            definition.difficulty = _validated_difficulty(difficulty)
+        if tags is not None:
+            definition.tags = _validated_tags(tags)
         if max_attempts is not None:
             definition.max_attempts = max_attempts
         if cooldown_minutes is not None:

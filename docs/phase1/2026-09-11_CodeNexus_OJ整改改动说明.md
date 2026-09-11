@@ -451,3 +451,255 @@ pytest tests/test_oj_run_semantics.py tests/test_experiments.py \
 - 未碰 `experiment_service.py` 中他线（学生工作台）的在途代码；
 - 未动 `judge0.py` 的 10 条搬家前既有 ruff 告警（BLE001×2、F401、I001、PIE790 等）。
   这批告警与 `reason` 语义无关，**等有理由改该文件时一起清**，不为凑 lint 分数批量动它。
+
+## 8. PR-06 实施记录：intelligence 判定规则归位域层
+
+### 8.1 方案里的一个空洞
+
+落地方案 §6 的目录树只写了 `domain/oj/intelligence/`，**没定义它包含哪些文件、
+搬什么、留什么**。所以本轮第一步不是写代码，是**把成员量出来**。
+
+实测三块「intelligence」的真实位置：
+
+| 概念 | 实际位置 | 规模 |
+|---|---|---|
+| **diagnosis** | `services/coding_eduagent_service.py`（`_classify` / `CodingEduAgent`）+ `experiment_service.py:788 _ensure_coding_diagnosis` | 159 行 |
+| **hint** | `experiment_service.py:2153-2241 CodingHintService` | ~90 行 |
+| **explanation** | `services/coding_eduagent_service.py:120 build_rule_explanation` + `endpoints/experiments.py:1108` | ~50 行 |
+
+方案里 PR-06 的前置写的是 **PR-04**（拆 `experiment_service.py`）—— 而 PR-04 正卡在他线在途代码上。
+
+### 8.2 为什么本轮能先做：找到了不被阻塞的切口
+
+三块里**只有 `hint` 在 `experiment_service.py` 内**。`diagnosis` + `explanation`
+都在 `coding_eduagent_service.py`，该文件：
+
+- `git status` 干净（**无他线改动**）；
+- 有 3 个测试文件覆盖（`test_coding_eduagent_integration` / `test_coding_challenges` /
+  `test_p1_fix2_fix3_run_id_flow`）。
+
+所以 **PR-06 拆成两半**：本轮做 `diagnosis` + `explanation`（不被阻塞），
+`hint`（`CodingHintService`）留到 PR-04 之后。这比「等 PR-04」或「硬拆 `experiment_service.py`」都更稳。
+
+### 8.3 关键设计决定：搬语义，不搬 CRUD
+
+**发现**：`domain/` 下既有 5 个模块（`learning` / `safety` / `student_memory` /
+`knowledge_bundle` / `education_graph`）**对本约束零违反** ——
+
+```bash
+grep -rn "^from app\.models\|^from app\.services" backend/app/domain --include=*.py
+# → 零命中
+```
+
+即本仓域层的实际惯例是：**域层定义「规则是什么」，服务层决定「何时读写数据库」**。
+`domain/learning` 装的是枚举、值对象、聚合规则、映射器，**没有一张 SQLModel 表**。
+
+**但**：`AGENTS.md:65` 只写「`backend/app/domain/`:领域逻辑(...)」，**没有明文禁止**
+域层 import models。所以那条「零命中」是**实际惯例**，不是**成文规则** ——
+这个区分很重要，我据此做的判断是**遵循惯例**而不是「违反成文规定」。
+
+**做法**：
+
+- `domain/oj/intelligence/rules.py` —— 纯函数 + `DiagnosisInput` 数据类。
+  输入是与 ORM 解耦的归一化结构（字段是 `str` / `tuple[str, ...]`），
+  域层因此**不必知道 SQLModel 的存在**。
+- `services/coding_eduagent_service.py` —— 保留查库、`_diagnosis_input()`
+  （ORM → 域输入适配）、持久化。
+
+**收益**（已被测试证实）：域规则可脱离 session 直接调用与测试。
+
+### 8.4 一处我主动留在 service 的逻辑
+
+`_artifact_texts()` 筛选 `stderr` / `compile` 两类 artifact —— 这**留在 service**，
+没搬进域。
+
+理由：「哪类 artifact 算判定证据」是**业务侧的决定**，会随产品策略变；
+而「拿到文本后怎么归类错误」是**领域规则**，相对稳定。把易变的策略混进域层，
+域就会跟着业务需求频繁改动，失去「可脱离数据库独立测试」的价值。
+
+### 8.5 characterization 测试当场纠正了我的一个错误假设
+
+写测试时我断言「`_debug_steps` 所有分支都返回 3 条」。**跑出来是红的** ——
+
+```
+syntax       len=3
+...
+none         len=2   ← 只有 2 条
+```
+
+`none`（accepted）分支**只有 2 条**：通过时不需要修错指引。这是**有意的不对称**。
+
+我改成显式断言 `test_none_branch_has_only_two_steps`，并写下：
+
+> 这条断言的存在就是为了拦住后来者对称化这个不对称。
+
+**这正是 characterization 测试的价值**：它把「我以为的行为」和「实际的行为」
+当场分开。如果我直接搬迁、不写基线，这个 2 条会被我在「整理代码」时顺手补成 3 条，
+而且没有任何测试能发现。
+
+### 8.6 顺带修掉 5 个文件的 UTF-8 BOM
+
+写域边界门禁时 `ast.parse` 直接抛错：
+
+```
+SyntaxError: invalid non-printable character U+FEFF
+```
+
+排查发现 `domain/oj/` 下 **5 个文件带 BOM**（`__init__.py`×2、`judging/verdicts.py`、
+`submissions/__init__.py`、`submissions/run_types.py`）—— **都是我在 PR-01/02 建的**。
+
+**危害**：Python 解释器**容忍** BOM，所以 import 正常、测试能过；但 `ast.parse`
+**不容忍**。任何依赖 AST 的工具（静态分析、代码生成、本门禁）都会踩。
+这是**工具链地雷**，不是风格问题 —— 平时完全静默，踩到才炸。
+
+修法：`read_bytes()[:3] == b"\xef\xbb\xbf"` 判断后剥掉。核验结果是每个文件
+**正好少 3 字节**，内容零改动。
+
+同时新增 `test_no_utf8_bom_in_domain_modules` 防回归。
+
+### 8.7 新增的域边界门禁（`test_oj_domain_boundaries.py`）
+
+这是本轮最有长期价值的一条。`domain/oj/` 是新建目录且正在快速长大
+（PR-07/11/14/15 还要往里加 Activity / Scoreboard / Analytics），
+没有门禁时「顺手在域里查一下库」是最容易被接受的坏改动。
+
+守四件事：
+
+| 断言 | 拦住什么 |
+|---|---|
+| 整域禁 `app.models` / `app.services`（含 `providers/`） | 域层反向依赖业务层 |
+| ORM / 传输库仅限 `providers/` 内 | 把 SQL 或 HTTP 散进域层 |
+| `test_the_guard_actually_scans_something` | **门禁自己静默失效**（路径写错 → 永远绿） |
+| 不引入 `backend/app/modules/` | ADR-0001 决定 2 放弃的第三套目录约定 |
+
+第二条特意为 `providers/` 开了豁免：ADR-0001 决定 3 说 Judge0 HTTP 出口收拢于此，
+它需要 `httpx`，但**仍不许** import `app.models` / `app.services` —— 两条禁令范围不同。
+
+### 8.8 验证
+
+```bash
+pytest tests/test_oj_domain_boundaries.py tests/test_oj_intelligence_characterization.py \
+       tests/test_oj_run_semantics.py tests/test_oj_judging_provider_layout.py \
+       -q -p no:cacheprovider
+```
+
+**结果：125 passed / 0 failed / 0 errors**（5 分 20 秒）。
+
+| 检查 | 结果 |
+|---|---|
+| 相关回归（4 文件，含既有集成测试） | 85 passed（1 个 `tmp_path` 环境 error，`--basetemp` 复跑 3 passed） |
+| `ruff check`（本轮新增/改动文件） | All checks passed |
+| BOM 移除核验 | 5 文件各少 3 字节，内容零改动 |
+| 域规则脱离 session 可调用 | 已断言（`test_classify_runs_without_any_session`） |
+
+### 8.9 边界与下一步
+
+- **未碰** `experiment_service.py`（他线 212 行在途代码仍在）；
+- `CodingHintService`（`experiment_service.py:2153-2241`）**留待 PR-04 之后** ——
+  它是 PR-06 剩下的一半；
+- `coding_eduagent_service.py` 的 `I001`（`experiment_model` 两行同名 import）
+  是**改动前既有**问题，按「既有文件最小编辑」未在本轮触碰。
+
+---
+
+## 9. PR-09 实施记录：题目元数据（`difficulty` / `tags`）
+
+### 9.1 为什么这个 PR 能先做
+
+PR-03/04/06b 全部卡在同一条他线（学生工作台 F3-B）未提交的 212 行上，
+而 **PR-09 的前置只有 PR-02**（已提交）。它新增的是两列 + 一个域模块，
+**与 `experiment_service.py` 那批冲突代码没有交集需求**，因此可以在他线在途时推进。
+
+具体做法：**服务层只做「最小追加」**，不重排既有代码 —— 这样提交时
+`git apply --cached --recount` 能按 `@@` 边界精确切出我的 hunk，
+不需要理解他线的 212 行在改什么。
+
+### 9.2 方案里漏掉的一个决定：难度到底有几档
+
+方案原文只说「补 `difficulty` 列」，**没定义取值域**。而仓库里现存的先例是**互相打架**的：
+
+| 出处 | 取值 |
+|---|---|
+| `models/question_bank_model.py:35 QuestionDifficulty` | `easy` / `medium` / `hard` |
+| `api/v1/endpoints/knowledge.py` | 整数 `1`–`5` |
+| `services/question_generation_llm.py:258` | 三档，且**硬编码兜底 `"medium"`** |
+
+选了**三档字符串**，理由是 `QuestionDifficulty` 是**全仓唯一被持久化的**难度枚举，
+且出题流水线已经在用同一套值。若这里另立 1–5，将来「练习问答」与「OJ 编程题」
+在同一页按难度混排或统一筛选时，立刻要写一层转换表 —— 那是纯负债。
+
+**代价**：与 `knowledge.py` 的 1–5 口径不一致。这条不一致**不隐藏**，
+在 `metadata.py` 的 docstring 里写明了两者的冲突与取舍，
+并留了 `test_numeric_1_to_5_is_rejected` 把「本域不接受 1–5」钉住。
+
+### 9.3 一处刻意的不对称：非法值抛错，不兜底
+
+`question_generation_llm.py:258` 的策略是 `result.get("difficulty") or "medium"`
+—— **非法值静默兜底**。本域**故意反向**：
+
+| | 输入方 | 策略 | 理由 |
+|---|---|---|---|
+| `question_generation_llm` | **LLM 输出解析** | 非法 → `medium` | 模型偶尔给脏值是**预期内**的，兜底才保得住流水线 |
+| `domain/oj/problems` | **教师显式填写** | 非法 → **抛 `ValueError`** | 填错必须让他知道。静默兜底会产生「我明明写了 hard，怎么存成了 medium」这类**无法排查**的问题 |
+
+`None` 与空串**归默认值**（「没填」是合法输入），只有**填错**才抛。
+这条不对称在 `metadata.py` 的 docstring 与服务层 `_validated_difficulty` 的注释里各写了一遍，
+并留 `test_invalid_values_raise_not_fallback` 防「顺手改成兜底」。
+
+### 9.4 服务层适配：两件域层不该管的事
+
+规则在域层，但有两件事**必须留在 service**：
+
+1. **异常翻译**：域层不 import `app.core.exceptions`（与 `domain/oj` 其余部分的边界一致），
+   所以「抛什么异常」是调用方的责任。`_validated_difficulty` / `_validated_tags`
+   把 `ValueError` 翻成 `reject_validation_failed`（→ 422）。翻译**放在单点**，
+   避免每个调用处各写一份 `try`。
+2. **「什么时候校验」**：create 恒校验；update 是 **PATCH 语义** ——
+   `None` = 「别动这一列」，`[]` = 「清空标签」。这个区分是**业务策略**，域层看不到。
+
+第 2 条是本 PR 最容易写错的地方：若把 `None` 当成「设成默认值」，
+**教师改个标题就会把难度重置回 medium、标签被清空**。
+`test_omitted_fields_are_untouched` 专门守它，`test_empty_tags_clears_them` 守反面。
+
+### 9.5 为什么不用 PG 原生 enum
+
+`experiment_runs.outcome` 那个原生 enum 已经在 PR-01 制造过一次静默回填坑
+（见 PR-01 迁移的说明）。难度取值将来若要扩档（如加 `challenge`），
+原生 enum 需要 `ALTER TYPE` 且**不能在事务里回滚**。
+本题这种**描述性、非判定性**字段用「`String(16)` + 域层校验」更划算 ——
+与 PR-01 给 `run_state` / `run_type` 选 `String(32)` 是同一取向。
+
+`tags` 则与既有的 `knowledge_node_ids` 同构（`sa.JSON(), nullable=True`）。
+写成 `String` 会在 PG 上退化成「逗号拼接字符串」，届时筛标签只能 `LIKE '%x%'`，
+既无索引又会把 `db` 误匹配到 `dbms`。`test_uses_json_column_not_text_for_tags` 守住这条。
+
+### 9.6 回填：一个刻意的「不聪明」
+
+`difficulty` 带 `server_default='medium'`，**全部历史行一次性落到 medium**。
+这是**保守默认而非推导值**：仓库里没有任何信号能推断既有题目的难度
+（没有 pass 率统计、没有用时分布、没有人工标注）。
+按标题长度之类的代理指标猜一个「看起来更聪明」的值，一旦猜错会**污染题库筛选**，
+且事后**无法回溯哪些是猜的**。
+
+`tags` 回填为空。**迁移前插入的历史行**其 JSON 列是 SQL `NULL`（不是 `[]`），
+所以序列化层用 `list(d.tags or [])` 兜住 —— 前端不该为此多写一处判空。
+`test_historic_null_tags_serialize_as_empty_list` 直接构造该形态验证兜底生效。
+
+台账口径：`applied_rows` 记的是**加列前该表已有行数**，在 `add_column` **之前**取。
+放在之后数 `difficulty='medium'` 会把加列后新插入的行也算进来，数字随执行时机漂移。
+
+### 9.7 迁移 ↔ 域层的字面量重复，及其守卫
+
+迁移文件**刻意不 import 应用代码**（alembic 版本可能与应用版本错开部署），
+于是 `'medium'` 这个默认值在两边各写了一份。这属于必要的重复，
+但**必须有人看着** —— `TestMigrationContract::test_default_difficulty_literal_matches_domain`
+用 AST 读迁移里的 `_DEFAULT_DIFFICULTY` 与域层比对，只改一边时这里会红，
+而不是等线上题库筛选出现一批「难度对不上」的题才发现。
+
+同组还守 `down_revision` 指向（防开出第二个 head）与 BOM。
+
+### 9.8 原方案里的一处更正
+
+我此前在实施台账里把 PR-09 描述成「`difficulty` + `tags` + 迁移」，
+**漏了「选几档」本身就是个需要拍板的设计决定**，把它当成了纯粹的机械补列。
+实际上它是本 PR 最需要论证的部分（见 §9.2 / §9.3）。
