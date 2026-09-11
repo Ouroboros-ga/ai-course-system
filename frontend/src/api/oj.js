@@ -65,3 +65,8 @@ export const listOJStudentActivities = (courseId) =>
 
 export const getOJAnalytics = (courseId, trendDays = 30) =>
   request.get(`${courseBase(courseId)}/analytics/oj`, { params: { trend_days: trendDays } })
+
+// ── 教师评测记录（课程全量提交流水） ──
+
+export const listOJCourseSubmissions = (courseId, params = {}) =>
+  request.get(`${courseBase(courseId)}/submissions`, { params })

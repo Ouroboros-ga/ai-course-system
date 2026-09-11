@@ -109,6 +109,21 @@ export const shadowAppRoutes = [
                 name: 'app-oj-analytics',
                 component: () => import('./pages/oj/OJAnalyticsPage.vue'),
               },
+              {
+                path: 'teacher/problems',
+                name: 'app-oj-teacher-problems',
+                component: () => import('./pages/oj/OJTeacherProblemsPage.vue'),
+              },
+              {
+                path: 'teacher/activities',
+                name: 'app-oj-teacher-activities',
+                component: () => import('./pages/oj/OJTeacherActivitiesPage.vue'),
+              },
+              {
+                path: 'teacher/submissions',
+                name: 'app-oj-teacher-submissions',
+                component: () => import('./pages/oj/OJTeacherSubmissionsPage.vue'),
+              },
             ],
           },
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
@@ -371,3 +371,76 @@ async def get_oj_analytics(
         session, activity_ids=activity_ids
     )
     return unified_response(code=200, message="获取 OJ 学情聚合成功", data=summary)
+
+
+@activity_router.get("/course/{course_id}/submissions")
+async def list_course_submissions(
+    course_id: int,
+    experiment_id: Optional[str] = Query(default=None, max_length=64),
+    outcome: Optional[str] = Query(default=None, max_length=32),
+    limit: int = Query(default=100, ge=1, le=500),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师评测记录：课程内全部提交流水（含学生归属）。
+
+    与学生 façade 的 /submissions 分端点：教师视图带学生身份，
+    且走 experiment.configure（全班评测明细是教师资产）。
+    """
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    from app.models.user_model import User
+
+    stmt = select(ExperimentRun).where(ExperimentRun.course_id == course_id)
+    if experiment_id is not None:
+        # run 不直接挂 experiment —— 经 attempt 关联解析
+        stmt = stmt.join(  # type: ignore[arg-type]
+            ExperimentAttempt,
+            ExperimentAttempt.attempt_id == ExperimentRun.attempt_id,
+        ).where(ExperimentAttempt.experiment_id == experiment_id)
+    rows = list(session.exec(stmt.order_by(  # type: ignore[arg-type]
+        ExperimentRun.submitted_at.desc()  # type: ignore[attr-defined]
+    )).all())
+
+    wanted = outcome.strip().lower() if outcome else None
+    user_ids = {r.student_id for r in rows}
+    usernames: dict[int, str] = {}
+    if user_ids:
+        for u in session.exec(
+            select(User).where(User.id.in_(user_ids))  # type: ignore[attr-defined]
+        ).all():
+            usernames[u.id] = u.username or f"user-{u.id}"
+    attempt_ids = {r.attempt_id for r in rows}
+    exp_by_attempt: dict[str, str] = {}
+    if attempt_ids:
+        for a in session.exec(
+            select(ExperimentAttempt).where(
+                ExperimentAttempt.attempt_id.in_(attempt_ids)  # type: ignore[attr-defined]
+            )
+        ).all():
+            exp_by_attempt[a.attempt_id] = a.experiment_id
+
+    items = []
+    for r in rows:
+        outcome_value = str(getattr(r.outcome, "value", r.outcome) or "").lower()
+        if wanted and outcome_value != wanted:
+            continue
+        items.append({
+            "run_id": r.run_id,
+            "student_id": r.student_id,
+            "username": usernames.get(r.student_id, "—"),
+            "experiment_id": exp_by_attempt.get(r.attempt_id),
+            "language": r.language,
+            "outcome": outcome_value,
+            "run_state": r.run_state,
+            "score": r.score,
+            "passed_count": r.passed_count,
+            "total_count": r.total_count,
+            "cpu_time_ms": r.cpu_time_ms,
+            "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
+        })
+        if len(items) >= limit:
+            break
+    return unified_response(
+        code=200, message="获取评测记录成功",
+        data={"items": items, "total": len(items)},
+    )
