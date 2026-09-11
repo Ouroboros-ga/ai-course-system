@@ -18,7 +18,11 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlmodel import Session
+from sqlmodel import Session, select
+from app.models.experiment_model import (
+    ExperimentAttempt,
+    ExperimentRun,
+)
 
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
@@ -373,7 +377,7 @@ async def get_oj_analytics(
     return unified_response(code=200, message="获取 OJ 学情聚合成功", data=summary)
 
 
-@activity_router.get("/course/{course_id}/submissions")
+@activity_router.get("/course/{course_id}/teacher/submissions")
 async def list_course_submissions(
     course_id: int,
     experiment_id: Optional[str] = Query(default=None, max_length=64),

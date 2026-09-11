@@ -332,3 +332,69 @@ class TestMySubmissions:
             headers=_auth(student_user),
         )
         assert resp.status_code == 404, resp.text
+
+
+class TestSubmissionPathSplit:
+    def test_teacher_list_lives_on_teacher_path(self, client, session,
+                                                teacher_user, student_user,
+                                                course):
+        """教师全量流水在 /teacher/submissions；学生打该路径 403。"""
+        definition = _definition(session, course, teacher_user, title="分流题",
+                                 difficulty="easy", tags=[])
+        _run(session, course, student_user, definition, outcome="ACCEPTED")
+        _run(session, course, teacher_user, definition, outcome="ACCEPTED")
+
+        resp = client.get(
+            f"{EXPERIMENTS}/course/{course.id}/teacher/submissions",
+            headers=_auth(teacher_user),
+        )
+        assert resp.status_code == 200, resp.text
+        items = resp.json()["data"]["items"]
+        assert len(items) == 2
+        assert all("username" in i for i in items)
+
+        denied = client.get(
+            f"{EXPERIMENTS}/course/{course.id}/teacher/submissions",
+            headers=_auth(student_user),
+        )
+        assert denied.status_code == 403
+
+    def test_student_list_reachable_on_own_path(self, client, session,
+                                                teacher_user, student_user,
+                                                course):
+        """学生 /submissions 不再被教师路由遮蔽（路由冲突回归）。"""
+        definition = _definition(session, course, teacher_user, title="可达题",
+                                 difficulty="easy", tags=[])
+        _run(session, course, student_user, definition, outcome="ACCEPTED")
+
+        resp = client.get(
+            f"{EXPERIMENTS}/course/{course.id}/submissions",
+            headers=_auth(student_user),
+        )
+        assert resp.status_code == 200, resp.text
+        assert len(resp.json()["data"]["items"]) == 1
+
+
+def test_oj_router_paths_have_no_duplicates():
+    """三 OJ 路由 method+path 全局唯一（路由遮蔽回归：教师/学生曾经撞车）。"""
+    import collections
+
+    from app.api.v1.endpoints import (
+        experiment_activities,
+        experiment_student,
+        experiments,
+    )
+
+    seen = collections.Counter()
+    for module in (experiments, experiment_activities, experiment_student):
+        for router_name in ("experiment_router", "activity_router",
+                            "student_router"):
+            router = getattr(module, router_name, None)
+            if router is None:
+                continue
+            for route in router.routes:
+                methods = tuple(sorted(getattr(route, "methods", None) or ()))
+                if methods:
+                    seen[(methods, route.path)] += 1
+    dups = {key: count for key, count in seen.items() if count > 1}
+    assert not dups, f"duplicate OJ routes: {dups}"
