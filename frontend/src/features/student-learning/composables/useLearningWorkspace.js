@@ -4,7 +4,7 @@ import { askQuestion } from '@/api/chat.js'
 import { respondTeachingAgent } from '@/api/teaching_agent.js'
 import { getConversationHistory } from '@/api/teaching_agent.js'
 import { getPlayerInitData, savePlayerProgress } from '@/api/player.js'
-import { getLearningContext, recordLearningEvent, completeLearningAction } from '@/api/facade.js'
+import { getLearningContext, recordLearningEvent } from '@/api/facade.js'
 import { getCognitiveState } from '@/api/cognitive.js'
 import { getNodeDisplayState as resolveNodeDisplayState } from '@/features/student-learning/learningStatus.js'
 import { listNotes, createNote, updateNote, deleteNote } from '@/api/note.js'
@@ -82,7 +82,6 @@ export function useLearningWorkspace(courseId, options = {}) {
   const playbackRate = ref(1)
   const volume = ref(0.85)
   const isMuted = ref(false)
-  const captionsEnabled = ref(true)
   const outlineOpen = ref(true)
   const assistantOpen = ref(true)
   const notesOpen = ref(false)
@@ -423,7 +422,6 @@ export function useLearningWorkspace(courseId, options = {}) {
     playbackRate.value = clamp(Number(saved.playbackRate) || 1, 0.5, 2)
     volume.value = clamp(Number(saved.volume) || 0.85, 0, 1)
     isMuted.value = Boolean(saved.isMuted)
-    captionsEnabled.value = saved.captionsEnabled !== false
     outlineOpen.value = saved.outlineOpen !== false
     assistantOpen.value = saved.assistantOpen !== false
     notesOpen.value = Boolean(saved.notesOpen)
@@ -439,7 +437,6 @@ export function useLearningWorkspace(courseId, options = {}) {
         playbackRate: playbackRate.value,
         volume: volume.value,
         isMuted: isMuted.value,
-        captionsEnabled: captionsEnabled.value,
         outlineOpen: outlineOpen.value,
         assistantOpen: assistantOpen.value,
         notesOpen: notesOpen.value,
@@ -853,27 +850,6 @@ export function useLearningWorkspace(courseId, options = {}) {
     flushLearningEvents()
   }
 
-  async function completeCurrentNode() {
-    const node = currentNode.value
-    if (previewMode || !node?.outlineNodeId || !releaseId.value) return false
-    const idempotencyKey = `complete:${courseId}:${releaseId.value}:${node.outlineNodeId}`
-    try {
-      await completeLearningAction(courseId, {
-        release_id: releaseId.value,
-        outline_node_id: node.outlineNodeId,
-        idempotency_key: idempotencyKey,
-      })
-      if (!completedNodes.value.includes(node.id)) {
-        completedNodes.value = [...completedNodes.value, node.id]
-      }
-      await refreshLearningContext().catch(() => {})
-      return true
-    } catch {
-      saveState.value = 'error'
-      return false
-    }
-  }
-
   async function flushLearningEvents() {
     if (previewMode || !pendingLearningEvents.value.length) return true
     if (flushingLearningEvents) return flushingLearningEvents
@@ -914,7 +890,6 @@ export function useLearningWorkspace(courseId, options = {}) {
       playbackRate,
       volume,
       isMuted,
-      captionsEnabled,
       outlineOpen,
       assistantOpen,
       notesOpen,
@@ -962,13 +937,11 @@ export function useLearningWorkspace(courseId, options = {}) {
     pendingLearningEvents,
     queueLearningEvent,
     flushLearningEvents,
-    completeCurrentNode,
     progressPercent,
     isPlaying,
     playbackRate,
     volume,
     isMuted,
-    captionsEnabled,
     outlineOpen,
     assistantOpen,
     notesOpen,
