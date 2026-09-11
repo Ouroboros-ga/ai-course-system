@@ -269,7 +269,13 @@ const pendingRunRef = ref(null)
 function onAskSend(text) {
   // 引用边界：只带明确的 run ID / 步骤，不复制全量日志、不混其他会话
   const run = activeRun.value?.run
-  const ref = run ? `\n\n（引用：本次运行 ${run.job_id}· 第 ${run.currentStep ?? '—'} 步）` : ''
+  // 机读优先：业务 run_id（工具查询用）＋ job 号（工作台显示用）都带上；
+  // 无 run_id 时回退旧形状（仅 job 号，工具侧按 job 反查兜底）。
+  const ref = run
+    ? (run.run_id
+      ? `\n\n（引用：本次运行 run_id ${run.run_id} · job ${run.job_id}· 第 ${run.currentStep ?? '—'} 步）`
+      : `\n\n（引用：本次运行 ${run.job_id}· 第 ${run.currentStep ?? '—'} 步）`)
+    : ''
   draft.value = `${text}${ref}`
   pendingRunRef.value = run?.run_id ? { run_id: run.run_id, step_id: run.currentStep ?? null } : null
   setWorkspaceView('chat')
@@ -282,7 +288,10 @@ function analyzeRunResult(id) {
   const item = sessionRuns.value.find((r) => r.id === id)
   const run = item?.run
   const verdict = run?.verdict ? `判定 ${run.verdict}` : '结果'
-  draft.value = `请解释本次实验结果（${item?.name || '本次运行'} · ${verdict}），与预期有什么差异，下一步建议是什么？`
+  // 显示名解析不了 run_id：正文里把机器 ID 一并带上（工具可直接查询）；
+  // 无业务 run_id 时保持旧文案（工具侧按 job 反查兜底）。
+  const runId = run?.run_id || item?.runId || ''
+  draft.value = `请解释本次实验结果（${item?.name || '本次运行'} · ${verdict}${runId ? ` · run_id ${runId}` : ''}），与预期有什么差异，下一步建议是什么？`
   // 显示名解析不了 run_id（智能体只能查明确 ID）：把机器引用一并绑定，
   // 发送时随请求透传，后端验归属后投影，智能体即可查询核实再作答。
   pendingRunRef.value = (run?.run_id || item?.runId)

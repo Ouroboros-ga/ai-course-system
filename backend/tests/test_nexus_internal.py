@@ -203,3 +203,65 @@ def test_cs_knowledge_rejects_without_user(client, internal_configured):
         headers=AUTH,
     )
     assert response.status_code == 400
+
+
+def _record_linkage_run(session, run_id, user_id, session_id, job_id):
+    from app.services import nexus_run_service
+
+    return nexus_run_service.record_run(
+        session, run_id=run_id, user_id=user_id, session_id=session_id,
+        tool="run_reproduction", preset_id="nanogpt", job_id=job_id,
+        status="running")
+
+
+def _run_headers(uid, session_id):
+    return {**AUTH, "X-Nexus-User-Id": uid,
+            "X-Nexus-Session-Id": session_id}
+
+
+def test_internal_run_status_resolves_job_id(
+    client, session, internal_configured, student_user,
+):
+    """引用文本带 job 号时按归属反查业务 run（同一 run_id 结果一致）。"""
+    uid = str(student_user.id)
+    _record_linkage_run(session, "run-jobfb-1", uid, "s-jobfb", "job-jobfb-1")
+
+    by_run = client.get(
+        "/api/v1/nexus-internal/runs/run-jobfb-1/status",
+        headers=_run_headers(uid, "s-jobfb"))
+    assert by_run.status_code == 200
+    by_job = client.get(
+        "/api/v1/nexus-internal/runs/job-jobfb-1/status",
+        headers=_run_headers(uid, "s-jobfb"))
+    assert by_job.status_code == 200
+    assert by_job.json()["data"]["run_id"] == "run-jobfb-1"
+    assert by_job.json()["data"]["run_id"] == by_run.json()["data"]["run_id"]
+
+
+def test_internal_run_status_job_fallback_denies_foreign(
+    client, session, internal_configured, student_user, teacher_user,
+):
+    """他人 job 号反查同样 404，不区分不存在（不泄露存在性）。"""
+    uid = str(student_user.id)
+    _record_linkage_run(session, "run-jobfb-2", uid, "s-jobfb", "job-jobfb-2")
+    other = str(teacher_user.id)
+    response = client.get(
+        "/api/v1/nexus-internal/runs/job-jobfb-2/status",
+        headers=_run_headers(other, "s-jobfb"))
+    assert response.status_code == 404
+    missing = client.get(
+        "/api/v1/nexus-internal/runs/job-no-such/status",
+        headers=_run_headers(uid, "s-jobfb"))
+    assert missing.status_code == 404
+
+
+def test_internal_run_status_job_fallback_keeps_session_binding(
+    client, session, internal_configured, student_user,
+):
+    """job 反查命中后仍执行会话绑定：串会话 403。"""
+    uid = str(student_user.id)
+    _record_linkage_run(session, "run-jobfb-3", uid, "s-jobfb", "job-jobfb-3")
+    response = client.get(
+        "/api/v1/nexus-internal/runs/job-jobfb-3/status",
+        headers=_run_headers(uid, "s-other"))
+    assert response.status_code == 403
