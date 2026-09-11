@@ -62,9 +62,12 @@ provide('coursesContext', { openJoin, joinRefreshTick })
             </div>
         </div>
 
-        <router-view v-slot="{ Component, route }">
+        <router-view v-slot="{ Component }">
+            <!-- design.md §6.4：中间层 <router-view> 必须保持无 key。
+                 此处曾用 :key="route.path" 强制重挂载，导致 L2 标签切换时
+                 子页面被销毁重建（骨架屏重放 + 高度塌陷），表现为屏幕闪烁。 -->
             <Transition name="sfx-page" mode="out-in">
-                <component :is="Component" :key="route.path" />
+                <component :is="Component" />
             </Transition>
         </router-view>
 

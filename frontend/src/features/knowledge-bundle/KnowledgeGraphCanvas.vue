@@ -514,13 +514,8 @@ function draw() {
       context.lineWidth = active ? 5 : 4
       context.stroke()
     }
-    if (active) {
-      context.beginPath()
-      context.arc(x, y, radius + 9, 0, Math.PI * 2)
-      context.strokeStyle = 'rgba(242, 106, 33, .48)'
-      context.lineWidth = 4
-      context.stroke()
-    }
+    // 选中态只保留"橙色实心 + 白色描边 + 半径放大 + 加粗标签"作为唯一焦点，
+    // 不再额外绘制橙色扩散圈（避免与邻域连线抢视觉、也避免选中时出现多余光圈）
     context.fillStyle = active ? '#9A3412' : '#172033'
     context.font = `${active ? 700 : 550} ${active ? 13 : 12}px Inter, "HarmonyOS Sans SC", "PingFang SC", system-ui, sans-serif`
     context.textAlign = 'center'
