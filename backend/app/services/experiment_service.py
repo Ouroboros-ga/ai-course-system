@@ -59,12 +59,13 @@ from app.models.experiment_model import (
     SandboxExecutionLease,
 )
 from app.models.resource_model import LabRecord
-from app.services.sandbox_client import (
+from app.domain.oj.judging.providers.judge0 import (
     ALLOWED_LANGUAGES,
     SandboxResourceLimits,
     SubmissionStatus,
     sandbox_client,
 )
+from app.domain.oj.judging.verdicts import reason_for_status
 from app.services.learning_evidence_context_service import upsert_learning_evidence_context
 from app.domain.learning.evidence import EvidenceType
 
@@ -1040,18 +1041,13 @@ class ExperimentRunService:
         session.flush()
 
     def _outcome_to_reason(self, status: SubmissionStatus) -> str:
-        return {
-            SubmissionStatus.ACCEPTED: "passed",
-            SubmissionStatus.WRONG_ANSWER: "wrong_answer",
-            SubmissionStatus.TIME_LIMIT_EXCEEDED: "time_limit_exceeded",
-            SubmissionStatus.MEMORY_LIMIT_EXCEEDED: "memory_limit_exceeded",
-            SubmissionStatus.RUNTIME_ERROR: "runtime_error",
-            SubmissionStatus.COMPILATION_ERROR: "compilation_error",
-            SubmissionStatus.INTERNAL_ERROR: "internal_error",
-            SubmissionStatus.IN_QUEUE: "pending",
-            SubmissionStatus.PROCESSING: "pending",
-            SubmissionStatus.SANDBOX_UNAVAILABLE: "sandbox_unavailable",
-        }.get(status, "unknown")
+        """判定 → ``test_summary[].reason``。
+
+        映射表已搬到判题域（``domain/oj/judging/verdicts.py`` 的
+        ``REASON_BY_STATUS``）。这里保留薄封装，让调用点与既有行为不变；
+        词汇由域统一维护，可单独测试。
+        """
+        return reason_for_status(status)
 
     def get_run(
         self,

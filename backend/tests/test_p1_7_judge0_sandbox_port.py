@@ -38,7 +38,7 @@ class TestJudge0SandboxPortConstruction:
     """测试1: Judge0SandboxPort 构造与健康检查缓存"""
 
     def test_uses_default_sandbox_client_when_none_provided(self) -> None:
-        with patch("app.services.sandbox_client.sandbox_client") as mock_client:
+        with patch("app.domain.oj.judging.providers.judge0.sandbox_client") as mock_client:
             mock_client.health_check.return_value = True
             mock_client.enabled = True
             port = Judge0SandboxPort()
@@ -392,7 +392,7 @@ class TestBootstrapInjectsJudge0PortWithSessionFactory:
         mock_unhealthy_client.enabled = True
 
         with patch("app.platform.agents.bootstrap.settings") as mock_settings, \
-             patch("app.services.sandbox_client.sandbox_client", mock_unhealthy_client):
+             patch("app.domain.oj.judging.providers.judge0.sandbox_client", mock_unhealthy_client):
             mock_settings.TEACHING_AGENT_MODE = "enabled"
             mock_settings.DEMO_RETRIEVAL_MODE = "demo_compare"
             mock_settings.DEMO_RETRIEVAL_ENVIRONMENT = "test"

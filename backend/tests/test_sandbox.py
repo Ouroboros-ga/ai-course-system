@@ -32,7 +32,7 @@ from app.services.course_access_service import (
     establish_course_access_baseline,
     activate_student_membership,
 )
-from app.services.sandbox_client import (
+from app.domain.oj.judging.providers.judge0 import (
     SandboxClient,
     SandboxResourceLimits,
     SandboxResult,
@@ -139,7 +139,7 @@ class TestSandboxClient:
         assert limits.wall_time_limit == 10
         assert limits.enable_network is False  # 始终关闭网络
 
-    @patch("app.services.sandbox_client.httpx.Client")
+    @patch("app.domain.oj.judging.providers.judge0.httpx.Client")
     def test_submit_code_parses_accepted_result(self, mock_client_cls):
         """正确解析 Accepted 结果"""
         mock_response = MagicMock()
@@ -172,7 +172,7 @@ class TestSandboxClient:
         assert result.time == 0.01
         assert result.memory == 3328
 
-    @patch("app.services.sandbox_client.httpx.Client")
+    @patch("app.domain.oj.judging.providers.judge0.httpx.Client")
     def test_submit_code_parses_compilation_error(self, mock_client_cls):
         """正确解析编译错误"""
         import base64
@@ -207,7 +207,7 @@ class TestSandboxClient:
         assert result.is_error
         assert "syntax error" in result.compile_output
 
-    @patch("app.services.sandbox_client.httpx.Client")
+    @patch("app.domain.oj.judging.providers.judge0.httpx.Client")
     def test_submit_code_parses_time_limit(self, mock_client_cls):
         """正确解析超时"""
         mock_response = MagicMock()
@@ -238,7 +238,7 @@ class TestSandboxClient:
         assert result.is_timeout
         assert result.time == 5.0
 
-    @patch("app.services.sandbox_client.httpx.Client")
+    @patch("app.domain.oj.judging.providers.judge0.httpx.Client")
     def test_submit_code_parses_memory_exceeded(self, mock_client_cls):
         """正确解析内存超限"""
         mock_response = MagicMock()
@@ -268,7 +268,7 @@ class TestSandboxClient:
 
         assert result.is_memory_exceeded
 
-    @patch("app.services.sandbox_client.httpx.Client")
+    @patch("app.domain.oj.judging.providers.judge0.httpx.Client")
     def test_submit_code_connection_error_degrades(self, mock_client_cls):
         """连接失败时降级返回 SANDBOX_UNAVAILABLE"""
         import httpx
@@ -286,8 +286,8 @@ class TestSandboxClient:
         assert result.status == SubmissionStatus.SANDBOX_UNAVAILABLE
         assert "降级" in result.message
 
-    @patch("app.services.sandbox_client.time.sleep", return_value=None)
-    @patch("app.services.sandbox_client.httpx.Client")
+    @patch("app.domain.oj.judging.providers.judge0.time.sleep", return_value=None)
+    @patch("app.domain.oj.judging.providers.judge0.httpx.Client")
     def test_submit_code_enqueues_then_polls_worker(
         self, mock_client_cls, _mock_sleep,
     ):
@@ -327,7 +327,7 @@ class TestSandboxClient:
             "/submissions/worker-token"
         )
 
-    @patch("app.services.sandbox_client.httpx.Client")
+    @patch("app.domain.oj.judging.providers.judge0.httpx.Client")
     def test_network_always_disabled_in_payload(self, mock_client_cls):
         """提交请求中网络始终关闭"""
         mock_response = MagicMock()
@@ -378,7 +378,7 @@ class TestSandboxRecovery:
     def test_health_check_recovers_from_unavailable_to_available(self, monkeypatch):
         """health_check 由 False 恢复为 True。"""
         import httpx
-        from app.services import sandbox_client as sb_mod
+        from app.domain.oj.judging.providers import judge0 as sb_mod
 
         # 初始：Judge0 启用但服务不可达
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", True)
@@ -398,14 +398,14 @@ class TestSandboxRecovery:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.get.return_value = mock_response
 
-        with patch("app.services.sandbox_client.httpx.Client", return_value=mock_client):
+        with patch("app.domain.oj.judging.providers.judge0.httpx.Client", return_value=mock_client):
             # 恢复后 health_check 立即返回 True，无冷启动延迟
             assert client.health_check() is True
 
     def test_submit_code_recovers_after_transient_outage(self, monkeypatch):
         """沙箱短暂不可达期间返回 SANDBOX_UNAVAILABLE，恢复后重试返回 ACCEPTED。"""
         import httpx
-        from app.services import sandbox_client as sb_mod
+        from app.domain.oj.judging.providers import judge0 as sb_mod
 
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", True)
         client = SandboxClient(base_url="http://127.0.0.1:2358", authn_token="test")
@@ -417,7 +417,7 @@ class TestSandboxRecovery:
         mock_unavailable.__exit__ = MagicMock(return_value=False)
         mock_unavailable.post.side_effect = httpx.ConnectError("Connection refused")
 
-        with patch("app.services.sandbox_client.httpx.Client", return_value=mock_unavailable):
+        with patch("app.domain.oj.judging.providers.judge0.httpx.Client", return_value=mock_unavailable):
             result_down = client.submit_code("print('hello')", "python3")
             assert result_down.status == SubmissionStatus.SANDBOX_UNAVAILABLE
             assert "降级" in result_down.message
@@ -444,7 +444,7 @@ class TestSandboxRecovery:
         mock_recovered.__exit__ = MagicMock(return_value=False)
         mock_recovered.post.return_value = mock_response
 
-        with patch("app.services.sandbox_client.httpx.Client", return_value=mock_recovered):
+        with patch("app.domain.oj.judging.providers.judge0.httpx.Client", return_value=mock_recovered):
             result_up = client.submit_code("print('hello')", "python3")
             assert result_up.status == SubmissionStatus.ACCEPTED
             assert result_up.stdout == "hello"
@@ -453,7 +453,7 @@ class TestSandboxRecovery:
     def test_recovery_no_cold_start_delay_for_submit_code(self, monkeypatch):
         """沙箱恢复后 submit_code 立即可用，无冷启动延迟（不抛异常）。"""
         import httpx
-        from app.services import sandbox_client as sb_mod
+        from app.domain.oj.judging.providers import judge0 as sb_mod
 
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", True)
         client = SandboxClient(base_url="http://127.0.0.1:2358", authn_token="test")
@@ -479,7 +479,7 @@ class TestSandboxRecovery:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.post.return_value = mock_response
 
-        with patch("app.services.sandbox_client.httpx.Client", return_value=mock_client):
+        with patch("app.domain.oj.judging.providers.judge0.httpx.Client", return_value=mock_client):
             # 首次调用即成功，证明无冷启动延迟
             result = client.submit_code("x=1", "python3")
             assert result.status == SubmissionStatus.ACCEPTED
@@ -487,7 +487,7 @@ class TestSandboxRecovery:
 
     def test_disabled_sandbox_recovery_requires_enable_flag(self, monkeypatch):
         """JUDGE0_ENABLED=False 时即使服务恢复也保持不可用，必须显式开启 flag。"""
-        from app.services import sandbox_client as sb_mod
+        from app.domain.oj.judging.providers import judge0 as sb_mod
 
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", False)
         client = SandboxClient(base_url="http://127.0.0.1:2358", authn_token="test")
@@ -495,7 +495,7 @@ class TestSandboxRecovery:
 
         # 即使 mock 一个能用的 httpx.Client，submit_code 仍应返回 SANDBOX_UNAVAILABLE
         mock_client = MagicMock()
-        with patch("app.services.sandbox_client.httpx.Client", return_value=mock_client):
+        with patch("app.domain.oj.judging.providers.judge0.httpx.Client", return_value=mock_client):
             result = client.submit_code("x=1", "python3")
             assert result.status == SubmissionStatus.SANDBOX_UNAVAILABLE
             # mock_client.post 不应被调用（flag 关闭直接降级）

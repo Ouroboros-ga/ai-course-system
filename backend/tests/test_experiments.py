@@ -53,7 +53,7 @@ from app.services.experiment_service import (
     version_service,
 )
 from app.services.task_service import task_service
-from app.services.sandbox_client import (
+from app.domain.oj.judging.providers.judge0 import (
     SandboxClient,
     SandboxResourceLimits,
     SandboxResult,
@@ -629,7 +629,7 @@ class LegacySynchronousExperimentRunContract:
         from app.services.experiment_service import sandbox_client as sandbox_singleton
         monkeypatch.setattr(sandbox_singleton, "health_check", lambda: True)
         # mock submit_code 返回 ACCEPTED，让 run "成功"
-        from app.services.sandbox_client import SandboxResult, SubmissionStatus
+        from app.domain.oj.judging.providers.judge0 import SandboxResult, SubmissionStatus
         monkeypatch.setattr(
             sandbox_singleton,
             "submit_code",

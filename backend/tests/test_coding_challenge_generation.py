@@ -32,7 +32,7 @@ from app.schemas.coding_challenge import CodingChallengeDraft
 from app.services.coding_challenge_generation_service import (
     CodingChallengeGenerationService,
 )
-from app.services.sandbox_client import SandboxResult, SubmissionStatus
+from app.domain.oj.judging.providers.judge0 import SandboxResult, SubmissionStatus
 from pydantic import ValidationError
 from sqlmodel import select
 

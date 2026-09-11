@@ -28,7 +28,7 @@ from app.platform.agents.contracts.llm import (
 )
 from app.schemas.coding_challenge import CodingChallengeDraft
 from app.services.conversation_service import derive_question_inference_signals
-from app.services.sandbox_client import (
+from app.domain.oj.judging.providers.judge0 import (
     SandboxResourceLimits,
     SubmissionStatus,
     sandbox_client,

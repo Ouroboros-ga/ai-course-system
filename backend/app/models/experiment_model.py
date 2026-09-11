@@ -25,10 +25,17 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import Column, JSON, UniqueConstraint, event
 from sqlmodel import Field, SQLModel
 
 from app.core.time_utils import utcnow_aware
+
+# PR-01：Run 状态 / 类型语义。
+# 刻意只 import 两个**叶子模块**（自身只依赖标准库），这样持久化层可以把
+# 状态推导收敛到下面的单点监听器，而 models 与 domain 不构成依赖环。
+# 约定：这两个模块必须保持零内部依赖，不得 import app.models / app.services。
+from app.domain.oj.judging.verdicts import RunState, state_for_outcome
+from app.domain.oj.submissions.run_types import DEFAULT_RUN_TYPE
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +299,47 @@ class ExperimentRun(SQLModel, table=True):
     evidence_quality: dict = Field(default_factory=dict, sa_column=Column(JSON))
 
     outcome: RunOutcome = Field(default=RunOutcome.PENDING, index=True)
+
+    # PR-01：把「运行状态」从「判定结果」里拆出来。
+    #
+    # 背景：``RunOutcome`` 把 ``PENDING``（还没判完）与 ``ACCEPTED`` /
+    # ``WRONG_ANSWER``（判成什么）塞在同一个枚举。这在「一次 run 一个结论」时能凑合，
+    # 但 Activity / Scoreboard 一上来就会卡住 —— ICPC 要按判定算罚时、Homework 要按
+    # 分数求和，两者都需要表达「还在跑」**且**「已经跑出某个结论」。
+    #
+    # 值域：``app.domain.oj.judging.verdicts.RunState``。
+    # 维护方式：见本模块底部 ``_sync_run_semantics`` 监听器 —— **单点推导**，
+    # 不靠业务代码逐处赋值（``outcome`` 在 experiment_service.py 有 11 处赋值点，
+    # 含 3 条独立的 sandbox_unavailable 分支，逐处补写必然漂移）。
+    #
+    # 用 ``str`` + ``max_length`` 而非 DB 原生 enum：与既有 ``origin`` /
+    # ``visibility`` 的写法一致，也避免新增 PG enum 类型带来的迁移负担
+    # （``outcome`` 是原生 ``runoutcome`` enum，历史上有过 enum 迁移的坑，
+    # 见 ``tests/test_postgres_enum_transfer_regression.py``）。
+    run_state: str = Field(
+        default=RunState.QUEUED.value,
+        index=True,
+        max_length=32,
+        description="运行状态：queued/running/finished/cancelled/system_error",
+    )
+
+    # PR-01：一次 run 的产品语义（正式提交 / 学生自测 / 教师参考解预览）。
+    #
+    # 值域：``app.domain.oj.submissions.run_types.RunType``。
+    #
+    # 为什么要区分：正式提交计入活动、排名与学习证据；自测跑多少次都不该影响成绩；
+    # 参考解预览是教师动作，源码不持久化（见
+    # ``ExperimentVersion.reference_preview_verified_at``）。
+    #
+    # 迁移说明：参考解预览**不创建 ExperimentRun 行**（``experiment_service.py``
+    # 只在 :840 创建 run），因此历史行全部是学生提交，回填为 ``submission`` 是精确的，
+    # 不是近似。
+    run_type: str = Field(
+        default=DEFAULT_RUN_TYPE,
+        index=True,
+        max_length=32,
+        description="运行类型：submission/test/reference_preview",
+    )
     passed_count: int = Field(default=0, description="通过测试用例数")
     total_count: int = Field(default=0, description="总测试用例数")
     score: Optional[float] = Field(default=None, description="0..1")
@@ -524,3 +572,42 @@ class CodingHintRecord(SQLModel, table=True):
     teacher_note: str = Field(default="")
     reviewed_by: Optional[int] = Field(default=None, foreign_key="users.id")
     reviewed_at: Optional[datetime] = Field(default=None)
+
+
+# ---------------------------------------------------------------------------
+# PR-01：Run 状态的单点维护
+# ---------------------------------------------------------------------------
+
+
+@event.listens_for(ExperimentRun, "before_insert")
+@event.listens_for(ExperimentRun, "before_update")
+def _sync_run_semantics(mapper, connection, target) -> None:
+    """保持 ``ExperimentRun.run_state`` 与 ``outcome`` / ``cancel_requested_at`` 一致。
+
+    为什么放在监听器里，而不是业务代码里
+    ------------------------------------
+    ``outcome`` 在 ``services/experiment_service.py`` 中有 11 处赋值点
+    （``:965`` / ``:1015`` / ``:1070`` 三条独立的 ``sandbox_unavailable`` 分支，
+    ``:1089-1103`` 的判定分支，以及 ``:852`` 的创建）。逐处补写 ``run_state``
+    必然漂移；监听器只有一处，且**新增赋值点自动生效** —— 这正是 PR-01 想要的
+    「状态不可与判定脱节」的保证。
+
+    ``RUNNING`` 的例外
+    ------------------
+    ``outcome`` 无法表达「正在判题」，因此 ``RUNNING`` 只能由编排层显式写入。
+    本函数在这种情况下不覆盖显式值；其余一律由 ``outcome`` 推导。
+    PR-04 拆分判题编排后，这条例外会成为常态路径（run 置 ``RUNNING`` 再写 ``outcome``）。
+
+    行为影响
+    --------
+    只写 ``run_state`` 一列，**不改变任何 API 响应** ——
+    ``_serialize_run`` 是逐字段显式拼装，未包含本列。
+    """
+    resolved = state_for_outcome(
+        target.outcome,
+        cancel_requested_at=getattr(target, "cancel_requested_at", None),
+    )
+    if resolved is RunState.QUEUED and target.run_state == RunState.RUNNING.value:
+        # 编排层已显式声明「正在判题」，不要用 outcome 把它压回 queued。
+        return
+    target.run_state = resolved.value
