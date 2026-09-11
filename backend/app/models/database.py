@@ -192,6 +192,12 @@ from app.models.experiment_model import (
     CodingChallengeOffer,
     CodingEvidenceEpisode,
 )
+# PR-07：OJ Activity 域（作业/比赛等活动对题目的组织层）
+from app.models.experiment_activity_model import (
+    ExperimentActivity,
+    ExperimentActivityProblem,
+    ExperimentActivityScope,
+)
 from app.models.coding_diagnosis_model import CodingDiagnosisRecord
 # 阶段7：通用资源库、回收站与平台实验室目录
 from app.models.resource_model import (

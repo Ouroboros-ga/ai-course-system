@@ -251,6 +251,10 @@ class ExperimentAttempt(SQLModel, table=True):
     interaction_mode: str = Field(default="assessment", index=True, max_length=32)
     source_release_id: Optional[str] = Field(default=None, index=True, max_length=100)
     outline_node_id: Optional[str] = Field(default=None, index=True, max_length=100)
+    # PR-07：活动归属。可空 = 自由练习（不经 Activity 组织）。
+    # 作答仍走 attempt 全链路（判题/诊断/证据零改动），Activity 只是组织层 ——
+    # ADR 红线「不双写 submission」。
+    activity_id: Optional[str] = Field(default=None, index=True, max_length=64)
     last_activity_at: datetime = Field(default_factory=utcnow_aware, index=True)
 
     created_at: datetime = Field(default_factory=utcnow_aware)
@@ -351,6 +355,9 @@ class ExperimentRun(SQLModel, table=True):
         max_length=32,
         description="运行类型：submission/test/reference_preview",
     )
+    # PR-07：活动归属（与 attempt 同名列同语义，冗余存储换取
+    # 「按活动拉全部 run」不必 join attempt —— scoreboard/报表的高频路径）。
+    activity_id: Optional[str] = Field(default=None, index=True, max_length=64)
     passed_count: int = Field(default=0, description="通过测试用例数")
     total_count: int = Field(default=0, description="总测试用例数")
     score: Optional[float] = Field(default=None, description="0..1")

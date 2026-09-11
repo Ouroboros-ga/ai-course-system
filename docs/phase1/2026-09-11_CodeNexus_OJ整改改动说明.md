@@ -703,3 +703,82 @@ PR-03/04/06b 全部卡在同一条他线（学生工作台 F3-B）未提交的 2
 我此前在实施台账里把 PR-09 描述成「`difficulty` + `tags` + 迁移」，
 **漏了「选几档」本身就是个需要拍板的设计决定**，把它当成了纯粹的机械补列。
 实际上它是本 PR 最需要论证的部分（见 §9.2 / §9.3）。
+
+---
+
+## 10. PR-07 实施记录：Activity 域（作业 / 比赛）
+
+### 10.1 本期范围（经拍板）
+
+| 决定 | 选择 | 理由 |
+|---|---|---|
+| 建几张表 | **3 张**（activities / activity_problems / activity_scopes） | v2 画的第 4 张 `members` 只有 contest 报名制需要，本期不实现 contest。**不建没有写入者的表** —— 空表会让人误以为报名制已能用 |
+| type 取值域 | **4 值全建**（homework/contest/exam/practice_set），行为只实现 homework | 取值域一次建全的成本是零，收益是「加行为不动表」；type 列用 `String(32)` + 域层值域，不用 PG 原生 enum |
+| 作答挂接 | **attempts/runs 加可空 `activity_id`** | 复用判题/诊断/证据全链路（一行不改），Activity 只是组织层 —— ADR 红线「不双写 submission」 |
+
+PR-07 = DB + models + service + policies。**不含 admin API**（PR-08）与学生页（PR-12）。
+
+### 10.2 一处我在实施中纠正自己的设计错误：版本固定的是「每道题」不是「全活动」
+
+初版我把 DoD 的「同一 Activity 固定 `problem_version_id`」实现成
+**全活动所有题共享一个 version** —— 测试当场打脸：两道不同题（不同 definition）
+几乎必然各有自己的 version，这样**多题作业根本建不起来**。
+
+正确读法（与 v2 §8.2 的一致式不变式对齐）：**固定的是「每道题」的版本** ——
+版本在挂题时写入该题的 `problem_version_id` 行并**发布后不可变**，
+学生作答时不再动态解析 definition 的当前激活版本。
+「所有学生拿到相同版本」由逐题固化保证，而不是靠全活动一个版本。
+
+**教训**：DoD 条文有歧义时，先拿「这个域的真实用法能不能跑通」反推语义，
+而不是照字面把约束做到最严 —— 过严的约束不是安全，是功能不可用。
+
+### 10.3 与「不双写」红线的落实
+
+学生作答仍走 `ExperimentAttempt` / `ExperimentRun`，本域只给两者加**可空**
+`activity_id`（NULL = 自由练习）。`run` 上的 `activity_id` 是从 attempt
+**冗余拷贝**的：attempt 的归属创建后不可变，冗余安全；换取 scoreboard / 报表
+「按活动拉全部 run」不必 join。`domain/oj/activity/policies.py` 的
+`assert_immutable_after_publish` 把「发布后题目集合 / 版本 / 满分不可变」
+统一把门 —— 这是冗余安全性的前提。
+
+### 10.4 确定性算分的三道保障
+
+`compute_homework_score`（DoD：score 可重算且 deterministic）：
+
+1. **先按 ordinal 排序再求和** —— 浮点加法不满足交换律，顺序必须钉死；
+2. **每题先 round 再累加，总和再 round**（6 位）—— 中间值不携带无限精度；
+3. 输入是**显式序列**而非 dict —— 把「顺序是输入的一部分」变成类型上的事实。
+
+`test_sum_is_independent_of_input_order` + `test_repeated_recompute_is_stable`
+（重算 100 次逐字节相同）钉住。越界分（<0 或 >1）**抛错不 clamp**：
+越界说明上游判分坏了，截断会把坏分伪装成满分。
+
+### 10.5 未实现行为的显式拒绝
+
+`assert_supported_type` 把 contest / exam / practice_set 挡在创建入口（422），
+**绝不静默当 homework 处理** —— 静默降级会产生「我建的是 contest 怎么按
+homework 算分」这类无从排查的问题。同理，scope 的 `class` / `user` 类型
+**可写入但解析时跳过并记日志**：不报错（教师暂存的范围不应炸掉学生端），
+也不误当 course（会让可见范围意外扩大）。
+
+### 10.6 迁移要点
+
+- `oj20260911v3`：三表 + attempts/runs 的 `activity_id`（可空，无回填，
+  NULL = 自由练习，回退无损）；
+- `activity_id` 用**字符串业务键**且**不加 FK**：与同表 `experiment_id` 的
+  既有约定一致；「活动归档后 attempt 仍在」的语义更接近弱引用 + 应用层校验，
+  硬 FK 会把它绑成 RESTRICT / CASCADE 二选一；
+- 三道唯一约束：`(activity_id, problem_definition_id)` 防重复挂题、
+  `(activity_id, ordinal)` 防位次冲突（位次决定算分顺序）、
+  `(activity_id, scope_type, scope_id)` 防 scope 重复；
+- **往返实测**：全新库 upgrade → downgrade → re-upgrade 全绿，
+  表/列/台账（`oj_activity_domain_v1`）均正确落地。
+
+### 10.7 验证
+
+| 项 | 结果 |
+|---|---|
+| `test_oj_activity_policies.py` | **59 passed**（值域/时间窗/固定/确定性算分/纯度） |
+| `test_oj_activity_service.py` | **29 passed**（生命周期/题目组织/窗口/可见范围/算分/跨课程隔离） |
+| OJ 全量门禁（7 文件） | 267 passed / 0 failed（7 文件：边界+域+服务+元数据+API+语义+characterization） |
+| 迁移往返 | upgrade → downgrade → re-upgrade 全绿 |
