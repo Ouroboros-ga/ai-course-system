@@ -424,6 +424,7 @@ export async function dispatchNexusMessage({
   sessionId,
   mode,
   researchExecutionMode = null,
+  thinking = null,
   courseId = null,
   model = null,
   attachmentIds = [],
@@ -441,6 +442,7 @@ export async function dispatchNexusMessage({
       attachmentIds,
       runRef,
       researchExecutionMode,
+      thinking,
       onEvent,
       signal,
     })

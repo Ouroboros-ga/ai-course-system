@@ -33,10 +33,13 @@ from nexus.persistence import sanitize_session_id, sanitize_user_id, thread_for
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("nexus")
 
-# M1-B2/T2：按（模式, 模型, 执行模式）索引的 agent 实例（同对共享同一 checkpointer）。
+# M1-B2/T2：按（模式, 模型, 执行模式, 思考模式）索引的 agent 实例
+# （同对共享同一 checkpointer）。
 # 模型网关 P0：同一 thread 命名空间跨模型共享，切模型不断上下文。
 # T2：Research 区分 ask/auto（工具面不同）；General 统一 ask。
-_agents: dict[tuple[str, str, str], Any] = {}
+# 2026-09-11：+思考模式维度（请求级开关，不同取值 LLM 参数不同不可复用）；
+# 历史三元/二元键仍可命中（单测注入桩形状，见 get_agent 查找顺序）。
+_agents: dict[tuple[str, ...], Any] = {}
 # 两个模式共享的本地降级 saver：保证 memory 模式下同 session 切模式上下文连续
 # （服务器上由 lifespan 注入 AsyncPostgresSaver，两者天然共享）。
 _fallback_saver = InMemorySaver()
@@ -93,13 +96,16 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
             _pg_ctx = cm
             _pg_saver = saver
             default_model = llm_default_model(settings)
-            for mode, execution_mode in (
-                ("research", "auto"), ("research", "ask"), ("general", "ask"),
-            ):
-                _agents[(mode, default_model, execution_mode)] = build_agent(
-                    mode=mode, checkpointer=saver, model=default_model,
-                    execution_mode=execution_mode,
-                )
+            # 思考模式：与 get_agent 的键维度对齐（默认配置下的两个取值都预热，
+            # 前端开关切换时无需现场构图）。default_thinking 即配置默认。
+            for thinking_key in (True, False):
+                for mode, execution_mode in (
+                    ("research", "auto"), ("research", "ask"), ("general", "ask"),
+                ):
+                    _agents[(mode, default_model, execution_mode, thinking_key)] = build_agent(
+                        mode=mode, checkpointer=saver, model=default_model,
+                        execution_mode=execution_mode, thinking=thinking_key,
+                    )
             logger.info("nexus persistence: postgres enabled (schema=%s)", schema)
         except Exception as error:  # noqa: BLE001 - PG 故障不阻断服务启动
             # 只记步骤与错误类/文本，不记 DSN（见 2026-09-03 CREATE 权排查教训：
@@ -125,8 +131,9 @@ app = FastAPI(title="Nexus AI Runtime", version=__version__, lifespan=lifespan)
 def get_agent(
     mode: str = "general", model: str | None = None,
     execution_mode: str | None = None,
+    thinking: bool | None = None,
 ) -> Any:
-    """取（模式, 模型, 执行模式）agent 实例；model 为 None 即默认模型。
+    """取（模式, 模型, 执行模式, 思考模式）agent 实例；model 为 None 即默认模型。
 
     model 入参应已由 _require_model 校验；此处再做一次归一是纵深防御
     （normalize_model_name 对清单外 id 抛 InvalidNexusModel，绝不静默建实例）。
@@ -134,6 +141,11 @@ def get_agent(
     T2 Ask/Auto：Research 实例键区分 Ask/Auto（工具面不同）；General 统一
     归一 ask（无实验执行权，传 auto 也不放行）。execution_mode 缺省 Ask
     （安全默认）。
+
+    思考模式（2026-09-11）：thinking 为请求级开关，None = 用配置默认值
+    （llm_thinking）。键包含该维度——不同 thinking 的图 LLM 参数不同，
+    混用会让开关静默失效。为兼容历史键，查找顺序为四元 → 三元 → 二元，
+    任一命中即复用（单测注入的桩多为三元/二元）。
     """
     from nexus import execution_mode as execution_mode_module
 
@@ -147,10 +159,13 @@ def get_agent(
         execution_key = "ask"
     if mode == "general":
         execution_key = "ask"
-    key = (mode, model, execution_key)
+    thinking_key = _normalize_thinking(thinking, settings)
+    key = (mode, model, execution_key, thinking_key)
     agent = _agents.get(key)
     if agent is None:
-        # 兼容旧二元键桩（单测注入的假图不区分 Ask/Auto；生产键恒三元）。
+        # 兼容历史键形状（单测注入的假图不区分思考/执行模式；生产键恒四元）。
+        agent = _agents.get((mode, model, execution_key))
+    if agent is None:
         agent = _agents.get((mode, model))
     if agent is None:
         try:
@@ -159,6 +174,7 @@ def get_agent(
                 checkpointer=_pg_saver if _pg_saver is not None else _fallback_saver,
                 model=model,
                 execution_mode=execution_key,
+                thinking=thinking_key,
             )
         except RuntimeError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
@@ -241,6 +257,13 @@ class ChatRequest(BaseModel):
     # NX-LB3：请求幂等键（Backend 透传）。Runtime 以 (thread, crid) 去重：
     # 同键重试不重复调用模型/工具；不同请求竞争同会话写者 409 SESSION_BUSY。
     client_request_id: str = Field(default="", max_length=64)
+    # 思考模式开关（请求级，2026-09-11）。None/缺字段 → 用服务端配置默认
+    # （llm_thinking，生产 enabled）；布尔或 "enabled"/"disabled" 等词形均可，
+    # 未知值 400 INVALID_NEXUS_THINKING。该维度进入 agent 实例缓存键——
+    # 模型不能经工具参数修改（只走请求顶层）。
+    # 注意：思考模式下 temperature 不生效（官方明示），且 reasoning 经独立
+    # SSE 事件 `reasoning` 下发，与正文分离。
+    thinking: bool | str | None = Field(default=None)
 
 
 def _attachment_note(attachments: list[dict[str, Any]] | None) -> str:
@@ -307,6 +330,36 @@ def _require_execution_mode(raw: str | None, mode: str) -> str | None:
         raise HTTPException(
             status_code=400, detail=f"INVALID_RESEARCH_EXECUTION_MODE:{error.raw!r}"
         ) from error
+
+
+def _normalize_thinking(raw: Any | None, settings: Any) -> bool:
+    """归一思考模式开关（请求级；未知值 400 INVALID_NEXUS_THINKING）。
+
+    - True/False（JSON 布尔）：原样采用；
+    - "enabled"/"disabled"/"on"/"off"/"true"/"false"（大小写/空白不敏感）：
+      ——— 兼容 argv/表单式客户端；
+    - None/缺字段：回落服务端配置默认 `llm_thinking`（生产默认 enabled）。
+    非 bool/str（数字、列表等）一律拒绝，不做静默强转。
+    """
+    if raw is None:
+        return (settings.llm_thinking or "").strip().lower() == "enabled"
+    if isinstance(raw, bool):
+        return raw
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail=f"INVALID_NEXUS_THINKING:{raw!r}")
+    cleaned = raw.strip().lower()
+    if cleaned in ("enabled", "on", "true"):
+        return True
+    if cleaned in ("disabled", "off", "false"):
+        return False
+    raise HTTPException(status_code=400, detail=f"INVALID_NEXUS_THINKING:{raw!r}")
+
+
+def _require_thinking(raw: Any | None) -> bool | None:
+    """校验显式传入的思考开关；None 表示未传（由 get_agent 回落配置默认）。"""
+    if raw is None:
+        return None
+    return _normalize_thinking(raw, get_settings())
 
 
 def _config_for(session_id: str, user_id: str | None = None) -> dict[str, Any]:
@@ -580,6 +633,14 @@ def _run_context_note(context: dict[str, Any] | None) -> str:
     return "\n".join(lines)[:12000] + "\n\n"
 
 
+# P1-3：SSE 心跳空闲阈值（秒）。超过该时长无事件即向流中插入一帧 SSE 注释。
+# 目的：研究模式在检索 / 大 PDF 解析 / 上游推理期间可能长时间不产出 token，
+# 而后端 httpx 的读空闲超时（NEXUS_RUNTIME_STREAM_READ_TIMEOUT_S，默认 300s）
+# 会把这类正常长任务误杀成"回复写到一半停了"。
+# 模块级常量便于测试 monkeypatch。
+_HEARTBEAT_IDLE_S = 15.0
+
+
 async def _agent_stream(
     message: str,
     session_id: str,
@@ -593,8 +654,9 @@ async def _agent_stream(
     request_id: str = "",
     run_context: dict[str, Any] | None = None,
     execution_mode: str = "ask",
+    thinking: bool | None = None,
 ):
-    agent = get_agent(mode, model, execution_mode)
+    agent = get_agent(mode, model, execution_mode, thinking)
     thread_id = thread_for(session_id, user_id)
     inputs = {"messages": [{"role": "user", "content": (
         _attachment_note(attachments) + _run_context_note(run_context) + message
@@ -622,19 +684,66 @@ async def _agent_stream(
         # 会话"推断事件归属；旧客户端忽略新字段不受影响。
         return {"session_id": session_id, "request_id": request_id, **payload}
 
+    # 用独立生产者任务把 astream 事件推入队列，消费者带超时取事件、空闲即发心跳。
+    # **不用 `wait_for` 直接取消 `__anext__()`**：取消会关闭异步生成器，
+    # 破坏 agent 循环状态。队列 + 单独 task 让 astream 不受心跳影响。
+    event_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+
+    async def _pump() -> None:
+        try:
+            async for item in agent.astream(
+                inputs, config, stream_mode=["messages", "updates"]
+            ):
+                await event_queue.put(("event", item))
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - 交由消费侧统一成 error 事件
+            await event_queue.put(("error", error))
+        finally:
+            # 无论正常结束还是异常，都投递 eof，避免消费侧空转。
+            await event_queue.put(("eof", None))
+
+    pump_task = asyncio.create_task(_pump())
     try:
-        # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
-        # 列表模式才产出 (mode, payload) 元组。
-        async for stream_mode, payload in agent.astream(
-            inputs, config, stream_mode=["messages", "updates"]
-        ):
+        while True:
+            try:
+                kind, item = await asyncio.wait_for(
+                    event_queue.get(), timeout=_HEARTBEAT_IDLE_S)
+            except asyncio.TimeoutError:
+                # SSE 注释帧（":" 开头），对前端天然不可见——
+                # nexus.js 的 parseSseFrames 只在有 data: 行时才交付事件。
+                yield ": keep-alive\n\n"
+                continue
+            if kind == "eof":
+                break
+            if kind == "error":
+                raise item
+            # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
+            # 列表模式才产出 (mode, payload) 元组。
+            stream_mode, payload = item
             if stream_mode == "messages":
                 chunk, _meta = payload
                 if isinstance(chunk, AIMessageChunk):
+                    # P1-4（2026-09-11）：思考内容经独立事件下发，与正文分离。
+                    # 上游 ChatDeepSeek 把增量 reasoning 放在 additional_kwargs
+                    # （实测键 reasoning_content）；此前只转发 content，导致
+                    # 思考模式下用户只看到长时间空白。前端折叠展示，不混入正文。
+                    reasoning = (chunk.additional_kwargs or {}).get("reasoning_content")
+                    if isinstance(reasoning, str) and reasoning:
+                        yield _sse("reasoning", await _tag({"content": reasoning}))
                     content = chunk.content
                     if isinstance(content, str) and content:
                         token_count += len(content)
                         yield _sse("token", await _tag({"content": content}))
+                    elif isinstance(content, list):
+                        # 兼容 content blocks（此前只认 str，其余一律丢弃——
+                        # 会让部分上游形态"整段无输出"）。
+                        for block in content:
+                            text = (block.get("text") if isinstance(block, dict)
+                                    else None)
+                            if isinstance(text, str) and text:
+                                token_count += len(text)
+                                yield _sse("token", await _tag({"content": text}))
             elif stream_mode == "updates":
                 for _node, delta in (payload or {}).items():
                     if not isinstance(delta, dict):
@@ -674,6 +783,9 @@ async def _agent_stream(
         reset_execution_scope(exec_tokens)
         reset_experiment_gate(gate_tokens)
         reset_attachments(attach_token)
+        # 心跳生产者任务清理：正常/异常/取消路径都要收掉，避免悬挂 task。
+        if not pump_task.done():
+            pump_task.cancel()
         # 写者资格兜底释放（正常/失败/取消路径已显式释放；此处防生成器
         # 在任何未捕获路径上关闭后泄漏门锁）。
         _active_threads.discard(thread_id)
@@ -690,21 +802,35 @@ def _tool_surface() -> dict[str, list[str]] | None:
     模型网关 P0：键为 "mode@model:execution"，只含已实际构建的实例。不同模型
     同模式的工具面应一致；出现分歧即回归信号（某模型实例构建走了不同分支）。
     T2：Research 区分 ask/auto（Ask 不绑定 run_reproduction）。
+    2026-09-11：键再含 thinking 维度（"mode@model:execution:thinking"）；
+    思考开关只改 LLM 参数、不改工具面，故同一 mode/execution 的两种取值
+    工具面必然相同——上报时保留维度，便于巡检确认这一点。
     """
     if not _agents:
         return None
     surfaces: dict[str, list[str]] = {}
     for raw_key, agent in _agents.items():
-        # 兼容旧二元键桩（单测注入）；生产键恒 (mode, model, execution)。
-        if len(raw_key) == 3:
+        # 兼容历史桩键形状（单测注入）：生产键恒四元。
+        if len(raw_key) == 4:
+            mode, model, execution_mode, thinking_key = raw_key
+        elif len(raw_key) == 3:  # pragma: no cover - 仅旧测试桩形状
             mode, model, execution_mode = raw_key
+            thinking_key = None
         else:  # pragma: no cover - 仅旧测试桩形状
             mode, model = raw_key
             execution_mode = "ask"
+            thinking_key = None
+        suffix = "" if thinking_key is None else (
+            f":{'thinking' if thinking_key else 'plain'}")
         try:
-            surfaces[f"{mode}@{model}:{execution_mode}"] = sorted(
+            surfaces[f"{mode}@{model}:{execution_mode}{suffix}"] = sorted(
                 agent.nodes["tools"].bound.tools_by_name.keys())
-        except AttributeError:
+        except (AttributeError, KeyError, TypeError):
+            # 巡检口径必须**逐项容错**：/health 是确认「execute(shell) 是否被
+            # 收敛掉」的唯一外部观察点，不能因为某个桩/异常形状的实例让整个
+            # 健康检查 500。历史只捕 AttributeError，而缺 "tools" 节点抛的是
+            # KeyError（agent.nodes 为 dict）、形状不符抛 TypeError。
+            # 2026-09-11：键形扩展为 4/3/2 三种后，桩形状更杂，故一并收口。
             continue
     return surfaces or None
 
@@ -878,7 +1004,9 @@ async def chat_stream(
         request.research_execution_mode, mode,
         user_id=user_id or "", session_id=session_id,
     )
-    get_agent(mode, model, effective)
+    # 思考模式：显式值严格校验（未知 400），未传回落配置默认。
+    thinking = _require_thinking(request.thinking)
+    get_agent(mode, model, effective, thinking)
     thread_id = thread_for(session_id, user_id)
     request_id = _sanitize_request_id(request)
     # NX-LB3：单写者门 + 幂等去重（先于任何执行；同步临界区，无排队器）。
@@ -902,6 +1030,7 @@ async def chat_stream(
             request_id=request_id,
             run_context=_server_run_context(request),
             execution_mode=effective,
+            thinking=thinking,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -934,7 +1063,11 @@ async def chat(
         request.research_execution_mode, mode,
         user_id=user_id or "", session_id=session_id,
     )
-    agent = get_agent(mode, model, effective)
+    # 思考模式：与流式端点同源归一（未知值 400 INVALID_NEXUS_THINKING）。
+    # 非流式端点不单独下发 reasoning（响应体只有 content），但实例必须按本次
+    # 开关构建——否则开关在同一会话的两种调用形态间静默不一致。
+    thinking = _require_thinking(request.thinking)
+    agent = get_agent(mode, model, effective, thinking)
     config = _config_for(session_id, user_id)
     thread_id = thread_for(session_id, user_id)
     request_id = _sanitize_request_id(request)

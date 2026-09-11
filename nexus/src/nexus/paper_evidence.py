@@ -7,7 +7,7 @@
   不伪装已验证书目信息。
 - locator 来自附件解析块的原始定位；页面映射不可用时如实为 None，
   不编造 page 1。
-- 预算：单次 ≤3 篇、≤12 条证据、每条 ≤1200 字符、总计 ≤12000 字符；
+- 预算：单次 ≤3 篇、≤12 条证据、每条 ≤2400 字符、总计 ≤40000 字符；
   触发预算必须如实标记 truncated。
 - 引用登记（进程内）：模型只能引用服务端登记过的 evidence_id；登记条目
   绑定 owner+session，跨用户/跨会话不可解析。重启即清（属本批已知限制，
@@ -20,8 +20,12 @@ from typing import Any
 
 MAX_ATTACHMENTS_PER_CALL = 3
 MAX_EVIDENCES_PER_CALL = 12
-EVIDENCE_EXCERPT_MAX = 1200
-EVIDENCE_TOTAL_CHARS_MAX = 12000
+# 2026-09-11 调整：1200→2400 / 12000→40000。
+# 原预算下一次取证最多给模型 1.2 万字符原文（≈6000–8000 汉字），而报告只能引用
+# 已登记证据——素材量直接封住报告深度（写长就触发伪引用风险）。V4 为 1M 上下文，
+# 4 万字符注入仅占 2–3%，容量不是约束，故放宽。
+EVIDENCE_EXCERPT_MAX = 2400
+EVIDENCE_TOTAL_CHARS_MAX = 40000
 # 单附件解析总字符低于阈值 → abstract_only（大概率只有首页/摘要被解析出来，
 # 不能冒充读过全文）。
 ABSTRACT_ONLY_THRESHOLD_CHARS = 500

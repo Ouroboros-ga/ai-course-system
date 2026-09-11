@@ -321,6 +321,24 @@ async def write_research_report(
     if len(body) > _BODY_MAX_CHARS:
         return {"status": "rejected", "code": "REPORT_TOO_LARGE",
                 "detail": f"正文超长（>{_BODY_MAX_CHARS} 字符）。"}
+    # 最小篇幅门禁（NX-Report）：在**写入点**拒绝过短正文，而不是等到交付核对。
+    # 理由：delivery_checklist 的 task 记录里只有 report_artifact_id，没有正文长度；
+    # 为它加列需要 DB 迁移，而这里能直接拿到 body。语义与既有 rejected 一致
+    # （可修复错误 + 明确指引，模型按指引补足后重试）。
+    # 阈值 0 表示不校验（可用 NEXUS_REPORT_MIN_CHARS 调整或关闭）。
+    _min_chars = max(0, int(getattr(get_settings(), "report_min_chars", 0) or 0))
+    if _min_chars and len(body) < _min_chars:
+        return {
+            "status": "rejected",
+            "code": "REPORT_TOO_SHORT",
+            "detail": (
+                f"报告正文过短（{len(body)} 字符，下限 {_min_chars}）。请按系统提示的"
+                " NX-Report 结构补足各节实质论述后重试：研究问题 / 资料覆盖与来源 /"
+                " 关键证据 / 方法比较 / 综合结论 / 限制与待补证据。"
+                "证据不足以支撑某节时，先考虑用 read_paper_more 补读；"
+                "不得用「暂无相关内容」或重复语句凑数。"
+            ),
+        }
     user_id = current_user_id() or ""
     session_id = current_session_id() or ""
 

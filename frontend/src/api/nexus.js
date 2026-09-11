@@ -624,6 +624,7 @@ export async function streamNexusMessage({
   sessionId = 'default',
   mode = null,
   researchExecutionMode = null,
+  thinking = null,
   courseId = null,
   model = null,
   attachmentIds = [],
@@ -636,6 +637,9 @@ export async function streamNexusMessage({
   if (mode) body.mode = mode
   // T5 Ask/Auto：Research 显式发送本次 effective 值；General 不传。
   if (researchExecutionMode) body.research_execution_mode = researchExecutionMode
+  // 思考模式开关（2026-09-11）：请求级布尔，显式发送故无需服务端偏好端点。
+  // 服务端按该值决定模型是否走思考模式，推理经独立 SSE 事件 reasoning 回传。
+  if (typeof thinking === 'boolean') body.thinking = thinking
   if (courseId != null || (runRef && runRef.run_id)) {
     body.context = {}
     if (courseId != null) body.context.course_id = courseId

@@ -27,7 +27,7 @@ import time
 import uuid
 from typing import Any
 
-from langchain_openai import ChatOpenAI
+from nexus.agent import _NexusChatDeepSeek
 
 logger = logging.getLogger("nexus.experiment_agent")
 
@@ -87,26 +87,33 @@ def ensure_experiment_profile() -> None:
         _register_experiment_profile()
 
 
-class _ExperimentChatOpenAI(ChatOpenAI):
-    """实验图专用模型：API 调用与 ChatOpenAI 完全一致，仅 LangSmith provider
-    改为独立键，使全局 openai HarnessProfile（禁 execute/task）不命中。
+class _ExperimentChatOpenAI(_NexusChatDeepSeek):
+    """实验图专用模型：与主聊天同模型同端点，仅 provider 键分流。
+
+    继承 `agent._NexusChatDeepSeek`（而非 langchain_openai.ChatOpenAI）的收益：
+    实验图同样携带 tools 多轮运行，因此同样需要 ① reasoning_content 发送侧
+    回传补齐、② max_tokens 不被改写成 max_completion_tokens。二者都在基类
+    已实现（2026-09-11）。
 
     这是实例级装配的钥匙：excluded_tools 合并为并集，per-model 覆盖救不了
-    execute；provider 分流后实验图命中独立 profile（仅禁 task），主聊天
-    三模式继续命中 openai（禁 execute/task）。模型 id/base_url 不变，
-    发往 LLM 的请求与主聊天同模型同端点。
+    task；provider 分流后实验图命中独立 profile（仅禁 task），主聊天三模式
+    命中 deepseek/openai 键（禁 execute/task）。模型 id/base_url 不变。
     """
 
-    def _get_ls_params(self, stop=None, **kwargs):
-        params = super()._get_ls_params(stop=stop, **kwargs)
-        params["ls_provider"] = EXPERIMENT_PROVIDER
-        return params
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("streaming", False)
+        super().__init__(**kwargs)
+        # 基类默认 "deepseek"；此处改独立键，使全局收敛 profile 不命中。
+        self._provider_key = EXPERIMENT_PROVIDER
 
 
 def build_experiment_llm(model: str | None = None):
     """按配置构建实验图 LLM（与主聊天同模型同端点，仅 provider 键分流）。
 
     model：服务端 allowlist 内的模型 id（调用方已校验）；None → 默认模型。
+
+    thinking 显式下发：实验图带 tools 多轮，若不显式关闭而服务端 V4 默认开
+    思考，则未回传 reasoning_content 会让第二轮请求 400（与主聊天同因）。
     """
     from nexus.agent import build_llm
     from nexus.config import llm_default_model
@@ -117,13 +124,16 @@ def build_experiment_llm(model: str | None = None):
         return None
     settings = get_settings()
     default = llm_default_model(settings)
-    return _ExperimentChatOpenAI(
-        model=(model or default),
-        api_key=settings.deepseek_api_key,
-        base_url=settings.llm_base_url,
-        temperature=0.2,
-        streaming=False,
-    )
+    kwargs: dict[str, Any] = {
+        "model": (model or default),
+        "api_key": settings.deepseek_api_key,
+        "api_base": settings.llm_base_url,
+        "temperature": 0.2,
+        "extra_body": {"thinking": {"type": "disabled"}},
+    }
+    if settings.llm_max_tokens and settings.llm_max_tokens > 0:
+        kwargs["max_tokens"] = settings.llm_max_tokens
+    return _ExperimentChatOpenAI(**kwargs)
 
 
 EXPERIMENT_SYSTEM_PROMPT = """你是 CodeNexus 的实验执行器，正在用户已批准一次的实验授权范围内工作。

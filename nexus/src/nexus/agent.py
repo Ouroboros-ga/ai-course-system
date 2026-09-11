@@ -13,8 +13,9 @@ from deepagents.backends.state import StateBackend
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.summarization import SummarizationMiddleware
 from langchain.agents.middleware import TodoListMiddleware
-from langchain_openai import ChatOpenAI
+from langchain_deepseek import ChatDeepSeek
 from langgraph.checkpoint.memory import InMemorySaver
+from pydantic import PrivateAttr
 
 from nexus.config import get_settings
 from nexus.tools import NEXUS_TOOLS
@@ -144,21 +145,41 @@ MODE_PROMPT_APPENDIX = {
    子任务（只回 findings/evidence_ids/gaps/conflicts），用
    submit_research_result 回收结果；证据不足用 read_paper_more 补读；
    预算用尽/取消即停，不无限循环；完成前用 delivery_checklist 逐项核对，
-   而不是看 Todo 全勾。""",
+   而不是看 Todo 全勾。
+7. 报告篇幅与结构（NX-Report）：研究报告正文不得少于 6 节——研究问题 /
+   资料覆盖与来源 / 关键证据 / 方法比较 / 综合结论 / 限制与待补证据；
+   每节须有实质论述，不得用"暂无相关内容""详见上文"占位；
+   证据不足时如实说明缺口，但**不得因此压缩已有证据的论述深度**——
+   缺口写在"限制与待补证据"一节，其余各节照常展开。
+   严禁以"由于篇幅限制""为简洁起见""不再赘述"等理由省略论述，
+   也不得把本应成段的比较与结论压缩成条目清单。
+   对话回复同理：涉及比较/综述类问题时给出分点论述，不得只用一段概述收尾。
+   证据确实不足以支撑某节时，先考虑用 read_paper_more 补读，而不是直接写短。""",
 }
 
 
+PROVIDER_DEEPSEEK = "deepseek"
+
+
 def _register_tool_surface_profile() -> None:
-    """注册工具面收敛 profile（幂等：重复注册为 merge 语义）。"""
-    register_harness_profile(
-        "openai",
-        HarnessProfile(
-            excluded_tools=NEXUS_EXCLUDED_TOOLS,
-            general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-        ),
+    """注册工具面收敛 profile（幂等：重复注册为 merge 语义）。
+
+    provider 键注册两个（2026-09-11 改用 ChatDeepSeek 后必需）：
+    - "deepseek"：生产路径 —— `ChatDeepSeek._get_ls_params` 硬报 `deepseek`，
+      真实 LLM 走此键；
+    - "openai"：测试替身路径 —— 单测用 `ChatOpenAI` 子类桩注入（`ls_provider`
+      恒为 `openai`），保留此键使工具面回归不受替身类型影响。
+    两键 profile 内容完全一致；漏注册任一都会让 `excluded_tools` 失效、
+    `execute`/`task` 被重新挂载（安全边界破裂）。
+    """
+    profile = HarnessProfile(
+        excluded_tools=NEXUS_EXCLUDED_TOOLS,
+        general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
     )
+    register_harness_profile(PROVIDER_DEEPSEEK, profile)
+    register_harness_profile("openai", profile)
     # F7：research 独立 provider（`task` 仅在此放行，供只读 researcher；
-    # 通用子代理仍关闭；General 模式不受影响，沿用 openai 键）。
+    # 通用子代理仍关闭；General 模式不受影响）。
     register_harness_profile(
         "nexus-research",
         HarnessProfile(
@@ -169,44 +190,122 @@ def _register_tool_surface_profile() -> None:
     )
 
 
-class _ResearchChatOpenAI(ChatOpenAI):
-    """Research 图专用模型：与主聊天同模型同端点，仅 provider 键分流。
+class _NexusChatDeepSeek(ChatDeepSeek):
+    """Nexus 主模型：ChatDeepSeek + 可路由 provider 键 + reasoning_content 回传补齐。
 
-    使 research 图命中独立 profile（放行 `task` 给只读 researcher，
-    其余收敛不变）；与实验图的 provider 分流同机制。
+    为什么不用 ChatOpenAI（2026-09-11 实测，见 config.llm_* 注释与
+    docs/phase1/2026-09-11_Nexus研究模式输出字数偏少_诊断与修复建议.md）：
+
+    1. `langchain_openai.ChatOpenAI` 的模块文档明示「不提取也不保留
+       reasoning_content」；而 DeepSeek 官方要求携带 tools 的请求必须在
+       后续所有轮次完整回传 reasoning_content，否则返回 400。Nexus 全部
+       请求都带 tools（30+），故思考模式下多轮工具链第二轮即断。
+    2. `ChatDeepSeek` 继承 `BaseChatOpenAI`（**不是** `ChatOpenAI`），因此
+       不会把 `max_tokens` 改写成 `max_completion_tokens`（实测 payload
+       字段名正确），无需再经 extra_body 绕路。
+    3. `ChatDeepSeek` 也只在**接收侧**保存 reasoning_content（存入
+       `additional_kwargs`），发送侧仍不写回 —— 由本类的
+       `_get_request_payload` 补齐（上游缺口，非配置问题）。
     """
+
+    # provider 键决定命中哪个 HarnessProfile（工具面收敛）。
+    # 默认 "deepseek"；research 图由 build_agent 改为 nexus-research（放行 task）。
+    _provider_key: str = PrivateAttr(default=PROVIDER_DEEPSEEK)
 
     def _get_ls_params(self, stop=None, **kwargs):
         params = super()._get_ls_params(stop=stop, **kwargs)
-        params["ls_provider"] = "nexus-research"
+        params["ls_provider"] = self._provider_key
         return params
 
+    def _get_request_payload(self, input_, *, stop=None, **kwargs):
+        """在请求体组装后补齐 assistant 轮次的 reasoning_content。
 
-def build_llm(model_name: str | None = None) -> ChatOpenAI | None:
+        官方原文（DeepSeek 思考模式文档）：带 tools 的请求「后续所有请求必须
+        完整回传 reasoning_content……否则 API 返回 400」。上游 langchain-deepseek
+        只在接收侧保存该字段，发送侧丢弃，故在此按消息序位对齐写回。
+
+        补齐失败一律静默放行（不因本地逻辑异常阻断用户请求）；长度不一致
+        说明消息经过了过滤/插入，此时宁可让服务端报错也不做错位注入。
+        """
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        try:
+            origin = self._convert_input(input_).to_messages()
+        except Exception:  # noqa: BLE001 - 本地补齐不得阻断请求
+            return payload
+        wire = payload.get("messages") or []
+        if len(origin) != len(wire):
+            return payload
+        for src, dst in zip(origin, wire):
+            if not isinstance(dst, dict) or dst.get("role") != "assistant":
+                continue
+            reasoning = (getattr(src, "additional_kwargs", None) or {}).get(
+                "reasoning_content")
+            if reasoning and not dst.get("reasoning_content"):
+                dst["reasoning_content"] = reasoning
+        return payload
+
+
+def apply_thinking_mode(llm: Any, thinking: bool | None) -> Any:
+    """按**请求级**开关覆盖 thinking（None = 保留构建时的配置默认值）。
+
+    只对真实 `ChatDeepSeek` 实例生效：单测用 `ChatOpenAI` 子类替身注入，不应
+    参与 DeepSeek 专属字段改写（改了会破坏替身行为、击穿工具面回归）。
+
+    思考模式下官方明示 `temperature` 不生效，故同时清空 `reasoning_effort`
+    （关闭时不发该字段，避免服务端仍在解析思考参数）。
+    """
+    if thinking is None or not isinstance(llm, ChatDeepSeek):
+        return llm
+    settings = get_settings()
+    extra_body = dict(getattr(llm, "extra_body", None) or {})
+    extra_body["thinking"] = {"type": "enabled" if thinking else "disabled"}
+    return llm.model_copy(update={
+        "extra_body": extra_body,
+        "reasoning_effort": settings.llm_reasoning_effort if thinking else None,
+    })
+
+
+def build_llm(model_name: str | None = None) -> ChatDeepSeek | None:
     """按指定模型 id 构建 LLM（None → 配置默认模型）。
 
     调用方必须先经 normalize_model_name 校验：本函数不做 allowlist 检查，
-    只负责实例化（测试桩替换点保持不变）。
+    只负责实例化（测试桩替换点保持不变，**签名不得变更**——单测以
+    `lambda model=None: spy` 替换本函数）。
+
+    输出侧全部显式化（见 config.llm_* 注释）：
+    - max_tokens：不再依赖服务端隐式默认（官方未设置时非思考 8K / 思考 64K）；
+      ChatDeepSeek 走 BaseChatOpenAI，字段名不会被改写，可直接传构造器。
+    - thinking：显式下发开关。`extra_body` 透传（ChatDeepSeek 无 thinking 字段，
+      实测 extra_body 的键会被 SDK 提升到请求体顶层）。
     """
     from nexus.config import llm_default_model
 
     settings = get_settings()
     if not settings.deepseek_api_key:
         return None
-    return ChatOpenAI(
+    thinking_enabled = (settings.llm_thinking or "").strip().lower() == "enabled"
+    kwargs: dict[str, Any] = {
+        "extra_body": {"thinking": {"type": "enabled" if thinking_enabled else "disabled"}}
+    }
+    if settings.llm_max_tokens and settings.llm_max_tokens > 0:
+        kwargs["max_tokens"] = settings.llm_max_tokens
+    if thinking_enabled:
+        kwargs["reasoning_effort"] = settings.llm_reasoning_effort
+    return _NexusChatDeepSeek(
         model=model_name or llm_default_model(settings),
         api_key=settings.deepseek_api_key,
-        base_url=settings.llm_base_url,
+        api_base=settings.llm_base_url,
         temperature=0.2,
         streaming=True,
+        **kwargs,
     )
 
 
 def build_summarization_middleware(llm: Any) -> SummarizationMiddleware:
     """DeepAgents 原生 Compact：旧历史 offload 到 StateBackend（随 checkpoint 持久化）。
 
-    触发阈值来自配置（默认 50000 tokens / 保留近期 20 条），对应 deepseek-chat
-    64k 窗口约 78% 触发。摘要仍走同一 DeepSeek 模型（额外 token 成本）。
+    触发阈值来自配置（默认 200000 tokens / 保留近期 20 条），对应 V4 的 1M 上下文
+    约 20% 处触发。摘要仍走同一 DeepSeek 模型（额外 token 成本）。
     """
     settings = get_settings()
     return SummarizationMiddleware(
@@ -349,6 +448,7 @@ def build_agent(
     checkpointer: Any | None = None,
     model: str | None = None,
     execution_mode: str | None = None,
+    thinking: bool | None = None,
 ) -> Any:
     """构建 Nexus 主智能体。LLM 未配置时抛出 RuntimeError（调用方 fail-closed）。
 
@@ -362,6 +462,11 @@ def build_agent(
     run_reproduction；缺省 Ask，安全默认）。调用方（main 聊天入口）须传
     本次 effective 值；实例缓存键须区分 Ask/Auto（见 main.get_agent）。
 
+    思考模式：thinking 为**请求级**开关（None = 用配置默认值 llm_thinking）。
+    开启时经 `apply_thinking_mode` 覆盖 extra_body.thinking 与 reasoning_effort；
+    实例缓存键须区分该维度（见 main.get_agent）——不同 thinking 的图不可复用，
+    否则开关会静默失效。
+
     模型网关 P0：model 为服务端 allowlist 内的模型 id（调用方 main._require_model
     已校验）；同 (mode, model) 复用实例，不同模型各持独立 LLM。切模型不断会话
     上下文（同一 thread），只换后续生成的模型。
@@ -370,21 +475,18 @@ def build_agent(
     llm = build_llm(model)
     if llm is None:
         raise RuntimeError("LLM_NOT_CONFIGURED: NEXUS_DEEPSEEK_API_KEY is empty")
+    llm = apply_thinking_mode(llm, thinking)
     _register_tool_surface_profile()
     saver = checkpointer if checkpointer is not None else InMemorySaver()
     # F7：Research 模式显式装配只读 researcher 子任务（Ask/Auto 同形；
     # General 不装配，结构性不可见）。research 经独立 provider 键分流，
-    # `task` 仅在该 profile 放行（其余收敛与 openai 键一致）。
+    # `task` 仅在该 profile 放行（其余收敛与 deepseek 键一致）。
     subagents = [build_researcher_subagent()] if mode == "research" else None
-    if mode == "research" and type(llm) is ChatOpenAI:
-        # 仅精确基类实例切换 provider（测试替身子类保持原样；失败则保持
-        # 原键并记日志——task 工具届时不可见，不静默谎称已装配）。
-        try:
-            llm.__class__ = _ResearchChatOpenAI
-        except Exception as error:  # noqa: BLE001
-            logger = __import__("logging").getLogger("nexus.agent")
-            logger.warning("research provider switch failed: %s",
-                           type(error).__name__)
+    if mode == "research" and isinstance(llm, _NexusChatDeepSeek):
+        # 只改 ProviderAttr（不重建实例，避免丢失 thinking 覆盖）。
+        # 单测注入的 ChatOpenAI 替身不走此分支：它们硬报 ls_provider="openai"，
+        # 命中双键注册的同一 profile（收敛等价，含 task 排除）。
+        llm._provider_key = "nexus-research"
     return create_deep_agent(
         model=llm,
         tools=_tools_for_mode(mode, execution_mode),

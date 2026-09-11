@@ -20,7 +20,7 @@ import nexus.main as main_module
 from nexus import approvals, proposals
 from nexus.config import get_settings
 from nexus.main import app
-from nexus.paper_evidence import get_registry
+from nexus.paper_evidence import EVIDENCE_EXCERPT_MAX, get_registry
 from nexus.request_scope import (
     reset_execution_scope,
     reset_scope,
@@ -495,7 +495,9 @@ async def test_evidence_marks_block_truncation(monkeypatch):
 
     import httpx as _httpx
 
-    long_text = "y" * 2000
+    # 超长块按预算常量构造，不硬编码长度：EVIDENCE_EXCERPT_MAX 调整时
+    # 断言应继续成立（同 tests/test_paper_evidence.py 的写法）。
+    long_text = "y" * (EVIDENCE_EXCERPT_MAX + 800)
     payload = {"attachment_id": "att01", "filename": "论文.pdf", "kind": "pdf",
                "status": "ready",
                "blocks": [{"text": long_text, "locator": "p4"},
