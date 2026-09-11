@@ -27,7 +27,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import utcnow_aware
+from app.core.time_utils import to_aware, utcnow_aware
 from app.domain.oj.activity import (
     ActivityStatus,
     MAX_PROBLEMS_PER_ACTIVITY,
@@ -245,6 +245,73 @@ class ExperimentActivityService:
                 )
             ).all()
         )
+
+    def list_student_activities(
+        self,
+        session: OrmSession,
+        *,
+        course_id: int,
+        student_id: int,
+        now: Optional[datetime] = None,
+    ) -> list[dict]:
+        """学生侧活动列表（PR-12）：已发布 + 可见 + 时间窗状态 + 题目摘要。
+
+        可见性 = course scope 命中本课程（class/user scope 行为未实现，跳过
+        策略与 `resolve_visible_activity_ids` 一致）。**作答窗口状态在这里
+        计算好给前端**（not_started/open/late/ended），前端不再自己猜时间。
+        """
+        published = session.exec(
+            select(ExperimentActivity).where(
+                ExperimentActivity.course_id == course_id,
+                ExperimentActivity.status == ActivityStatus.PUBLISHED.value,  # type: ignore[attr-defined]
+            )
+        ).all()
+        visible_ids = self.resolve_visible_activity_ids(
+            session, student_id=student_id, course_id=course_id
+        )
+
+        current = now or utcnow_aware()
+        result = []
+        for activity in published:
+            if activity.activity_id not in visible_ids:
+                continue
+            # SQLite 返回 naive datetime（PR-01 同款坑）——比较前必须归一到 aware
+            allowed, reason = is_submission_open(
+                current,
+                start_at=to_aware(activity.start_at) if activity.start_at else None,
+                end_at=to_aware(activity.end_at) if activity.end_at else None,
+                allow_late_submit=activity.allow_late_submit,
+            )
+            problems = self.list_problems(session, activity_id=activity.activity_id)
+            result.append({
+                "activity_id": activity.activity_id,
+                "title": activity.title,
+                "type": activity.type,
+                "description_md": activity.description_md,
+                "start_at": activity.start_at.isoformat() if activity.start_at else None,
+                "end_at": activity.end_at.isoformat() if activity.end_at else None,
+                "window_status": reason,
+                "can_submit": allowed,
+                "allow_late_submit": activity.allow_late_submit,
+                "max_submissions": activity.max_submissions,
+                "problem_count": len(problems),
+                "total_score": sum(p.max_score for p in problems),
+                "problems": [
+                    {
+                        "ordinal": p.ordinal,
+                        "problem_definition_id": p.problem_definition_id,
+                        "label": p.label,
+                        "max_score": p.max_score,
+                    }
+                    for p in problems
+                ],
+            })
+        # 进行中的排前面，其余按截止时间近的在前（无截止的垫底）
+        result.sort(key=lambda item: (
+            item["window_status"] not in ("open", "late"),
+            item["end_at"] or "9999",
+        ))
+        return result
 
     # ------------------------------------------------------------------
     # 题目组织（版本固定不变式在此强制）

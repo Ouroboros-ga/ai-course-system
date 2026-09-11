@@ -14,11 +14,13 @@ from app.core.exceptions import unified_response
 from app.core.security import get_current_user
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
+from app.services.experiment_activity_service import ExperimentActivityService
 from app.services.experiment_student_service import ExperimentStudentService
 
 student_router = APIRouter()
 
 student_service = ExperimentStudentService()
+activity_service = ExperimentActivityService()
 
 
 @student_router.get("/course/{course_id}/problems")
@@ -111,3 +113,29 @@ async def get_my_submission(
         run_id=run_id,
     )
     return unified_response(code=200, message="获取提交详情成功", data=data)
+
+
+# ⚠️ 路径必须是 /student/activities：activity_router 的
+# GET /activities/{activity_id} 会把 /activities/student 当成
+# activity_id="student" 遮蔽掉（先注册者优先）。
+@student_router.get("/course/{course_id}/student/activities")
+async def list_student_activities(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """学生侧活动列表（PR-12）：已发布 + 对我可见 + 作答窗口状态 + 题目摘要。
+
+    与教师管理列表（activities，experiment.configure）分端点：学生只看
+    published 且 scope 命中的，且窗口状态由服务端算好。
+    """
+    require_course_permission(session, current_user, course_id, "experiment.view")
+    items = activity_service.list_student_activities(
+        session,
+        course_id=course_id,
+        student_id=int(current_user["user_id"]),
+    )
+    return unified_response(
+        code=200, message="获取活动列表成功",
+        data={"items": items, "total": len(items)},
+    )

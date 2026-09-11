@@ -26,12 +26,14 @@ from app.models.database import get_session
 from app.models.experiment_activity_model import ExperimentActivityProblem
 from app.services.course_access_service import require_course_permission
 from app.services.experiment_activity_service import ExperimentActivityService
+from app.services.experiment_analytics_service import ExperimentAnalyticsService
 from app.services.experiment_scoreboard_service import ExperimentScoreboardService
 
 activity_router = APIRouter()
 
 activity_service = ExperimentActivityService()
 scoreboard_service = ExperimentScoreboardService()
+analytics_service = ExperimentAnalyticsService()
 
 
 # ---------------------------------------------------------------------------
@@ -343,3 +345,29 @@ async def get_activity_scoreboard(
         session, course_id=course_id, activity_id=activity_id
     )
     return unified_response(code=200, message="获取作业榜成功", data=board)
+
+
+@activity_router.get("/course/{course_id}/analytics/oj")
+async def get_oj_analytics(
+    course_id: int,
+    trend_days: int = 30,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """OJ 数据看板聚合（教师侧，PR-14 缩范围版）。
+
+    只含现有数据源可确定计算的指标；雷达/质量反馈等无数据源的
+    **明确不提供**，前端不得伪造。
+    """
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    summary = analytics_service.get_course_summary(
+        session, course_id=course_id, trend_days=max(7, min(trend_days, 90))
+    )
+    activity_ids = [
+        a.activity_id
+        for a in activity_service.list_activities(session, course_id=course_id)
+    ]
+    summary["activity_problem_counts"] = analytics_service.get_activity_problem_counts(
+        session, activity_ids=activity_ids
+    )
+    return unified_response(code=200, message="获取 OJ 学情聚合成功", data=summary)

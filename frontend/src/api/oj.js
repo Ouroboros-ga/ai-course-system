@@ -55,3 +55,8 @@ export const setOJActivityScopes = (courseId, activityId, scopes) =>
 
 export const getOJScoreboard = (courseId, activityId) =>
   request.get(`${courseBase(courseId)}/activities/${activityId}/scoreboard`)
+
+// ── 学生侧活动（PR-12） ──
+
+export const listOJStudentActivities = (courseId) =>
+  request.get(`${courseBase(courseId)}/student/activities`)
