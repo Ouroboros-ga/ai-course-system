@@ -7,25 +7,33 @@
 
 | 路径 | 说明 |
 |---|---|
-| `adapter_spark_x25_4b/` | LoRA 适配器：切分后权重分片 `adapter_model-00001/00002-of-00002.safetensors`＋索引 `adapter_model.safetensors.index.json`、adapter_config、tokenizer 全套、chat_template、README |
+| `adapter_spark_x25_4b/` | LoRA 适配器：权重分片索引 `adapter_model.safetensors.index.json`、adapter_config、tokenizer 全套、chat_template、README。**权重分片本体（2×65MB）不在库内，见下节** |
 | `evidence/` | 评测报告、评测明细、训练/eval loss 曲线 CSV（已去重） |
 | `model_card_spark_x25_4b.md` | 模型卡（基座/数据/训练/评测口径/已知限制） |
-| `SHA256SUMS.txt` | 本目录全部 14 个文件的 SHA-256（LF 行尾） |
+| `SHA256SUMS.txt` | 本目录库内 12 个文件的 SHA-256（LF 行尾） |
 
-## 为什么是切分格式
+## 权重分片获取（不在库内）
 
-原始单文件 `adapter_model.safetensors`（129.9MB）超过 GitHub 100MB 单文件上限，
-直接入库会炸掉双远端同步。已按标准分片格式切成 2×65MB（`adapter_model-00001/00002-of-00002.safetensors`＋索引），
-432 张量与原始文件逐值比对一致（脚本见交付记录）。`PeftModel.from_pretrained` 可直接加载分片格式，
-无需合并。原始单文件、`adapter_spark_x25_4b_final.zip` 与 `(1)` 重名副本不在库内，
-留存于原始交付包（`Downloads/model_spark_x25_4b`），SHA 见该包自带的
-`SHA256SUMS_spark_x25_4b.txt`。
+`adapter_model-00001/00002-of-00002.safetensors`（各约 65MB）因体积未入库，
+与索引文件同目录放置即可加载。下载地址：**（待填写，ModelScope/HF 链接）**。
+下载后必验 SHA（须与下完全一致，否则不得用于评审演示）：
+
+```
+adapter_model-00001-of-00002.safetensors  64927968 字节
+  SHA256 = 4d945d661cf6136bafc21943fc84f53828f3d1d1e06420989c9708d6ff83528e
+adapter_model-00002-of-00002.safetensors  64927920 字节
+  SHA256 = e3507eb8ceb5afbfabd9b12024f3cac0d100b6e8b5dfcae68f6a40ca6b5d50e4
+```
+
+切分说明：原始单文件 129.9MB 超 GitHub 100MB 上限；已按标准分片格式切分，
+432 张量与原始文件逐值比对一致。`PeftModel.from_pretrained` 可直接加载分片格式，
+无需合并。原始单文件与 `final.zip` 留存于原始交付包，不入库。
 
 ## 完整性校验
 
 ```bash
 cd competition/05-作品代码/model_spark_x25_4b
-sha256sum -c SHA256SUMS.txt   # 须 14 个 OK（Windows：certutil -hashfile <文件> SHA256 逐个比对）
+sha256sum -c SHA256SUMS.txt   # 须 12 个 OK（Windows：certutil -hashfile <文件> SHA256 逐个比对）
 ```
 
 ## 加载（推理服务侧）
