@@ -36,6 +36,9 @@ from app.core.time_utils import utcnow_aware
 # 约定：这两个模块必须保持零内部依赖，不得 import app.models / app.services。
 from app.domain.oj.judging.verdicts import RunState, state_for_outcome
 from app.domain.oj.submissions.run_types import DEFAULT_RUN_TYPE
+# PR-09：题目难度 / 标签。同样只 import 叶子模块（零内部依赖）；
+# 默认值由域层单点定义，避免「模型默认 medium、服务默认 easy」这类分裂。
+from app.domain.oj.problems.metadata import DEFAULT_DIFFICULTY
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +86,14 @@ class ExperimentDefinition(SQLModel, table=True):
     knowledge_node_ids: list = Field(
         default_factory=list, sa_column=Column(JSON),
         description="关联知识点节点",
+    )
+    difficulty: str = Field(
+        default=DEFAULT_DIFFICULTY, index=True, max_length=16,
+        description="难度：easy / medium / hard（取值由 domain/oj/problems 约束）",
+    )
+    tags: list = Field(
+        default_factory=list, sa_column=Column(JSON),
+        description="标签，自由文本、保序去重（规范化见 domain/oj/problems）",
     )
     max_attempts: int = Field(default=3, description="最大尝试次数")
     cooldown_minutes: int = Field(default=30, description="尝试冷却（分钟）")

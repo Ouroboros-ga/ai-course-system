@@ -157,15 +157,16 @@ ACM 终局语义（全 AC 才满分 / 任一非 AC 归零）、免费沙箱配�
 | PR | 内容 | 是否改 schema | 预计新增 | 依赖 |
 |---|---|---|---|---|
 | **PR-00** | 现状盘点 + ADR（**0 行代码**） | 否 | 文档 700 | — |
-| **PR-01** | **Run 状态 / 判定分离**（`RunState` / `RunVerdict` + `run_state` 列 + 迁移 + 测试） | **是（+1 列）** | 430 + 测试 180 | PR-00 |
-| **PR-02** | `domain/oj/` 骨架 + 兼容 import shim（0 行为变化） | 否 | 260 | PR-00 |
+| **PR-01** | **Run 状态 / 判定分离**（`RunState` / `RunVerdict` + `run_state` 列 + 迁移 + 测试）**（已实施）** | **是（+1 列）** | 430 + 测试 180 | PR-00 |
+| **PR-02** | `domain/oj/` 骨架 + Judge0 出口收拢（**已实施**；**未留 shim**，理由见改动说明 §6.2） | 否 | 260 | PR-00 |
 | **PR-03** | 拆 `experiment_service` → problems services | 否 | 120 | PR-02 |
 | **PR-04** | 拆 `experiment_service` → attempt / run services | 否 | 150 | PR-03 |
-| **PR-05** | 判定词汇归位判题域（映射表搬出业务服务） | 否 | 60 | PR-02 |
-| **PR-06** | `intelligence/`（diagnosis / hint / explanation）归位 | 否 | 260 | PR-04 |
+| **PR-05** | 判定词汇归位判题域（映射表搬出业务服务）**（已实施）** | 否 | 60 | PR-02 |
+| **PR-06a** | `intelligence/`：diagnosis + explanation 归位（**已实施**，不碰 `experiment_service`） | 否 | 90 | PR-02 |
+| **PR-06b** | `intelligence/`：`CodingHintService` 归位（**须等 PR-04**，在 `experiment_service.py` 内） | 否 | 170 | PR-04 |
 | **PR-07** | Activity 域（DB + models + service + policies） | 是（+3 表） | 1140 | PR-05 |
 | **PR-08** | Activity admin APIs | 否 | （含 PR-07） | PR-07 |
-| **PR-09** | `difficulty` / `tags` + 迁移（**PR-10 的前置**） | 是（+2 列） | 180 | PR-02 |
+| **PR-09** | `difficulty` / `tags` + 迁移（**PR-10 的前置**）**（已实施**，取值口径与回填策略见改动说明 §9**）** | 是（+2 列） | 180 | PR-02 |
 | **PR-10** | 学生题库 / 我的提交 / 提交详情 façade | 否 | 1060 | PR-09 |
 | **PR-11** | HomeworkScoreboard | 否 | 260 | PR-07 |
 | **PR-12** | 学生 Activity 页 + 教师 Activity 管理页 | 否 | 960 | PR-08 |
@@ -178,6 +179,17 @@ ACM 终局语义（全 AC 才满分 / 任一非 AC 归零）、免费沙箱配�
 **第一阶段（可交付闭环）= PR-00 → PR-01 → PR-02 → PR-03 → PR-04 → PR-05 → PR-06**
 = 治理前置 + Run 语义分离 + 骨架 + 拆分 + Judge0 收拢 + intelligence 归位
 （约 **1900 行代码 + 700 行文档**，无新业务、行为不变）
+
+> **实施进度（2026-09-11）**：PR-00 / 01 / 02 / 05 / **06a** 已完成并提交
+> （`498216cb`、`4d5e1c23`）。
+> **PR-03 / 04 受阻**：`experiment_service.py` 内有他线（学生工作台）212 行在途代码，
+> 拆分会与之冲突。因此 PR-06 按落点拆为两半，先做不依赖 PR-04 的 **06a**，
+> `CodingHintService` 归位（**06b**）等 PR-04。
+> **PR-09 已实施**（前置只有 PR-02，不被他线阻塞）：两列 + 迁移 `oj20260911v2` +
+> 域模块 `domain/oj/problems/` + 62 例测试。**服务层只做最小追加**，
+> 提交时以「HEAD + 我的 5 处改动」重建 blob 精确入库，他线 `starter_code` 行留在工作树。
+> 顺带修掉一个**继承的失败测试**：`test_migration_ledger_idempotent_on_repeated_upgrade`
+> 写死账本条数 `== 10`，PR-01 就已击穿（实测 11），已改为断言幂等不变量（见改动说明 §9）。
 
 **第二阶段（业务闭环）= PR-07 → PR-08 → PR-09 → PR-10 → PR-11 → PR-12**
 = Activity 域 + 学生页面 + Homework scoreboard（约 **4200 行**）

@@ -974,28 +974,77 @@ def test_migration_ops_preflight_blocks_when_legacy_orphan_exists(tmp_path):
 
 
 def test_migration_ledger_idempotent_on_repeated_upgrade(tmp_path):
-    """重复执行 upgrade head，账本条目应保持唯一（不产生重复行）。"""
+    """重复执行 upgrade head，账本条目应保持唯一（不产生重复行）。
+
+    本测试的**意图是幂等**，不是"账本恰好 N 条"。原先写死 `count == 10`
+    是在给一个会随每次新增迁移变化的数字做断言 —— 2026-09-11 已被 PR-01
+    （`oj20260911v1`）击穿一次（实际 11），PR-09（`oj20260911v2`）再击穿一次
+    （实际 12）。写死的数字不表达任何契约，只保证"以后每次加迁移都要来改它"。
+
+    改成断言真正的不变量：
+
+    1. 跑两遍与跑一遍的账本内容**完全一致**（这才是"重复执行无副作用"）；
+    2. `batch_id` 无重复（原先第二条断言，保留）；
+    3. 账本**至少包含**已知的迁移批次 —— 防"账本表被整个跳过"这种
+       让幂等断言空洞成立的失效模式。
+
+    注意：**不断言批次总数等于迁移数量**。并非每个迁移都写账本
+    （如 0002–0008 只由业务代码写），所以两者本来就不相等。
+    """
     db_path = tmp_path / "idempotent.db"
     db_url = f"sqlite:///{db_path}"
 
     _run_migration_ops(db_url, "upgrade", "--skip-preflight")
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        with engine.connect() as conn:
+            first_rows = conn.execute(
+                text(
+                    "SELECT batch_id, name, status, applied_rows "
+                    "FROM schema_migration_records ORDER BY batch_id"
+                )
+            ).fetchall()
+            first_count = conn.execute(
+                text("SELECT COUNT(*) FROM schema_migration_records")
+            ).scalar()
+    finally:
+        engine.dispose()
+
+    assert first_count > 0, "账本表为空 —— 迁移根本没写账本，后续断言会空洞成立"
+
+    # 第二次 upgrade head：此时已是 head，应为 no-op
     _run_migration_ops(db_url, "upgrade", "--skip-preflight")
 
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
     try:
         with engine.connect() as conn:
-            count = conn.execute(
-                text("SELECT COUNT(*) FROM schema_migration_records")
-            ).scalar()
-            # 8 条业务账本（0001-0008）+ 0057/0058 迁移自写账本 = 10 条；
-            # 重复 upgrade 不产生重复行（幂等）
-            assert count == 10, f"应只有 10 条账本，实际 {count}"
+            second_rows = conn.execute(
+                text(
+                    "SELECT batch_id, name, status, applied_rows "
+                    "FROM schema_migration_records ORDER BY batch_id"
+                )
+            ).fetchall()
             distinct_batches = conn.execute(
                 text("SELECT COUNT(DISTINCT batch_id) FROM schema_migration_records")
             ).scalar()
-            assert distinct_batches == count, "batch_id 应保持唯一，不产生重复行"
+            second_count = conn.execute(
+                text("SELECT COUNT(*) FROM schema_migration_records")
+            ).scalar()
     finally:
         engine.dispose()
+
+    assert second_rows == first_rows, (
+        "重复 upgrade 改动了账本内容（应完全 no-op）：\n"
+        f"before={first_rows}\nafter={second_rows}"
+    )
+    assert distinct_batches == second_count, "batch_id 应保持唯一，不产生重复行"
+
+    # 防"账本被整个跳过"：至少须含本轮已知批次
+    known_batches = {row[0] for row in second_rows}
+    for expected in ("oj_run_semantics_v1", "oj_problem_metadata_v1"):
+        assert expected in known_batches, (
+            f"账本缺少 {expected}；实际批次：{sorted(known_batches)}"
+        )
 
 
 # ==================== 场景5：真实历史 schema 升级演练（P1-2）====================

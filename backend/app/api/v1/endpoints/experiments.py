@@ -59,6 +59,11 @@ class DefinitionCreateRequest(BaseModel):
     description: str = Field(default="", max_length=4000)
     language_whitelist: list[str] = Field(default_factory=list)
     knowledge_node_ids: list[int] = Field(default_factory=list)
+    # PR-09：只做长度上限的形状约束；取值合法性由 service → 域层校验
+    # （值域是域概念，写在 router 里会与 `domain/oj/problems` 分裂成两份）。
+    # 留 `None` 而非默认 "medium"：让「没填」与「填了 medium」在服务端可区分。
+    difficulty: Optional[str] = Field(default=None, max_length=16)
+    tags: list[str] = Field(default_factory=list, max_length=20)
     max_attempts: int = Field(default=3, ge=1, le=20)
     cooldown_minutes: int = Field(default=30, ge=0, le=1440)
 
@@ -67,6 +72,8 @@ class DefinitionUpdateRequest(BaseModel):
     title: Optional[str] = Field(default=None, max_length=200)
     description: Optional[str] = Field(default=None, max_length=4000)
     language_whitelist: Optional[list[str]] = None
+    difficulty: Optional[str] = Field(default=None, max_length=16)
+    tags: Optional[list[str]] = Field(default=None, max_length=20)
     max_attempts: Optional[int] = Field(default=None, ge=1, le=20)
     cooldown_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
 
@@ -125,6 +132,12 @@ def _serialize_definition(d) -> dict[str, Any]:
         "default_version_id": d.default_version_id,
         "publish_status": d.publish_status.value,
         "knowledge_node_ids": d.knowledge_node_ids,
+        # PR-09：题目元数据。
+        # `difficulty` 恒有值（列 NOT NULL + server_default），直接回显。
+        # `tags` 用 `or []` 兜住**迁移前插入的历史行** —— 那些行的 JSON 列是
+        # SQL NULL，而 `d.tags` 会是 None；前端不该为此多写一处判空。
+        "difficulty": d.difficulty,
+        "tags": list(d.tags or []),
         "max_attempts": d.max_attempts,
         "cooldown_minutes": d.cooldown_minutes,
         "created_by": d.created_by,
@@ -315,6 +328,8 @@ async def create_definition(
         description=payload.description,
         language_whitelist=payload.language_whitelist,
         knowledge_node_ids=payload.knowledge_node_ids,
+        difficulty=payload.difficulty,
+        tags=payload.tags,
         max_attempts=payload.max_attempts,
         cooldown_minutes=payload.cooldown_minutes,
         created_by=user_id,
@@ -369,6 +384,8 @@ async def update_definition(
         title=payload.title,
         description=payload.description,
         language_whitelist=payload.language_whitelist,
+        difficulty=payload.difficulty,
+        tags=payload.tags,
         max_attempts=payload.max_attempts,
         cooldown_minutes=payload.cooldown_minutes,
     )
