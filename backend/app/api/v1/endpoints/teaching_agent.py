@@ -705,6 +705,7 @@ async def _respond_for_subject(
             concept_id=state.get("current_concept_id"),
             resource_id=resource_id,
             citations=citations,
+            discipline_references=discipline_references,
         )
     return response
 
@@ -830,6 +831,8 @@ async def list_conversation_history(
                 "resource_id": msg.resource_id,
                 "trace_id": msg.trace_id,
                 "citations": msg.citations,
+                # R14 学科参考随回答一起回放，刷新/回看时"学科参考"区块才不丢。
+                "discipline_references": msg.discipline_references or [],
                 "created_at": msg.created_at.isoformat() if msg.created_at else None,
             }
             for msg in messages
