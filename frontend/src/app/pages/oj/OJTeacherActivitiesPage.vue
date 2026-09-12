@@ -57,7 +57,7 @@ async function load() {
   try {
     const [acts, defs] = await Promise.all([
       listOJActivities(courseId.value),
-      request.get(`/api/v1/experiments/course/${courseId.value}/definitions`).catch(() => null),
+      request.get(`/experiments/course/${courseId.value}/definitions`).catch(() => null),
     ])
     activities.value = Array.isArray(acts?.items) ? acts.items : []
     definitions.value = Array.isArray(defs?.items) ? defs.items : []
@@ -78,7 +78,7 @@ async function loadDetail() {
     return
   }
   detail.value = await request.get(
-    `/api/v1/experiments/course/${courseId.value}/activities/${selectedActivityId.value}`,
+    `/experiments/course/${courseId.value}/activities/${selectedActivityId.value}`,
   )
 }
 
@@ -202,7 +202,7 @@ onMounted(async () => {
     </header>
 
     <label v-if="courses.length" class="oj-course-select sfx-t-ui">
-      课程
+      <span class="oj-course-label">课程</span>
       <select v-model="courseId" class="sfx-select" @change="load()">
         <option v-for="course in courses" :key="course.course_id" :value="String(course.course_id)">
           {{ course.title }}
@@ -333,6 +333,8 @@ onMounted(async () => {
 
 <style scoped>
 .oj-course-select { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.oj-course-label { flex: 0 0 auto; white-space: nowrap; }
+/* label 文本在 flex 里被压成一字一行（2026-09-12 云端截图发现）——nowrap 修 */
 .oj-message { margin-bottom: var(--space-3); color: var(--ink-900); }
 .oj-section-title {
   font-size: var(--ui-sm-size);

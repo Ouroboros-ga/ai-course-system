@@ -2,11 +2,13 @@ import request from '@/utils/request.js'
 
 /**
  * OJ 题库 / 活动 / 榜 API（PR-10/08/11 前端接入）。
- * 全部挂在既有前缀 /api/v1/experiments 下（ADR-0001 决定 6，不引入 /oj）。
+ * 挂既有前缀 /experiments 下（ADR-0001 决定 6，不引入 /oj）。
+ * ⚠️ 路径**不带** /api/v1 —— request.js 的 baseURL 已是 /api/v1（8 行），
+ * 再带一次会拼成 /api/v1/api/v1/... → 404「接口不存在」（2026-09-12 云端复核踩到）。
  * request 拦截器对统一信封 {code,message,data} 自动解包，这里直接返回 data。
  */
 
-const courseBase = (courseId) => `/api/v1/experiments/course/${courseId}`
+const courseBase = (courseId) => `/experiments/course/${courseId}`
 
 // ── 学生题库 façade（PR-10） ──
 

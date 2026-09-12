@@ -93,7 +93,7 @@ onMounted(async () => {
     </header>
 
     <label v-if="courses.length" class="oj-course-select sfx-t-ui">
-      课程
+      <span class="oj-course-label">课程</span>
       <select v-model="courseId" class="sfx-select" @change="load()">
         <option v-for="course in courses" :key="course.course_id" :value="String(course.course_id)">
           {{ course.title }}
@@ -156,6 +156,8 @@ onMounted(async () => {
 
 <style scoped>
 .oj-course-select { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.oj-course-label { flex: 0 0 auto; white-space: nowrap; }
+/* label 文本在 flex 里被压成一字一行（2026-09-12 云端截图发现）——nowrap 修 */
 .oj-assignment-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: var(--space-4); }
 .oj-assignment-card { display: flex; flex-direction: column; gap: var(--space-3); }
 .oj-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
