@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import request from '@/utils/request.js'
 import { listFacadeCourses } from '@/api/facade.js'
+import { getOJAnalytics } from '@/api/oj.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -22,6 +23,7 @@ const search = ref('')
 const statusFilter = ref('')
 const difficultyFilter = ref('')
 const busyId = ref('')
+const usageByExp = ref({})
 
 const stats = computed(() => {
   const total = items.value.length
@@ -50,6 +52,13 @@ async function load() {
     if (statusFilter.value) rows = rows.filter((i) => i.publish_status === statusFilter.value)
     if (difficultyFilter.value) rows = rows.filter((i) => i.difficulty === difficultyFilter.value)
     items.value = rows
+    // 使用次数 = 尝试计数（看板聚合端点 problem_stats 的逐题统计）
+    const analytics = await getOJAnalytics(courseId.value).catch(() => null)
+    const statsMap = {}
+    for (const stat of analytics?.problem_stats || []) {
+      statsMap[stat.experiment_id] = stat.attempt_total
+    }
+    usageByExp.value = statsMap
     state.value = 'ready'
   } catch (caught) {
     error.value = caught?.message || '题目加载失败'
@@ -176,7 +185,7 @@ onMounted(async () => {
       <section v-else class="sfx-panel oj-table-panel">
         <table class="oj-table">
           <thead>
-            <tr><th>题目</th><th>难度</th><th>标签</th><th>状态</th><th>操作</th></tr>
+            <tr><th>题目</th><th>难度</th><th>标签</th><th>使用次数</th><th>状态</th><th>操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="item in items" :key="item.experiment_id">
@@ -189,6 +198,7 @@ onMounted(async () => {
               <td class="oj-col-tags">
                 <span v-for="tag in (item.tags || []).slice(0, 3)" :key="tag" class="oj-tag">{{ tag }}</span>
               </td>
+              <td class="sfx-t-ui">{{ usageByExp[item.experiment_id] || 0 }} 次</td>
               <td>
                 <SfxBadge :tone="statusTone(item.publish_status)">
                   {{ statusLabel(item.publish_status) }}
