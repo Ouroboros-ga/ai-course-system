@@ -156,7 +156,11 @@ function formatRate(rate) {
 }
 
 function openProblem(item) {
-  router.push(`/app/oj/problems/${item.experiment_id}`)
+  // 带上当前选中课程：详情页必须用同一课程查题，否则多课学生会 404
+  router.push({
+    path: `/app/oj/problems/${item.experiment_id}`,
+    query: { course: courseId.value },
+  })
 }
 
 onMounted(async () => {

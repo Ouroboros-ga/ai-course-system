@@ -47,7 +47,15 @@ const workbenchExperiment = computed(() => {
 
 async function loadCourses() {
   courses.value = await listExperimentCourses()
-  courseId.value = courses.value[0] ? String(courses.value[0].course_id) : ''
+  // ⚠️ 课程必须继承来源页（题库/活动作业）选中的那门 —— 学生可能有多门
+  // 沙箱课，固定取 courses[0] 会导致「题库里有题、点进去却 404」
+  // （2026-09-12 用户实测：/app/oj/problems/e 点不进去）。
+  const fromQuery = String(route.query.course || '')
+  if (fromQuery && courses.value.some((c) => String(c.course_id) === fromQuery)) {
+    courseId.value = fromQuery
+  } else {
+    courseId.value = courses.value[0] ? String(courses.value[0].course_id) : ''
+  }
 }
 
 async function load() {
