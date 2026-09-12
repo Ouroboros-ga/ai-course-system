@@ -1,8 +1,6 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
-  ArrowLeft,
-  FileText,
   LoaderCircle,
   Search,
   Sparkles,
@@ -10,10 +8,12 @@ import {
   X,
 } from 'lucide-vue-next'
 import {
-  fetchProtectedImageUrl,
   getActiveKnowledgeGraph,
   getActiveKnowledgeNode,
 } from '@/api/graph.js'
+import { getPlayerInitData } from '@/api/player.js'
+import { normalizePlayerData } from '@/features/student-learning/adapters/playerWorkspaceAdapter.js'
+import { nodeTypeLabel } from '@/features/knowledge-bundle/nodeTypeLabels.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import KnowledgeGraphCanvas from '@/features/knowledge-bundle/KnowledgeGraphCanvas.vue'
 
@@ -23,7 +23,7 @@ const props = defineProps({
   nodeTitle: { type: String, default: '' },
   recommendationContext: { type: Object, default: null },
 })
-const emit = defineEmits(['jump-node', 'return-anchor'])
+const emit = defineEmits(['jump-node', 'open-learn-node'])
 
 const status = ref('loading')
 const errorMessage = ref('')
@@ -32,10 +32,11 @@ const selectedKey = ref('')
 const selectedNode = ref(null)
 const loadingKey = ref('')
 const query = ref('')
-const selectedCitation = ref(null)
-const citationImageUrl = ref('')
-const imageStatus = ref('idle')
 const detailOpen = ref(true)
+// 学习页节点（/player/init）：只用于把原文引用页码映射到学习页节点，
+// 不参与图谱渲染，也不写入任何学习状态。
+const learnNodeStatus = ref('idle')
+const learnNodes = ref([])
 
 // Keep the public GraphSnapshot vocabulary explicit at the view boundary.
 // The API returns the snapshot fields at the top level, while older callers
@@ -51,7 +52,6 @@ const snapshotMeta = computed(() => {
 })
 const nodes = computed(() => Array.isArray(snapshot.value?.nodes) ? snapshot.value.nodes : [])
 const relations = computed(() => Array.isArray(snapshot.value?.relations) ? snapshot.value.relations : [])
-const bundle = computed(() => graph.value?.bundle || null)
 const nodeByKey = computed(() =>
   new Map(nodes.value.map((node) => [String(node.id), node])),
 )
@@ -74,7 +74,36 @@ const successorNodes = computed(() =>
     .map((key) => nodeByKey.value.get(String(key)))
     .filter(Boolean),
 )
-const citations = computed(() => selectedNode.value?.citations || [])
+const selectedCitations = computed(() =>
+  Array.isArray(selectedNode.value?.citations) ? selectedNode.value.citations : [],
+)
+// 原文引用页 → 学习页节点：用 page_start / page_end 的区间包含关系做映射。
+// 与学习页共用 normalizePlayerData，因此节点身份（index / outlineNodeId）与学习页一致。
+const citationLearnNodes = computed(() => {
+  if (!selectedCitations.value.length || !learnNodes.value.length) return []
+  const matched = new Map()
+  selectedCitations.value.forEach((citation) => {
+    const page = Number(citation?.page_number)
+    if (!Number.isFinite(page)) return
+    learnNodes.value.forEach((node) => {
+      if (page < node.pageStart || page > node.pageEnd) return
+      const key = String(node.id)
+      if (!matched.has(key)) matched.set(key, { node, pages: new Set() })
+      matched.get(key).pages.add(page)
+    })
+  })
+  return [...matched.values()].map(({ node, pages }) => {
+    const sorted = [...pages].sort((a, b) => a - b)
+    return { ...node, pages: sorted, pagesLabel: sorted.join('、') }
+  })
+})
+const citationPagesLabel = computed(() =>
+  [...new Set(
+    selectedCitations.value
+      .map((citation) => Number(citation?.page_number))
+      .filter((page) => Number.isFinite(page)),
+  )].sort((a, b) => a - b).join('、'),
+)
 
 async function loadGraph() {
   status.value = 'loading'
@@ -123,51 +152,37 @@ async function selectNode(nodeOrKey, navigate = true) {
   if (navigate) emit('jump-node', nodeByKey.value.get(key) || { id: key })
 }
 
-async function openCitation(citation) {
-  closeCitation()
-  selectedCitation.value = citation
-  if (!citation.render_url) return
-  imageStatus.value = 'loading'
+// 首次选中带引用（citations）的节点时再读取学习页节点，避免无关浏览产生额外请求。
+async function loadLearnNodes() {
+  if (learnNodeStatus.value === 'loading' || learnNodeStatus.value === 'ready') return
+  learnNodeStatus.value = 'loading'
   try {
-    citationImageUrl.value = await fetchProtectedImageUrl(citation.render_url)
-    imageStatus.value = 'ready'
+    const response = await getPlayerInitData(props.courseId)
+    const normalized = normalizePlayerData(response)
+    learnNodes.value = Array.isArray(normalized?.nodes) ? normalized.nodes : []
+    learnNodeStatus.value = 'ready'
   } catch {
-    imageStatus.value = 'error'
+    learnNodes.value = []
+    learnNodeStatus.value = 'error'
   }
 }
 
-function closeCitation() {
-  if (citationImageUrl.value) URL.revokeObjectURL(citationImageUrl.value)
-  citationImageUrl.value = ''
-  imageStatus.value = 'idle'
-  selectedCitation.value = null
-}
-
-watch(() => props.courseId, loadGraph)
+watch(() => props.courseId, () => {
+  learnNodes.value = []
+  learnNodeStatus.value = 'idle'
+  loadGraph()
+})
 watch(() => props.nodeId, (value) => {
   if (value && graph.value) selectNode(String(value), false)
 })
+watch(selectedNode, (node) => {
+  if (Array.isArray(node?.citations) && node.citations.length) loadLearnNodes()
+})
 onMounted(loadGraph)
-onBeforeUnmount(closeCitation)
 </script>
 
 <template>
   <section class="student-kg" aria-label="课程知识图谱">
-    <header class="student-kg__header">
-      <div class="student-kg__heading">
-        <p class="eyebrow">已激活知识包</p>
-        <h2 class="student-kg__title">课程知识图谱</h2>
-        <p v-if="bundle" class="muted">
-          Bundle v{{ bundle.version }} · {{ nodes.length }} 个节点 ·
-          {{ relations.length }} 条语义关系
-        </p>
-      </div>
-      <SfxButton variant="secondary" size="sm" @click="emit('return-anchor')">
-        <template #icon><ArrowLeft :size="15" /></template>
-        返回课程
-      </SfxButton>
-    </header>
-
     <div v-if="status === 'loading'" class="state" role="status">
       <LoaderCircle class="spin" :size="22" /> 正在读取已激活知识包…
     </div>
@@ -195,7 +210,7 @@ onBeforeUnmount(closeCitation)
             @click="selectNode(node)"
           >
             <span class="node-item__title">{{ node.title || node.label || node.id }}</span>
-            <small class="node-item__type">{{ node.type || node.kind || 'concept' }}</small>
+            <small class="node-item__type">{{ nodeTypeLabel(node.type || node.kind) }}</small>
           </button>
         </div>
       </aside>
@@ -213,7 +228,7 @@ onBeforeUnmount(closeCitation)
             <X :size="16" />
           </button>
         <template v-if="selectedNode">
-          <p class="eyebrow">{{ selectedNode.entity_type }}</p>
+          <p class="eyebrow">{{ nodeTypeLabel(selectedNode.entity_type) }}</p>
           <h3 class="detail__title">{{ selectedNode.title }}</h3>
           <p class="detail__desc">{{ selectedNode.description || '该知识点暂无补充描述。' }}</p>
 
@@ -258,20 +273,28 @@ onBeforeUnmount(closeCitation)
           </section>
 
           <section class="detail__section">
-            <h4>原文引用</h4>
-            <div v-if="citations.length" class="citations">
-              <button
-                v-for="citation in citations"
-                :key="citation.citation_id"
-                type="button"
-                class="citation-btn"
-                @click="openCitation(citation)"
+            <h4>对应学习节点</h4>
+            <div v-if="citationLearnNodes.length" class="chips">
+              <SfxButton
+                v-for="entry in citationLearnNodes"
+                :key="entry.id"
+                variant="tertiary"
+                size="sm"
+                :title="`引用第 ${entry.pagesLabel} 页，进入《${entry.title}》`"
+                @click="emit('open-learn-node', entry)"
               >
-                <FileText :size="14" aria-hidden="true" />
-                <span>{{ citation.source_file || '课程文件' }} · 第 {{ citation.page_number }} 页</span>
-              </button>
+                {{ entry.title }}
+              </SfxButton>
             </div>
-            <p v-else class="muted">该节点没有可公开的有效 Citation</p>
+            <p v-else-if="!selectedCitations.length" class="muted">
+              该节点没有可定位到学习页的原文引用
+            </p>
+            <p v-else-if="learnNodeStatus === 'loading'" class="muted">正在匹配学习页节点…</p>
+            <p v-else-if="learnNodeStatus === 'error'" class="muted">学习页节点暂时无法读取。</p>
+            <p v-else class="muted">引用页面暂未映射到学习页节点</p>
+            <p v-if="citationLearnNodes.length && citationPagesLabel" class="muted learn-entry__meta">
+              依据原文引用第 {{ citationPagesLabel }} 页定位
+            </p>
           </section>
         </template>
         </aside>
@@ -279,33 +302,6 @@ onBeforeUnmount(closeCitation)
           <Sparkles :size="15" /> 查看当前节点
         </button>
       </div>
-    </div>
-
-    <div v-if="selectedCitation" class="drawer-backdrop" @click.self="closeCitation">
-      <aside class="citation-drawer" role="dialog" aria-label="原文引用详情">
-        <header class="citation-drawer__header">
-          <div>
-            <p class="eyebrow">原文引用</p>
-            <h3>{{ selectedCitation.source_file || '课程原文' }}</h3>
-          </div>
-          <button type="button" class="icon-btn" aria-label="关闭" @click="closeCitation">
-            <X :size="18" />
-          </button>
-        </header>
-        <p class="muted">第 {{ selectedCitation.page_number }} 页 · {{ selectedCitation.status }}</p>
-        <blockquote class="quote">{{ selectedCitation.text_snippet }}</blockquote>
-        <div v-if="imageStatus === 'loading'" class="state">正在加载受保护页图…</div>
-        <img
-          v-else-if="citationImageUrl"
-          :src="citationImageUrl"
-          alt="Citation 原文页"
-          class="citation-img"
-        />
-        <p v-else-if="imageStatus === 'error'" class="state state--error">
-          原文页图加载失败，但引用文本仍可审计。
-        </p>
-        <p v-else class="muted">当前引用尚无页面渲染资产。</p>
-      </aside>
     </div>
   </section>
 </template>
@@ -319,22 +315,6 @@ onBeforeUnmount(closeCitation)
   flex: 1;
   min-height: 0;
   gap: var(--space-3, 12px);
-  color: var(--text-primary, #172033);
-}
-
-.student-kg__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4, 16px);
-  flex-shrink: 0;
-}
-
-.student-kg__title {
-  margin: var(--space-1, 4px) 0;
-  font-size: var(--title-2-size, 24px);
-  line-height: var(--title-2-line, 32px);
-  font-weight: var(--title-2-weight, 600);
   color: var(--text-primary, #172033);
 }
 
@@ -370,7 +350,14 @@ onBeforeUnmount(closeCitation)
   gap: var(--space-3, 12px);
   flex: 1;
   min-height: 0;
-  min-block-size: 650px;
+}
+
+/* design.md §5.1 L3：本面板必须整体塞入可用高度——画布随容器收缩，目录与详情
+   各自在内部局部滚动；不再用固定最小高度把内容顶出，避免页面右侧出现整页滚动条。
+   仅作用于图谱面板内的画布实例，不影响评审页复用的同一画布组件。 */
+.canvas-shell :deep(.canvas-frame) {
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .rail {
@@ -525,75 +512,9 @@ onBeforeUnmount(closeCitation)
   flex-wrap: wrap;
   gap: var(--space-2, 8px);
 }
-
-.citations {
-  display: grid;
-  gap: var(--space-2, 8px);
-}
-/* design.md §4.5 原文引用块：左边框 3px ink-500 */
-.citation-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2, 8px);
-  border: 1px solid var(--ink-300, #8EA7BE);
-  border-left: 3px solid var(--ink-500, #355C7D);
-  border-radius: 0 var(--radius-md, 10px) var(--radius-md, 10px) 0;
-  background: var(--surface-cool, #F7F8FA);
-  padding: var(--space-2, 8px) var(--space-3, 12px);
-  color: var(--ink-700, #203A5F);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.citation-btn:hover { background: var(--ink-100, #E8EEF4); }
-
-/* design.md §4.9 Drawer：右侧滑入，圆角 18px 0 0 18px */
-.drawer-backdrop {
-  position: fixed;
-  z-index: 1200;
-  inset: 0;
-  display: flex;
-  justify-content: flex-end;
-  background: var(--surface-overlay, rgba(16, 26, 49, 0.42));
-}
-.citation-drawer {
-  width: min(520px, 92vw);
-  overflow-y: auto;
-  background: var(--surface-panel, #FFFFFF);
-  padding: var(--space-6, 24px);
-  box-shadow: var(--shadow-md, 0 12px 32px rgba(16, 26, 49, 0.10));
-  border-radius: var(--radius-xl, 18px) 0 0 var(--radius-xl, 18px);
-}
-.citation-drawer__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: var(--space-3, 12px);
-}
-.icon-btn {
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  color: var(--text-muted, #7B8494);
-  padding: var(--space-2, 8px);
-  border-radius: var(--radius-sm, 6px);
-}
-.icon-btn:hover { background: var(--surface-cool, #F7F8FA); color: var(--ink-700, #203A5F); }
-
-/* design.md §4.5 原文引用块样式 */
-.quote {
-  margin: var(--space-4, 16px) 0;
-  border-left: 3px solid var(--ink-500, #355C7D);
-  padding: var(--space-3, 12px) var(--space-4, 16px);
-  background: var(--surface-cool, #F7F8FA);
-  border-radius: 0 var(--radius-md, 10px) var(--radius-md, 10px) 0;
-  line-height: 1.7;
-  color: var(--text-primary, #172033);
-}
-.citation-img {
-  width: 100%;
-  border: 1px solid var(--border-default, #DDE2E8);
-  border-radius: var(--radius-md, 10px);
+.learn-entry__meta {
+  margin: var(--space-2, 8px) 0 0;
+  font-size: var(--caption-size, 12px);
 }
 
 /* design.md §4 动效令牌：思考点动画例外 */
@@ -607,7 +528,9 @@ onBeforeUnmount(closeCitation)
   .workspace { grid-template-columns: 236px minmax(0, 1fr); }
 }
 @container (max-width: 680px) {
-  .workspace { grid-template-columns: 1fr; grid-template-rows: 250px minmax(430px, 1fr); }
+  /* 窄容器下目录在上、画布在下，按 1:2 分配可用高度；仍不使用固定像素高度，
+     保证整页塞下时不会再次撑出滚动条。 */
+  .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 2fr); }
   .detail { top: 52px; bottom: 132px; }
 }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }

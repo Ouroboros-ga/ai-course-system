@@ -19,7 +19,7 @@ const activeKey = computed(() => props.tabs.find((t) => route.path.startsWith(t.
   <div class="sfx-space-layout">
     <div class="sfx-space-l2nav">
       <div class="sfx-space-l2nav-inner">
-        <nav class="sfx-space-l2nav-links" :aria-label="ariaLabel">
+        <nav class="sfx-space-l2nav-links" :aria-label="ariaLabel" v-nav-slider="{ inset: 'padding' }">
           <RouterLink
             v-for="tab in tabs"
             :key="tab.key"
@@ -91,15 +91,7 @@ const activeKey = computed(() => props.tabs.find((t) => route.path.startsWith(t.
 .sfx-space-l2nav-link:hover { color: var(--ink-700); }
 .sfx-space-l2nav-link.is-active { color: var(--ink-900); }
 
-.sfx-space-l2nav-link.is-active::after {
-  content: '';
-  position: absolute;
-  left: var(--space-4);
-  right: var(--space-4);
-  bottom: -1px;
-  height: 2px;
-  background: var(--ink-900);
-}
+/* 底部 2px 指示线由 v-nav-slider 指令生成并滑动（原 is-active::after 已移除） */
 
 .sfx-space-l2nav-actions {
   display: flex;

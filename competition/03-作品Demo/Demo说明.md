@@ -1,12 +1,12 @@
 # 03 作品 Demo 说明
 
 > 赛题要求：《03—作品 Demo》创新应用 Demo 体验地址 + 文档说明（选手自行部署）。
-> 状态：🟡 体验地址待部署（云服务器 120.26.104.247 或新域名，需团队授权部署后填写）。
+> 状态：✅ 已部署至 **https://zsitai.xyz/**（演示账号见服务器 `/opt/smartcarb/demo-student-accounts.csv`，合成数据）。
 
-## 体验地址（待填写）
+## 体验地址
 
-- Demo URL：________________
-- 演示账号（合成数据，非真实用户）：________________
+- Demo URL：**https://zsitai.xyz/**
+- 演示账号（合成数据，非真实用户）：服务器 `/opt/smartcarb/demo-student-accounts.csv` 已备
 - 环境说明：后端 FastAPI + 前端 Vue 3（shadow 前端 `/app/**`），PostgreSQL 16 + pgvector
 
 ## 演示路径（按真实功能编写，随部署后截图补充）
@@ -20,16 +20,16 @@
 ### 路径 2：课程建设闭环（助教）
 1. 创建课程 → 上传课件（PPT/PDF/DOCX，≤100MB）→ 文档解析（Docling + PaddleOCR）
 2. 证据片段确认 → 知识图谱 → AI 出题双门控（草稿 → 教师批准 → 题库）
-3. 发布课程 → 生成媒体（PPT manifest + TTS + 数字人讲解）
+3. 发布课程 → 生成媒体（PPT manifest + TTS 讲解）
 
 ### 路径 3：学生学习 + 智能问答（助学）
 1. 选课 → 学习工作台（大纲 + 媒体 + 助手 + 笔记）
 2. 课程内问答（TeachingAgent）：提问 → 答案携带 Citation 引用证据
 3. 六维认知状态 + 学习路径推荐；代码实验（Judge0 沙箱执行）
 
-### 路径 4：科研工作台（助研）
-1. `/app/course/:courseId/research`：论文检索（arXiv + EvidenceGate）、Todo、Notepad、Memory、Scope
-2. 论文检索 → 来源核验 → 趋势分析（preview，待完善）
+### 路径 4：Nexus AI（课程外全局入口）
+1. `/app/nexus`：课程外全局入口，复杂问题拆解与持续执行
+2. 论文研究 / 快速复现：输入论文或仓库 → 自主找仓库 → 装环境 → 试跑 → 排错（Deep Agents 独立 Runtime）
 
 ## 需要随 Demo 提交的附件
 
