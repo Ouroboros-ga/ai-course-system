@@ -206,7 +206,7 @@ onBeforeUnmount(() => {
             <ArrowRight class="sfx-home-announce__arrow" :size="13" aria-hidden="true" />
           </a>
 
-          <h1 class="sfx-home-hero__title animate-in" style="animation-delay: 0.2s">
+          <h1 class="sfx-home-hero__title sfx-home-hero__title--position animate-in" style="animation-delay: 0.2s">
             <span 
               ref="glowTextRef"
               class="glow-text" 
@@ -214,7 +214,8 @@ onBeforeUnmount(() => {
               @mousemove="onGlowTextMouseMove"
               @mouseleave="onGlowTextMouseLeave"
             >
-              让课程回应学习
+              面向计算机学科的<br />
+              垂类大模型与可执行智能体平台
             </span>
           </h1>
 
@@ -685,6 +686,14 @@ onBeforeUnmount(() => {
   color: #152443;
   margin: 0 0 48px;
   text-align: left;
+}
+
+/* 作品定位句较长（21 字，两行）：只降字号与字距，不改布局盒模型，避免 hero 抖动。
+   双类选择器用于覆盖下方媒体查询里的单类 font-size。 */
+.sfx-home-hero__title.sfx-home-hero__title--position {
+  font-size: clamp(24px, 3vw, 38px);
+  letter-spacing: 0.05em;
+  line-height: 1.4;
 }
 
 .glow-text {

@@ -1,4 +1,15 @@
-# Nexus AI 前端开发规格与 UX（v3.1 Current / Roadmap）
+# Nexus AI 前端开发规格与 UX（v3.2 Current / Roadmap）
+
+> **v3.3 变更（2026-09-10）：F8 受控对照界面落地。**
+> 新增 `components/NexusComparePanel.vue`，实验工作台 tab 增「对照」一项（日志/指标/产物/备注/对照）。
+> 取数仍在 `NexusPage.vue`（`listNexusCompares` / `getNexusCompare` / `linkNexusCompareRun` /
+> `cancelNexusCompare`），面板只渲染与 emit，与工作台既有约定一致。
+> 设计依据：`2026-09-10_NexusLab_F8受控对照_设计板_v2.html`。
+> **口径硬约束（已写入契约测试 #107）**：verdict 只有 `descriptive_ready` / `incomplete`；
+> 面板不得出现优劣判定词；失败组与 `metrics_missing` 如实并列、不填 0；
+> 免责文案取服务端 `significance` 常量、前端不改写。
+> 注：v2 设计板之前有一版深色+琥珀的 v1，与系统令牌不符已作废删除——**界面设计先读
+> `frontend/src/app/styles/tokens.css`**（暖米白 #F7F5EF 底 + 品牌蓝 #007AF4），不要凭跨项目印象定色。
 
 > 现行依据：[v1.3 架构](CodeNexus_转型设计与实施方案_v1.3.md)、[NX 开发计划](CodeNexus_P2开发计划.md)。视觉/滚动/按钮/过渡以根目录 design.md 为准。
 > 基线 dev-liu / HEAD d2c694a0，存在未提交工作区修正，见架构 B2。本次为规格更新，未实现新增 UI 或做线上验收。

@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>实验任务设定 UI · v2 重置设计板</title>
+<style>
+  :root {
+    --ink-950:#101A31; --ink-900:#14213D; --ink-700:#203A5F; --ink-500:#355C7D; --ink-300:#8EA7BE; --ink-100:#E8EEF4;
+    --brand:#14213D; --brand-soft:#E8EEF4;
+    --green-700:#3F6B52; --green-500:#5E8C61; --green-300:#A8C3A5; --green-100:#EDF5EE;
+    --red-700:#8B3A3A; --red-500:#B85C5C; --red-300:#D9A3A3; --red-100:#FAEEEE;
+    --amber-700:#9B6618; --amber-500:#C68B2C; --amber-300:#E5B95C; --amber-100:#FBF3DE;
+    --surface-page:#F7F5EF; --surface-canvas:#FBFAF7; --surface-panel:#FFFFFF; --surface-soft:#F0EDE6; --surface-cool:#F7F8FA;
+    --text-primary:#172033; --text-secondary:#4E5969; --text-muted:#5E6776;
+    --border-default:#DDE2E8; --border-strong:#C9CFD8; --border-subtle:#EDF0F3;
+    --font-sans: Inter, "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #E9E6DE; font-family: var(--font-sans); color: var(--text-primary);
+    display: flex; align-items: flex-start; justify-content: center; min-height: 100vh; padding: 20px;
+  }
+  .board {
+    width: 1280px; height: 720px; flex: none; background: var(--surface-page); overflow: hidden;
+    box-shadow: 0 24px 60px rgba(16,26,49,.18); display: flex; flex-direction: column;
+  }
+
+  /* ── 板头 ── */
+  .board__head {
+    flex: none; display: flex; align-items: flex-end; justify-content: space-between; gap: 14px;
+    padding: 13px 24px 10px; border-bottom: 1px solid var(--border-default); background: var(--surface-panel);
+  }
+  .board__title { font-size: 20px; font-weight: 650; letter-spacing: -.01em; }
+  .board__sub { font-size: 11.5px; color: var(--text-muted); margin-top: 3px; }
+  .board__meta { text-align: right; font-size: 10.5px; color: var(--text-muted); line-height: 1.6; }
+  .board__meta code { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-secondary); }
+
+  .board__body { flex: 1; min-height: 0; display: grid; grid-template-columns: 244px minmax(0,1fr); }
+
+  /* ── 左：问题 → 修法 ── */
+  .notes {
+    padding: 12px 14px 12px 24px; border-right: 1px solid var(--border-default);
+    background: var(--surface-canvas); display: flex; flex-direction: column; gap: 7px; overflow: hidden;
+  }
+  .notes__label { font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-muted); font-weight: 700; }
+  .note { border-left: 3px solid var(--red-300); padding: 0 0 0 9px; }
+  .note--fix { border-left-color: var(--green-500); }
+  .note__t { font-size: 11.5px; font-weight: 650; line-height: 1.3; }
+  .note__t em { font-style: normal; font-family: var(--font-mono); font-size: 9.5px; color: var(--red-700); margin-left: 3px; }
+  .note--fix .note__t em { color: var(--green-700); }
+  .note__d { font-size: 10px; color: var(--text-secondary); line-height: 1.4; margin-top: 1px; }
+  .note__d code { font-family: var(--font-mono); font-size: 9.5px; color: var(--ink-700); }
+  .notes__rule { height: 1px; background: var(--border-default); margin: 1px 0; }
+
+  /* ── 右：两级屏 ── */
+  .stage { min-width: 0; min-height: 0; padding: 10px 24px 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+  .cap { flex: none; display: flex; align-items: center; gap: 8px; font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); font-weight: 700; }
+  .cap span.line { flex: 1; height: 1px; background: var(--border-default); }
+  .cap b { font-weight: 700; color: var(--ink-700); }
+
+  .app { border: 1px solid var(--border-strong); border-radius: 11px; overflow: hidden; background: var(--surface-page); flex: none; }
+
+  /* 屏幕 A：主线（高度按内容实测给定，不留溢出） */
+  .screen-a { height: 424px; display: flex; flex-direction: column; }
+  .pg-head { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 9px 14px 7px; }
+  .pg-title { font-size: 19px; font-weight: 650; letter-spacing: -.01em; }
+  .pg-head__l { display: flex; align-items: center; gap: 7px; }
+  .dot { width: 20px; height: 20px; border-radius: 999px; border: 1px solid rgba(94,140,97,.45); background: rgba(94,140,97,.1); display: inline-flex; align-items: center; justify-content: center; }
+  .dot i { width: 6px; height: 6px; border-radius: 999px; background: var(--green-500); }
+  .tag { font-size: 9.5px; padding: 2px 7px; border-radius: 4px; border: 1px solid var(--amber-300); background: var(--amber-100); color: var(--amber-700); }
+
+  .work { flex: 1; min-height: 0; display: grid; grid-template-columns: 244px minmax(0,1fr); gap: 10px; padding: 0 14px 11px; }
+
+  .col-l { border: 1px solid var(--border-default); border-radius: 9px; background: var(--surface-panel); padding: 10px; display: flex; flex-direction: column; gap: 7px; overflow: hidden; }
+  .col-l__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex: none; }
+  .col-l__t { font-size: 13px; font-weight: 650; }
+  .col-l__d { font-size: 9.5px; color: var(--text-muted); line-height: 1.4; margin-top: 2px; }
+  .mini-btn { font-size: 10px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-panel); color: var(--ink-700); white-space: nowrap; flex: none; }
+  .search { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border: 1px solid var(--border-default); border-radius: 7px; font-size: 10px; color: var(--text-muted); flex: none; }
+  .grp { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); font-weight: 700; }
+  .card { border: 1px solid var(--border-subtle); border-left: 3px solid transparent; border-radius: 7px; padding: 6px 8px; flex: none; }
+  .card.on { border-color: var(--brand); border-left-color: var(--brand); background: var(--brand-soft); }
+  .card__row { display: flex; align-items: center; gap: 6px; }
+  .card__t { flex: 1; font-size: 11px; font-weight: 650; }
+  .card__meta { font-size: 9px; color: var(--text-muted); margin-top: 2px; }
+  .badge { font-size: 9px; padding: 1px 5px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
+  .badge.amber { border-color: var(--amber-300); background: var(--amber-100); color: var(--amber-700); }
+  .badge.green { border-color: var(--green-300); background: var(--green-100); color: var(--green-700); }
+  .badge.ink { border-color: var(--ink-300); background: var(--ink-100); color: var(--ink-700); }
+
+  .col-r { border: 1px solid var(--border-default); border-radius: 9px; background: var(--surface-panel); padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; min-width: 0; overflow: hidden; }
+  .col-r__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; }
+  .col-r__t { font-size: 14px; font-weight: 650; }
+  .col-r__badges { display: flex; gap: 4px; }
+  .tabs { display: flex; gap: 3px; padding-bottom: 6px; border-bottom: 1px solid var(--border-subtle); flex: none; }
+  .tab { font-size: 10.5px; padding: 3px 9px; border-radius: 6px; color: var(--text-secondary); }
+  .tab.on { border: 1px solid var(--border-strong); background: var(--surface-cool); color: var(--ink-900); font-weight: 600; }
+  .pane__d { font-size: 9.5px; color: var(--text-muted); line-height: 1.45; flex: none; }
+  .pane__d strong { color: var(--text-primary); }
+
+  .tools { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; flex: none; }
+  .tools__sp { flex: 1; }
+  .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-primary); }
+  .box { width: 11px; height: 11px; border-radius: 3px; border: 1.5px solid var(--ink-500); position: relative; flex: none; }
+  .box.on { background: var(--ink-900); border-color: var(--ink-900); }
+  .box.on::after { content: "✓"; position: absolute; inset: -3px 0 0 0; font-size: 10px; color: #fff; text-align: center; line-height: 1; }
+
+  table.cases { width: 100%; border-collapse: separate; border-spacing: 0 3px; flex: none; }
+  table.cases th { font-size: 9px; letter-spacing: .07em; text-transform: uppercase; color: var(--text-muted); text-align: left; font-weight: 700; padding: 0 5px 0; }
+  table.cases td { padding: 0 3px; }
+  .cellbox { display: flex; align-items: center; min-height: 25px; padding: 0 7px; border: 1px dashed var(--border-default); border-radius: 6px; background: var(--surface-cool); font-family: var(--font-mono); font-size: 9.5px; color: var(--text-primary); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .cellbox.empty { color: var(--text-muted); font-family: var(--font-sans); }
+  .inp { height: 25px; display: flex; align-items: center; padding: 0 7px; border: 1px solid var(--border-default); border-radius: 7px; font-size: 10.5px; background: var(--surface-panel); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .inp.ro { background: var(--surface-cool); color: var(--text-secondary); font-family: var(--font-mono); }
+  .pill { display: inline-flex; align-items: center; justify-content: center; height: 24px; padding: 0 7px; border-radius: 6px; font-size: 10px; border: 1px solid var(--border-strong); background: var(--surface-panel); color: var(--ink-700); white-space: nowrap; }
+  .pill.ghost { border-color: transparent; color: var(--text-secondary); }
+  .expand-row td { padding: 0; }
+  .expanders { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 5px 8px 6px; margin: 0 3px; border: 1px solid var(--ink-300); border-top: none; border-radius: 0 0 7px 7px; background: var(--surface-cool); }
+  .lb { display: block; font-size: 9px; line-height: 1.1; color: var(--text-secondary); margin-bottom: 2px; }
+  .ta { border: 1px solid var(--border-default); border-radius: 6px; background: var(--surface-panel); padding: 4px 7px; font-family: var(--font-mono); font-size: 9.5px; line-height: 1.45; white-space: pre; overflow: hidden; }
+
+  .foot { display: flex; align-items: center; gap: 7px; flex-wrap: nowrap; flex: none; }
+  .prim { font-size: 11px; padding: 5px 12px; border-radius: 7px; background: var(--brand); color: #fff; font-weight: 600; }
+  .sec { font-size: 11px; padding: 5px 11px; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface-panel); color: var(--ink-700); }
+  .sec.dis { background: var(--border-strong); border-color: var(--border-strong); color: var(--text-muted); }
+  .hint { font-size: 9.5px; color: var(--text-muted); line-height: 1.4; flex: none; }
+
+  /* 屏幕 B：发布检查（4 列 × 2 行，装得下全部 8 项） */
+  .screen-b { height: 116px; display: flex; flex-direction: column; padding: 9px 14px 10px; gap: 6px; }
+  .b-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; }
+  .b-head b { font-size: 13px; }
+  .b-head span { font-size: 9.5px; color: var(--text-muted); }
+  .chk-grid { flex: none; display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 5px 8px; }
+  .chk-item { display: flex; align-items: flex-start; gap: 6px; padding: 5px 7px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--surface-panel); min-width: 0; }
+  .chk-item.done { border-color: var(--green-300); background: var(--green-100); }
+  .chk-item.ready { border-color: var(--ink-300); background: var(--brand-soft); }
+  .chk-item.blocked { background: var(--surface-cool); }
+  .mk { flex: none; width: 16px; height: 16px; border-radius: 999px; border: 1px solid var(--border-default); display: flex; align-items: center; justify-content: center; font-size: 8.5px; color: var(--text-muted); background: var(--surface-panel); }
+  .chk-item.done .mk { border-color: var(--green-500); color: var(--green-700); }
+  .chk-item.ready .mk { border-color: var(--brand); color: var(--brand); }
+  .chk-item b { font-size: 10px; font-weight: 600; line-height: 1.25; min-width: 0; }
+  .chk-item b small { display: block; font-size: 8.5px; color: var(--text-muted); font-weight: 400; margin-top: 1px; line-height: 1.3; }
+
+  .legend { flex: none; display: flex; align-items: center; gap: 11px; flex-wrap: nowrap; font-size: 9.5px; color: var(--text-muted); }
+  .legend .k { font-weight: 700; color: var(--ink-700); text-transform: uppercase; letter-spacing: .1em; flex: none; }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<div class="board">
+
+  <div class="board__head">
+    <div>
+      <div class="board__title">实验任务设定 UI · v2 重置设计</div>
+      <div class="board__sub">教师视图 · 任务列表 + 四段式编辑器 · 两列各自滚动 · 对应 design.md §5.1 三层滚动模型</div>
+    </div>
+    <div class="board__meta">
+      <code>/app/course/:courseId/experiments</code><br />
+      2026-09-11 · 1280×720 画布 · 1:1 还原
+    </div>
+  </div>
+
+  <div class="board__body">
+
+    <!-- 左：问题 → 修法 -->
+    <aside class="notes">
+      <div class="notes__label">旧版问题</div>
+
+      <div class="note">
+        <div class="note__t">内容被裁，看不到 <em>P0</em></div>
+        <div class="note__d">页面根 <code>overflow:hidden</code>，面板无滚动容器。</div>
+      </div>
+      <div class="note">
+        <div class="note__t">六步线性向导 <em>P1</em></div>
+        <div class="note__d">六段每段一屏，来回跳只靠"上一步"。</div>
+      </div>
+      <div class="note">
+        <div class="note__t">权重手动凑 1.00 <em>P1</em></div>
+        <div class="note__d">加一条用例按钮就变灰，只给红标不说差多少。</div>
+      </div>
+      <div class="note">
+        <div class="note__t">语言手填、知识点平铺 <em>P2</em></div>
+        <div class="note__d">沙箱语言已取到却没用；上百个 checkbox 一屏铺开。</div>
+      </div>
+      <div class="note">
+        <div class="note__t">继续配置会静默清空 <em>P2</em></div>
+        <div class="note__d">测试集重置为两条空用例，再点创建就产出没人用的 v2。</div>
+      </div>
+
+      <div class="notes__rule"></div>
+      <div class="notes__label">v2 对应修法</div>
+
+      <div class="note note--fix">
+        <div class="note__t">两列独立滚动 <em>FIX</em></div>
+        <div class="note__d">左右各自 <code>overflow-y:auto</code>，行高 <code>minmax(0,1fr)</code>。</div>
+      </div>
+      <div class="note note--fix">
+        <div class="note__t">四段可跳转</div>
+        <div class="note__d">预览 / 锁定 / 发布合并为一张清单。</div>
+      </div>
+      <div class="note note--fix">
+        <div class="note__t">权重自动均分</div>
+        <div class="note__d">按"分"整除，求和恒等于 1.00；关掉即手动。</div>
+      </div>
+      <div class="note note--fix">
+        <div class="note__t">控件化 + 回读现场</div>
+        <div class="note__d">语言多选、知识点可搜索；从 <code>GET /versions/{id}</code> 恢复测试集，脏检查防重复建版本。</div>
+      </div>
+    </aside>
+
+    <!-- 右：两级屏 -->
+    <div class="stage">
+
+      <div class="cap">屏幕 A · 主线<span class="line"></span><b>任务列表 + 测试用例段</b></div>
+
+      <div class="app screen-a">
+        <div class="pg-head">
+          <div class="pg-head__l">
+            <span class="pg-title">课程实验</span>
+            <span class="dot"><i></i></span>
+          </div>
+          <span class="tag">experimental</span>
+        </div>
+
+        <div class="work">
+          <!-- 左列 -->
+          <div class="col-l">
+            <div class="col-l__head">
+              <div>
+                <div class="col-l__t">实验任务</div>
+                <div class="col-l__d">按版本固化题目与测试；正式成绩采用 ACM/ICPC 全量通过规则。</div>
+              </div>
+              <span class="mini-btn">+ 新建任务</span>
+            </div>
+
+            <div class="search">⌕&nbsp;&nbsp;搜索任务名称或说明</div>
+
+            <div class="grp">草稿 · 2</div>
+            <div class="card on">
+              <div class="card__row"><span class="card__t">两数之和</span><span class="badge amber">草稿</span></div>
+              <div class="card__meta">Python 3 · 关联 3 个知识点</div>
+            </div>
+            <div class="card">
+              <div class="card__row"><span class="card__t">排序实现</span><span class="badge amber">草稿</span></div>
+              <div class="card__meta">C++、Python 3 · 关联 1 个知识点</div>
+            </div>
+
+            <div class="grp">已发布 · 1</div>
+            <div class="card">
+              <div class="card__row"><span class="card__t">二分查找</span><span class="badge green">已发布</span></div>
+              <div class="card__meta">Python 3 · 关联 2 个知识点</div>
+            </div>
+
+            <div class="grp">已归档 · 1</div>
+            <div class="card">
+              <div class="card__row"><span class="card__t">旧版实验</span><span class="badge ink">已归档</span></div>
+              <div class="card__meta">— · 关联 0 个知识点</div>
+            </div>
+          </div>
+
+          <!-- 右列 -->
+          <div class="col-r">
+            <div class="col-r__head">
+              <div class="col-r__t">两数之和</div>
+              <div class="col-r__badges">
+                <span class="badge amber">草稿</span>
+                <span class="badge ink">v1</span>
+                <span class="badge amber">学生当前使用 v1</span>
+              </div>
+            </div>
+
+            <div class="tabs">
+              <span class="tab">基本信息</span>
+              <span class="tab on">测试用例</span>
+              <span class="tab">运行限制</span>
+              <span class="tab">发布检查</span>
+            </div>
+
+            <div class="pane__d">
+              权重只用于完整性校验，正式判定仍是"全量通过才算过"。版本创建后测试集冻结，改动会以
+              <strong>v2</strong> 新建，历史版本保留。点击「标准输入 / 期望输出」单元格展开逐字符编辑。
+            </div>
+
+            <div class="tools">
+              <span class="pill">+ 公开用例</span>
+              <span class="pill">+ 隐藏用例</span>
+              <span class="pill">⇪ JSON 批量导入</span>
+              <span class="tools__sp"></span>
+              <span class="chk"><span class="box on"></span>权重自动均分</span>
+              <span class="badge green">合计 1.00</span>
+            </div>
+
+            <table class="cases">
+              <thead>
+                <tr>
+                  <th style="width:20px">#</th>
+                  <th style="width:112px">名称</th>
+                  <th style="width:52px">类型</th>
+                  <th>标准输入</th>
+                  <th>期望输出</th>
+                  <th style="width:46px">权重</th>
+                  <th style="width:44px"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="font-size:9.5px;color:var(--text-muted)">1</td>
+                  <td><div class="inp">公开样例</div></td>
+                  <td><span class="pill">公开</span></td>
+                  <td><div class="cellbox">3 4 ⋯+1 行</div></td>
+                  <td><div class="cellbox">7 ⋯+1 行</div></td>
+                  <td><div class="inp ro">0.34</div></td>
+                  <td><span class="pill ghost">⧉</span></td>
+                </tr>
+                <tr>
+                  <td style="font-size:9.5px;color:var(--text-muted)">2</td>
+                  <td><div class="inp">大数相加</div></td>
+                  <td><span class="pill">公开</span></td>
+                  <td><div class="cellbox">1000000000 1000000000 ⋯+1 行</div></td>
+                  <td><div class="cellbox">2000000000 ⋯+1 行</div></td>
+                  <td><div class="inp ro">0.33</div></td>
+                  <td><span class="pill ghost">⧉</span></td>
+                </tr>
+                <tr>
+                  <td style="font-size:9.5px;color:var(--text-muted)">3</td>
+                  <td><div class="inp">零值边界</div></td>
+                  <td><span class="pill">隐藏</span></td>
+                  <td><div class="cellbox">0 0 ⋯+1 行</div></td>
+                  <td><div class="cellbox">0 ⋯+1 行</div></td>
+                  <td><div class="inp ro">0.33</div></td>
+                  <td><span class="pill ghost">⧉</span></td>
+                </tr>
+                <tr class="expand-row">
+                  <td colspan="7">
+                    <div class="expanders">
+                      <div>
+                        <span class="lb">标准输入（第 2 条展开）</span>
+                        <div class="ta">1000000000 1000000000
+-1000000000 -1000000000</div>
+                      </div>
+                      <div>
+                        <span class="lb">期望输出</span>
+                        <div class="ta">2000000000
+-2000000000</div>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="foot">
+              <span class="sec dis">创建版本 v2</span>
+              <span class="sec">配置运行限制</span>
+              <span class="hint" style="flex:1;min-width:0">v1 内容未改动，无需重复创建版本。</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="cap" style="margin-top:1px">屏幕 B · ④ 发布检查段<span class="line"></span><b>服务端 ExperimentPublishValidator 的客户端镜像</b></div>
+
+      <div class="app screen-b">
+        <div class="b-head">
+          <b>发布检查</b>
+          <span>三态：已闭合 / 可执行 / 被前置阻塞。逐项对应该校验器的判断顺序。</span>
+        </div>
+        <div class="chk-grid">
+          <div class="chk-item done"><span class="mk">✓</span><b>任务定义已保存<small>尝试 3 次｜冷却 30 分钟</small></b></div>
+          <div class="chk-item done"><span class="mk">✓</span><b>语言白名单非空<small>Python 3</small></b></div>
+          <div class="chk-item done"><span class="mk">✓</span><b>权重合计 1.00<small>v1 已固化测试集</small></b></div>
+          <div class="chk-item done"><span class="mk">✓</span><b>已创建版本<small>v1 未锁定</small></b></div>
+          <div class="chk-item ready"><span class="mk">5</span><b>参考解预览全量通过<small>未通过 → 运行参考解预览</small></b></div>
+          <div class="chk-item blocked"><span class="mk">6</span><b>版本已锁定并生效<small>锁定同时设为默认版本</small></b></div>
+          <div class="chk-item blocked"><span class="mk">7</span><b>评测机健康检查通过<small>沙箱可用，10 种语言</small></b></div>
+          <div class="chk-item blocked"><span class="mk">8</span><b>发布给学生<small>发布时服务端复校</small></b></div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span class="k">改动点</span>
+        <span>① 列表按状态分组 + 可搜索</span>
+        <span>② 四段可跳转</span>
+        <span>③ 权重自动均分</span>
+        <span>④ 预览 / 锁定 / 发布合成清单</span>
+        <span>⑤ 用例行点击展开</span>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
