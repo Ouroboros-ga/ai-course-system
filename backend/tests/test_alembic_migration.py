@@ -250,8 +250,45 @@ def test_conversational_coding_challenge_0067_round_trip(tmp_path):
         engine.dispose()
 
 
-# ==================== 场景2：旧 SQLite fixture stamp + upgrade 演练 ====================
+def test_conversation_discipline_references_round_trip(tmp_path):
+    """学科参考快照列可加可删，且删列在 SQLite batch 模式下可用。
 
+    该列是 R14「学科参考」刷新后丢失的修复：回放接口缺字段 → 前端整块隐藏。
+    这里守住列本身在 head 存在、且 downgrade 后确实被移除。
+    """
+    db_path = tmp_path / "conversation_discipline_references.db"
+    db_url = f"sqlite:///{db_path}"
+
+    _run_alembic(db_url, "upgrade", "head")
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        assert "discipline_references" in {
+            column["name"]
+            for column in inspect(engine).get_columns("conversation_messages")
+        }
+    finally:
+        engine.dispose()
+
+    _run_alembic(db_url, "downgrade", "oj20260911v2")
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        downgraded = inspect(engine)
+        assert "discipline_references" not in {
+            column["name"] for column in downgraded.get_columns("conversation_messages")
+        }
+        # 同链上的 message_kind（0067）不受影响
+        assert "message_kind" in {
+            column["name"] for column in downgraded.get_columns("conversation_messages")
+        }
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "oj20260911v2"
+    finally:
+        engine.dispose()
+
+
+# ==================== 场景2：旧 SQLite fixture stamp + upgrade 演练 ====================
 
 @pytest.mark.skip(
     reason="2026-08-17：迁移链已演进到 0065，create_all 模拟旧库 + 全链 upgrade 重放与"

@@ -491,6 +491,54 @@ def _resolve_runtime(runtime_source: Union[TeachingAgentRuntime, TeachingAgentRu
     return runtime_source
 
 
+_CITATION_SNIPPET_MAX_CHARS = 60
+
+
+def _citation_snippet(text: Any) -> str:
+    """把课程证据正文压成单行摘录，供前端展示"依据"时辨识来源。"""
+    if not isinstance(text, str):
+        return ""
+    collapsed = " ".join(text.split())
+    if not collapsed:
+        return ""
+    if len(collapsed) <= _CITATION_SNIPPET_MAX_CHARS:
+        return collapsed
+    return collapsed[:_CITATION_SNIPPET_MAX_CHARS].rstrip() + "…"
+
+
+def _citation_display_items(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """把引用闭包回联到本次检索证据，补上只读展示元数据。
+
+    ``citations`` 的语义仍由 ``validate_response`` 定义：它是一份
+    ``evidence_id`` 白名单，只保留本次已检索证据里的条目。这里不改变成员集合，
+    只按 ``evidence_id`` join 回 ``retrieved_evidence``，补出页码、节点键与一句
+    原文摘录，让学习者看到回答依据的是哪段课程材料，而不是一句笼统的占位文案。
+    这些字段是展示元数据：不进入引用闭包，不参与掌握度与图谱写入。
+    """
+    evidence_index = {
+        str(item.get("evidence_id")): item
+        for item in state.get("retrieved_evidence", [])
+        if item.get("evidence_id")
+    }
+    items: list[dict[str, Any]] = []
+    for citation in state.get("citations", []):
+        evidence_id = str(citation.get("evidence_id") or "")
+        if not evidence_id:
+            continue
+        enriched = dict(citation)
+        evidence = evidence_index.get(evidence_id)
+        if evidence:
+            for key in ("resource_id", "page_start", "page_end", "node_key"):
+                value = evidence.get(key)
+                if value is not None and enriched.get(key) is None:
+                    enriched[key] = value
+            snippet = _citation_snippet(evidence.get("text"))
+            if snippet and not enriched.get("snippet"):
+                enriched["snippet"] = snippet
+        items.append(enriched)
+    return items
+
+
 async def _respond_for_subject(
     *,
     subject_user_id: int,
@@ -600,10 +648,13 @@ async def _respond_for_subject(
         str(ref) for ref in state.get("used_discipline_reference_ids", [])
         if str(ref) in returned_refs
     ]
+    # 依据展示：引用闭包回联本次检索证据，前端"依据"行才能显示页码与原文摘录，
+    # 而不是退化成一句"课程资料"。闭包成员集合仍由 validate_response 决定。
+    citations = _citation_display_items(state)
     response = {
         "trace_id": state["trace_id"], "status": "ok", "intent": state.get("intent"), "concept": concept,
         "teaching_action": state.get("teaching_action"), "answer": state.get("final_answer"),
-        "citations": state.get("citations", []),
+        "citations": citations,
         "discipline_references": discipline_references,
         "discipline_release_id": discipline_release_id,
         "used_discipline_reference_ids": used_discipline_reference_ids,
@@ -653,7 +704,8 @@ async def _respond_for_subject(
             assistant_answer=final_answer,
             concept_id=state.get("current_concept_id"),
             resource_id=resource_id,
-            citations=state.get("citations", []),
+            citations=citations,
+            discipline_references=discipline_references,
         )
     return response
 
@@ -779,6 +831,8 @@ async def list_conversation_history(
                 "resource_id": msg.resource_id,
                 "trace_id": msg.trace_id,
                 "citations": msg.citations,
+                # R14 学科参考随回答一起回放，刷新/回看时"学科参考"区块才不丢。
+                "discipline_references": msg.discipline_references or [],
                 "created_at": msg.created_at.isoformat() if msg.created_at else None,
             }
             for msg in messages
