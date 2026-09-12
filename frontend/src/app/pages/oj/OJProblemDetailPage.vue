@@ -11,6 +11,7 @@ import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 import CodeWorkbench from '@/components/codebench/CodeWorkbench.vue'
+import { renderContent } from '@/utils/markdownRenderer.js'
 
 /**
  * OJ 题目详情（PR-10，设计稿②）。
@@ -164,7 +165,11 @@ onMounted(async () => {
               语言 {{ problem.language_whitelist.join(' / ') }}
             </span>
           </div>
-          <div class="oj-description" v-html="problem.description || '暂无题面描述。'"></div>
+          <!-- 题面是 markdown（教师出题面板以 md 书写）——必须渲染，不能源文本直出 -->
+          <div
+            class="oj-description"
+            v-html="renderContent(problem.description) || '暂无题面描述。'"
+          ></div>
 
           <div class="oj-mine sfx-t-ui">
             <h2 class="oj-section-title">我的作答</h2>
@@ -247,6 +252,16 @@ onMounted(async () => {
 .oj-problem-panel { display: flex; flex-direction: column; gap: var(--space-4); }
 .oj-limits { display: flex; flex-wrap: wrap; gap: var(--space-4); }
 .oj-description { font-size: var(--ui-md-size); line-height: 1.7; overflow-wrap: anywhere; }
+/* markdown 渲染产物的标题/代码块间距（无全局 markdown 皮肤，就地补最小样式） */
+.oj-description :deep(h1),
+.oj-description :deep(h2),
+.oj-description :deep(h3) { margin: var(--space-4) 0 var(--space-2); color: var(--ink-900); }
+.oj-description :deep(pre) {
+  background: var(--surface-subtle, rgba(0, 0, 0, 0.03));
+  padding: var(--space-3); overflow-x: auto;
+  font-family: var(--font-mono, monospace); font-size: var(--ui-sm-size);
+}
+.oj-description :deep(code) { font-family: var(--font-mono, monospace); }
 .oj-section-title {
   font-size: var(--ui-sm-size);
   font-weight: var(--ui-md-weight);
