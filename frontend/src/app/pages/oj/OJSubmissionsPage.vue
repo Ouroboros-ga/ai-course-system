@@ -23,6 +23,8 @@ const problems = ref([])
 const problemFilter = ref('')
 const outcomeFilter = ref('')
 const languageFilter = ref('')
+const dateFrom = ref('')
+const dateTo = ref('')
 
 const submissions = ref([])
 const selected = ref(null)
@@ -74,6 +76,8 @@ async function loadSubmissions() {
     if (problemFilter.value) params.experiment_id = problemFilter.value
     if (outcomeFilter.value) params.outcome = outcomeFilter.value
     if (languageFilter.value) params.language = languageFilter.value
+    if (dateFrom.value) params.date_from = dateFrom.value
+    if (dateTo.value) params.date_to = dateTo.value
     const data = await listOJSubmissions(courseId.value, params)
     submissions.value = Array.isArray(data?.items) ? data.items : []
     if (submissions.value.length) {
@@ -183,6 +187,8 @@ onMounted(async () => {
         placeholder="语言，如 python3"
         @keyup.enter="loadSubmissions()"
       />
+      <label class="sfx-t-ui oj-date-label">从 <input v-model="dateFrom" class="sfx-input" type="date" @change="loadSubmissions()" /></label>
+      <label class="sfx-t-ui oj-date-label">至 <input v-model="dateTo" class="sfx-input" type="date" @change="loadSubmissions()" /></label>
       <SfxButton variant="primary" size="sm" @click="loadSubmissions()">筛选</SfxButton>
     </section>
 
@@ -353,4 +359,6 @@ onMounted(async () => {
 /* 基础样式 .sfx-input/.sfx-select 是 width:100%（base.css）——横向行里必须
    显式约束宽度，否则每个控件各占一行（2026-09-11 截图复核发现）。 */
 .oj-filters .sfx-input, .oj-filters .sfx-select { width: auto; flex: 0 0 auto; min-width: 150px; }
+.oj-date-label { display: inline-flex; align-items: center; gap: var(--space-2); }
+.oj-date-label .sfx-input { width: auto; }
 </style>

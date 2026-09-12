@@ -239,7 +239,8 @@ class TestStudentProblemDetail:
 
     def test_detail_contains_no_testcase(self, client, session, teacher_user,
                                          student_user, course):
-        """**不含任何 testcase** —— 用例明细是教师资产。"""
+        """隐藏用例明细绝不出现；公开样例以 `samples` 形态返回（设计稿②「样例」区）。
+        用例管理字段（weight/is_hidden 等）仍是教师资产，不得出现。"""
         definition = _definition(session, course, teacher_user, title="无用例题",
                                  difficulty="easy", tags=[])
         resp = client.get(
@@ -248,6 +249,8 @@ class TestStudentProblemDetail:
         )
         body = resp.text
         assert "test_cases" not in body and "testcase" not in body.lower()
+        # 防作弊红线：隐藏标记与用例权重不得出现在学生详情
+        assert "is_hidden" not in body and '"weight"' not in body
 
     def test_draft_is_404_for_student(self, client, session, teacher_user,
                                       student_user, course):

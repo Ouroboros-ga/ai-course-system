@@ -197,6 +197,29 @@ onMounted(async () => {
         </div>
       </section>
 
+      <section v-if="analytics?.difficulty_distribution" class="sfx-panel oj-diff-dist">
+        <h2 class="oj-section-title">难度分布（已发布题 × 终结尝试）</h2>
+        <div class="oj-diff-row">
+          <div
+            v-for="(cfg, level) in { easy: '简单', medium: '中等', hard: '困难' }"
+            :key="level"
+            class="oj-diff-cell"
+          >
+            <span class="sfx-t-caption sfx-t-secondary">{{ cfg }}</span>
+            <template v-if="analytics.difficulty_distribution[level]">
+              <strong class="oj-kpi-num">
+                {{ analytics.difficulty_distribution[level].problems }}
+              </strong>
+              <span class="sfx-t-caption sfx-t-secondary">
+                题 · {{ analytics.difficulty_distribution[level].attempt_total }} 次尝试 ·
+                通过 {{ analytics.difficulty_distribution[level].passed_total }}
+              </span>
+            </template>
+            <span v-else class="sfx-t-caption sfx-t-secondary">无题目</span>
+          </div>
+        </div>
+      </section>
+
       <div v-if="analytics?.high_frequency_wrong?.length" class="oj-two-col">
         <section class="sfx-panel">
           <h2 class="oj-section-title">高频错题（非通过运行数）</h2>
@@ -330,6 +353,9 @@ onMounted(async () => {
 /* 基础样式 .sfx-input/.sfx-select 是 width:100%（base.css）——横向行里必须
    显式约束宽度，否则每个控件各占一行（2026-09-11 截图复核发现）。 */
 .oj-course-select .sfx-select { width: auto; flex: 0 0 auto; min-width: 150px; }
+.oj-diff-dist { margin-bottom: var(--space-5); }
+.oj-diff-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-4); }
+.oj-diff-cell { display: flex; flex-direction: column; gap: var(--space-1); border-left: 1px solid var(--border-default); padding-left: var(--space-3); }
 </style>
 
 <style scoped>
@@ -361,4 +387,7 @@ onMounted(async () => {
 .oj-table th, .oj-table td { text-align: left; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border-default); white-space: nowrap; }
 .oj-table th { color: var(--text-secondary); font-size: var(--ui-sm-size); }
 @media (max-width: 900px) { .oj-two-col { grid-template-columns: 1fr; } }
+.oj-diff-dist { margin-bottom: var(--space-5); }
+.oj-diff-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-4); }
+.oj-diff-cell { display: flex; flex-direction: column; gap: var(--space-1); border-left: 1px solid var(--border-default); padding-left: var(--space-3); }
 </style>

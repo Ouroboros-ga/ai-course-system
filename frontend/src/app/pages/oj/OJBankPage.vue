@@ -32,6 +32,17 @@ const pageSize = ref(20)
 const stats = ref({ total: 0, solved: 0, attempted: 0, not_attempted: 0, avg_pass_rate: null })
 
 const difficulties = ['easy', 'medium', 'hard']
+const sortBy = ref('default')
+
+const sortedProblems = computed(() => {
+  const items = [...problems.value]
+  if (sortBy.value === 'pass_rate_desc') {
+    items.sort((a, b) => (b.pass_rate ?? -1) - (a.pass_rate ?? -1))
+  } else if (sortBy.value === 'pass_rate_asc') {
+    items.sort((a, b) => (a.pass_rate ?? 1) - (b.pass_rate ?? 1))
+  }
+  return items
+})
 const statusOptions = [
   { value: 'not_attempted', label: '未尝试' },
   { value: 'attempted', label: '尝试过' },
@@ -216,6 +227,11 @@ onMounted(async () => {
           <option value="">全部状态</option>
           <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
+        <select v-model="sortBy" class="sfx-select" @change="load()">
+          <option value="default">默认排序</option>
+          <option value="pass_rate_desc">通过率从高到低</option>
+          <option value="pass_rate_asc">通过率从低到高</option>
+        </select>
         <SfxButton variant="secondary" size="sm" @click="resetFilters">重置</SfxButton>
         <SfxButton variant="primary" size="sm" @click="page = 1; load()">筛选</SfxButton>
         <select v-model.number="pageSize" class="sfx-select" @change="page = 1; load()">
@@ -258,7 +274,7 @@ onMounted(async () => {
         </thead>
         <tbody>
           <tr
-            v-for="item in problems"
+            v-for="item in sortedProblems"
             :key="item.experiment_id"
             class="oj-row"
             role="button"
