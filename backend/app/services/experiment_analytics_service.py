@@ -16,7 +16,7 @@ from datetime import timedelta
 from sqlalchemy import func
 from sqlmodel import Session as OrmSession, select
 
-from app.core.time_utils import utcnow_aware
+from app.core.time_utils import to_aware, utcnow_aware
 from app.models.course_model import StudentEnrollment
 from app.models.coding_diagnosis_model import CodingDiagnosisRecord
 from app.models.experiment_activity_model import ExperimentActivityProblem
@@ -74,9 +74,14 @@ class ExperimentAnalyticsService:
         trend: list[dict] = []
         by_day: dict[str, dict[str, int]] = {}
         for run in run_rows:
-            if run.submitted_at is None or run.submitted_at < trend_since:
+            # ⚠️ PG 的 DateTime 列返回 naive（PR-01 同款坑）——与 aware 的
+            # trend_since 比较前必须归一到 aware，否则 TypeError → 500。
+            if run.submitted_at is None:
                 continue
-            day = run.submitted_at.date().isoformat()
+            submitted = to_aware(run.submitted_at)
+            if submitted < trend_since:
+                continue
+            day = submitted.date().isoformat()
             bucket = by_day.setdefault(day, {"submissions": 0, "accepted": 0})
             bucket["submissions"] += 1
             outcome_value = str(getattr(run.outcome, "value", run.outcome) or "").lower()
@@ -138,7 +143,10 @@ class ExperimentAnalyticsService:
             if attempt.passed:
                 item["passed"] += 1
             stamp = attempt.finalized_at or attempt.submitted_at
-            if stamp and (item["last_finalized"] is None or stamp > item["last_finalized"]):
+            if stamp is None:
+                continue
+            stamp = to_aware(stamp)
+            if item["last_finalized"] is None or stamp > item["last_finalized"]:
                 item["last_finalized"] = stamp
 
         run_students = {run.student_id for run in run_rows}
@@ -155,7 +163,7 @@ class ExperimentAnalyticsService:
             item = per_student.get(student_id)
             last = item["last_finalized"] if item else None
             idle_days = (
-                int((now - last).days) if last else None
+                int((to_aware(now) - to_aware(last)).days) if last else None
             )
             passed_count = item["passed"] if item else 0
             needs = passed_count == 0 or (idle_days is not None and idle_days >= 7)

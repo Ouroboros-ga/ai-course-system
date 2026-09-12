@@ -255,6 +255,36 @@ class TestAnalyticsSummary:
         # trend 最后一天至少包含本次提交日（UTC 口径）
         assert data["trend"][-1]["date"] is not None
 
+    def test_naive_datetimes_do_not_break_summary(
+        self, client, session, teacher_user, student_user
+    ):
+        """**部署回归**：PG 的 DateTime 列返回 naive datetime，与 aware 的
+        服务端时钟比较曾直接 TypeError → 500（2026-09-12 已部署环境实测）。
+        此用例以 naive 时间戳构造数据，锁住修复。"""
+        from datetime import datetime as dt
+
+        course = _course_with_capabilities(session, teacher_user)
+        activate(student_user, session, course)
+        definition = _definition_with_version(session, course, teacher_user)
+        naive = dt(2026, 9, 11, 12, 0, 0)  # 无 tzinfo —— 与 PG 返回形态一致
+        session.add(ExperimentAttempt(
+            attempt_id=f"att_{uuid.uuid4().hex[:10]}",
+            experiment_id=definition.experiment_id,
+            version_id=definition.default_version_id,
+            course_id=course.id, student_id=student_user.id,
+            status="finalized", passed=True, final_score=1.0,
+            submitted_at=naive, finalized_at=naive,
+        ))
+        session.commit()
+
+        from app.services.experiment_analytics_service import ExperimentAnalyticsService
+
+        result = ExperimentAnalyticsService().get_course_summary(
+            session, course_id=course.id
+        )
+        assert result["finalized_total"] >= 1
+        assert result["pass_rate"] is not None
+
     def test_student_forbidden(self, client, session, teacher_user, student_user):
         course = _course_with_capabilities(session, teacher_user)
         activate(student_user, session, course)
