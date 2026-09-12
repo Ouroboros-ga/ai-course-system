@@ -68,5 +68,9 @@ watch(() => route.path, () => {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* L2 唯一滚动容器：预留滚动条槽位，避免进入内容较短的页面（如"我的课程"
+     加载骨架屏）时滚动条消失、内容区宽度回弹造成的横向抖动/闪烁。
+     与 BuildLayout.vue、NexusPage.vue 的处理保持一致。 */
+  scrollbar-gutter: stable;
 }
 </style>

@@ -52,6 +52,12 @@ class ConversationMessage(SQLModel, table=True):
     concept_id: str | None = Field(default=None, max_length=128, index=True)
     resource_id: str | None = Field(default=None, max_length=128)
     citations: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
+    # R14 学科参考（``is_supplementary=True``）是随回答透出的展示性补充参考，
+    # 与 ``citations``（课程证据闭包）严格分离。回答生成时它只存在于响应体里，
+    # 若不落库，刷新/回看就会丢掉整块"学科参考"。这里按响应体原样存一份展示
+    # 快照，使回放结果与实时回答一致；它不进入引用闭包，也不参与掌握度或图谱
+    # 写入（同 ``citations``，属于 Conversation Domain 的产品体验数据）。
+    discipline_references: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
     data_policy_version: str = Field(default=CONVERSATION_DATA_POLICY_VERSION, max_length=64)
     retention_until: datetime | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utcnow_aware, index=True)

@@ -61,6 +61,17 @@ function isSimpleRecommendation(adjustment) {
     return adjustment?.type === 'simple_recommendation'
 }
 
+// 依据行的页码标注：优先用后端回联出的课程证据页码区间，兼容历史消息的 page 字段。
+function citationPageLabel(citation) {
+    const start = citation?.page_start
+    const end = citation?.page_end
+    if (start != null) {
+        return end != null && Number(end) > Number(start) ? `第 ${start}–${end} 页` : `第 ${start} 页`
+    }
+    if (citation?.page != null) return `第 ${citation.page} 页`
+    return ''
+}
+
 function retry() {
     if (props.message?.retryQuestion) emit('retry', props.message)
 }
@@ -142,14 +153,20 @@ async function toggleCorpusSource(ref) {
                     @replace="$emit('challenge-replace', $event)"
                 />
 
-                <!-- ② 依据：原文引用（design.md 4.5 左 3px 墨蓝边） -->
+                <!-- ② 依据：课程原文引用（design.md §847 左 3px 墨蓝边） -->
                 <ul v-if="message.citations?.length" class="sfx-agent-citations">
                     <li class="sfx-agent-seg-label sfx-agent-citations-title">依据</li>
-                    <li v-for="(citation, index) in message.citations" :key="citation.id || index"
-                        class="sfx-agent-citation">
-                        <BookMarked :size="13" />
-                        <span>{{ citation.title || citation.source || '课程资料' }}</span>
-                        <span v-if="citation.page != null" class="sfx-t-caption">p.{{ citation.page }}</span>
+                    <li v-for="(citation, index) in message.citations"
+                        :key="citation.evidence_id || citation.id || index"
+                        class="sfx-agent-citation" :title="citation.snippet || ''">
+                        <BookMarked :size="13" class="sfx-agent-ref-icon" />
+                        <span class="sfx-agent-ref-text">
+                            <span v-if="citation.snippet" class="sfx-agent-citation-quote">“{{ citation.snippet }}”</span>
+                            <span v-else>{{ citation.title || citation.source || '课程原文' }}</span>
+                        </span>
+                        <span v-if="citationPageLabel(citation)" class="sfx-t-caption sfx-agent-ref-page">
+                            {{ citationPageLabel(citation) }}
+                        </span>
                     </li>
                 </ul>
 
@@ -158,26 +175,28 @@ async function toggleCorpusSource(ref) {
                     <li class="sfx-agent-seg-label sfx-agent-citations-title">学科参考</li>
                     <li v-for="(ref, index) in message.disciplineReferences" :key="ref.reference_id || ref.node_id || index"
                         class="sfx-agent-citation is-discipline">
-                        <BookOpen :size="13" />
-                        <span>{{ ref.name }}<template v-if="ref.course">（{{ ref.course }}）</template></span>
-                        <span v-if="ref.source_title" class="sfx-t-caption">{{ ref.source_title }}</span>
-                        <span v-if="ref.result_type === 'corpus_chunk'" class="sfx-t-caption">
-                            {{ ref.source_kind }}<template v-if="ref.source_license || ref.license"> · {{ ref.source_license || ref.license }}</template><template v-if="(ref.matched_by || []).length"> · {{ ref.matched_by.join('+') }}</template>
+                        <BookOpen :size="13" class="sfx-agent-ref-icon" />
+                        <span class="sfx-agent-ref-text">
+                            <span class="sfx-agent-ref-name">{{ ref.name }}<template v-if="ref.course">（{{ ref.course }}）</template></span>
+                            <span v-if="ref.source_title" class="sfx-t-caption">{{ ref.source_title }}</span>
+                            <span v-if="ref.result_type === 'corpus_chunk'" class="sfx-t-caption">
+                                {{ ref.source_kind }}<template v-if="ref.source_license || ref.license"> · {{ ref.source_license || ref.license }}</template><template v-if="(ref.matched_by || []).length"> · {{ ref.matched_by.join('+') }}</template>
+                            </span>
                         </span>
                         <a
                             v-if="safeSourceUrl(ref.source_url)"
-                            class="sfx-agent-source-link"
+                            class="sfx-agent-source-link sfx-agent-ref-action"
                             :href="safeSourceUrl(ref.source_url)"
                             target="_blank"
                             rel="noopener noreferrer"
                         >出处</a>
-                        <SfxButton v-if="isCorpusRef(ref)" variant="tertiary" size="sm"
+                        <SfxButton v-if="isCorpusRef(ref)" class="sfx-agent-ref-action" variant="tertiary" size="sm"
                             :loading="viewingLoading && viewingChunkId === ref.chunk_id"
                             @click="toggleCorpusSource(ref)">
                             {{ viewingChunkId === ref.chunk_id && viewingText ? '收起原文' : '查看原文' }}
                         </SfxButton>
                     </li>
-                    <li v-if="viewingChunkId" class="sfx-agent-citation is-discipline">
+                    <li v-if="viewingChunkId" class="sfx-agent-citation is-discipline is-source">
                         <span v-if="viewingLoading" class="sfx-t-caption">原文加载中…</span>
                         <span v-else-if="viewingError" class="sfx-t-caption">{{ viewingError }}</span>
                         <span v-else-if="viewingText" class="sfx-agent-source-text">{{ viewingText.text }}</span>
@@ -447,19 +466,69 @@ async function toggleCorpusSource(ref) {
     padding: var(--space-3) var(--space-4);
     margin: 0;
     list-style: none;
+    min-width: 0;
 }
 
 .sfx-agent-citations-title {
     margin-bottom: var(--space-1);
 }
 
+/* 依据 / 学科参考条目共用骨架：单行排布，横向不足时省略文本、保住右侧动作 */
 .sfx-agent-citation {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: var(--space-2);
+    min-width: 0;
     font-size: var(--ui-sm-size);
     color: var(--text-secondary);
-    line-height: 1.6;
+    line-height: 1.5;
+}
+
+.sfx-agent-ref-icon {
+    flex: 0 0 auto;
+    color: var(--ink-500);
+}
+
+/* 文本段承担全部压缩：宽度不足时尾部省略，不影响动作元素 */
+.sfx-agent-ref-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 摘录原文是本行信息主体，用一级文字色与灰色元信息区分 */
+.sfx-agent-citation-quote {
+    color: var(--text-primary);
+}
+
+.sfx-agent-ref-text > span + span::before {
+    content: "·";
+    margin: 0 var(--space-1);
+    color: var(--text-muted);
+}
+
+.sfx-agent-ref-page {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* 出处链接与"查看原文"按钮不参与压缩，任何宽度下都保持可见可点 */
+.sfx-agent-ref-action {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.sfx-agent-source-link {
+    font-size: var(--caption-size);
+    line-height: var(--caption-line);
+    color: var(--ink-600);
+    text-decoration: underline;
+}
+
+.sfx-agent-source-link:hover {
+    color: var(--ink-700);
 }
 
 /* 学科参考（R14）：琥珀左边线区别于墨蓝"依据"，明示补充参考身份 */
@@ -468,19 +537,33 @@ async function toggleCorpusSource(ref) {
     flex-direction: column;
     gap: var(--space-1);
     margin: 0;
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-1) var(--space-3);
     list-style: none;
     border-left: 3px solid var(--amber-300);
     background: var(--amber-100);
     border-radius: var(--radius-sm);
+    min-width: 0;
 }
 
 .sfx-agent-citation.is-discipline {
     color: var(--text-secondary);
 }
 
-.sfx-agent-citation.is-discipline span:first-of-type {
+.sfx-agent-citation.is-discipline .sfx-agent-ref-icon {
+    color: var(--amber-700);
+}
+
+.sfx-agent-citation.is-discipline .sfx-agent-ref-name {
     color: var(--text-primary);
+}
+
+/* 原文展开行：整行块级展示，不做省略裁剪 */
+.sfx-agent-citation.is-source {
+    display: block;
+}
+
+.sfx-agent-citation.is-source .sfx-agent-source-text {
+    margin-top: 0;
 }
 
 .sfx-agent-source-text {

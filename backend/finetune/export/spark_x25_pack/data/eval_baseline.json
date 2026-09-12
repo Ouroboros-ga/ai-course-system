@@ -1,0 +1,107 @@
+{
+  "schema_version": "cs-eval/1.0",
+  "discipline": "计算机科学与技术",
+  "description": "CS 学科垂类大模型评测基准（挑战杯 XH-202620）。用例与 docs/phase1/XH202620_典型问题测试案例集.md 对齐；check.type: contains=输出须包含全部 markers；exact=输出须等于 expected；judge0_manual=需沙箱人工/服务端执行验证。",
+  "cases": [
+    {
+      "id": "C1",
+      "category": "data_structure",
+      "scenario": "助学",
+      "question": "已知某二叉树的前序遍历序列为 A B D E C F，中序遍历序列为 D B E A F C，请重建该二叉树并给出其后序遍历序列。",
+      "expected": "D E B F C A",
+      "check": {"type": "contains", "markers": ["D E B F C A"]},
+      "source": {"title": "严蔚敏、吴伟民《数据结构（C语言版）》", "chapter": "第 5 章 树和二叉树"},
+      "system_entry": "课程问答（TeachingAgent）"
+    },
+    {
+      "id": "C2",
+      "category": "algorithm",
+      "scenario": "助学",
+      "question": "对已按升序排好的长度为 n 的数组执行以首元素为基准的快速排序，其时间复杂度是多少？请说明原因，并与归并排序对比。",
+      "expected": "最坏情况 O(n²)；归并排序 O(n log n)",
+      "check": {"type": "contains_grouped", "markers": [["O(n²)", "O(n^2)", "O(n2)", "O(N²)"], ["O(n log n)", "O(nlogn)", "O(N log N)"]]},
+      "source": {"title": "Cormen 等《算法导论（原书第 3 版）》", "chapter": "第 7 章 快速排序 / 第 2 章 归并排序"},
+      "system_entry": "课程问答（TeachingAgent）"
+    },
+    {
+      "id": "C3",
+      "category": "code_debug",
+      "scenario": "助学",
+      "question": "下面的 C 函数意图把字符串原地反转，但运行结果错误，请定位问题并给出修复后的代码：void reverse(char s[]) { int n = strlen(s); for (int i = 0; i < n; i++) { char t = s[i]; s[i] = s[n - i]; s[n - i] = t; } }",
+      "expected": "循环应到 n/2；下标应为 s[n-1-i]；修复代码可在沙箱执行验证",
+      "check": {"type": "judge0_manual", "markers": ["n / 2", "n - 1 - i"]},
+      "source": {"title": "Kernighan & Ritchie《The C Programming Language》", "chapter": "数组与字符串"},
+      "system_entry": "CodingEduAgent + Judge0"
+    },
+    {
+      "id": "C4",
+      "category": "operating_system",
+      "scenario": "助教",
+      "question": "三个进程 P1、P2、P3 到达时间均为 0，服务时间分别为 24、3、3，按先来先服务（FCFS，到达顺序 P1→P2→P3）调度，计算各进程等待时间与平均等待时间。",
+      "expected": "平均等待时间 17",
+      "check": {"type": "contains", "markers": ["17"]},
+      "source": {"title": "汤小丹等《计算机操作系统（第 4 版）》", "chapter": "进程调度"},
+      "system_entry": "AI 出题 / 备课讲稿"
+    },
+    {
+      "id": "C5",
+      "category": "network",
+      "scenario": "助教",
+      "question": "解释 TCP 建立连接的三次握手过程，说明为什么需要三次（两次为何不够），并给出关键报文标志位与状态迁移。",
+      "expected": "SYN → SYN+ACK → ACK；防止失效连接请求造成错误连接",
+      "check": {"type": "contains", "markers": ["SYN", "ACK", "三次"]},
+      "source": {"title": "谢希仁《计算机网络（第 8 版）》 / RFC 793", "chapter": "TCP 运输连接管理"},
+      "system_entry": "备课讲稿 / 知识问答"
+    },
+    {
+      "id": "C6",
+      "category": "database",
+      "scenario": "助研",
+      "question": "给定学生成绩表 score(student_id, course_id, score)，写出查询每门课程成绩最高的学生学号与分数的 SQL，并说明 READ COMMITTED 与 REPEATABLE READ 隔离级别下行为差异。",
+      "expected": "窗口函数 ROW_NUMBER() OVER (PARTITION BY course_id ORDER BY score DESC) WHERE rn = 1；隔离级别差异说明",
+      "check": {"type": "contains", "markers": ["ROW_NUMBER", "REPEATABLE READ"]},
+      "source": {"title": "王珊、萨师煊《数据库系统概论（第 6 版）》 / PostgreSQL 文档", "chapter": "关系查询与事务隔离"},
+      "system_entry": "ResearchAgent 学术写作/问答"
+    },
+    {
+      "id": "C7",
+      "category": "software_engineering",
+      "scenario": "助教",
+      "question": "为成绩录入功能设计测试用例：成绩为整数，合法范围 0–100（含端点）。请给出等价类划分与边界值用例。",
+      "expected": "等价类：有效 0–100 / 无效 <0 与 >100 与非整数；边界值：0、100、-1、101",
+      "check": {"type": "contains", "markers": ["等价类", "边界值", "101"]},
+      "source": {"title": "张海藩《软件工程导论（第 6 版）》", "chapter": "第 6 章 软件测试"},
+      "system_entry": "AI 出题 / 备课讲稿"
+    },
+    {
+      "id": "C8",
+      "category": "machine_learning",
+      "scenario": "助学",
+      "question": "某二分类模型测试结果：TP=40、FP=10、FN=20、TN=30。计算精确率（Precision）、召回率（Recall）与 F1。",
+      "expected": "精确率=0.8；召回率≈0.667；F1≈0.727（给出公式）",
+      "check": {"type": "contains", "markers": ["0.8", "0.666", "0.727"]},
+      "source": {"title": "周志华《机器学习》", "chapter": "第 2 章 模型评估与选择"},
+      "system_entry": "课程问答（TeachingAgent）"
+    },
+    {
+      "id": "C9",
+      "category": "algorithm",
+      "scenario": "助学",
+      "question": "背包容量 W=5，三件物品（重量,价值）=（2,3）（3,4）（4,5）。用动态规划求最大可装价值。",
+      "expected": "最大价值=7（选物品 1 与 2，总重 5，价值 7）",
+      "check": {"type": "contains", "markers": ["7"]},
+      "source": {"title": "Cormen 等《算法导论（原书第 3 版）》", "chapter": "第 15 章 动态规划"},
+      "system_entry": "课程问答（TeachingAgent）"
+    },
+    {
+      "id": "C10",
+      "category": "operating_system",
+      "scenario": "助教",
+      "question": "进程 A 持有锁 L1 并请求锁 L2，进程 B 持有锁 L2 并请求锁 L1，均不释放已持锁。判断是否死锁并说明死锁的四个必要条件。",
+      "expected": "是死锁；互斥、占有并等待、不可抢占、循环等待；处理方法（预防/避免/检测解除）",
+      "check": {"type": "contains", "markers": ["死锁", "循环等待"]},
+      "source": {"title": "汤小丹等《计算机操作系统（第 4 版）》", "chapter": "第 3 章 处理机调度与死锁"},
+      "system_entry": "备课讲稿 / 知识问答"
+    }
+  ]
+}
