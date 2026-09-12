@@ -132,20 +132,19 @@ async def execute_code(
         )
     session.commit()
 
+    # 平台硬上限永远优先：课程策略只能收紧不能放宽（DoD「客户端不能提高
+    # resource limit」，课程策略同理）。CourseSandboxPolicy 若缺字段即取平台值。
     cpu_limit = min(
         settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
         course_policy.cpu_limit if course_policy else settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
-        settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
     )
     memory_limit = min(
         settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
         course_policy.memory_limit if course_policy else settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
-        settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
     )
     wall_limit = min(
         settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
         course_policy.wall_time_limit if course_policy else settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
-        settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
     )
 
     # 构建资源限制
@@ -153,14 +152,8 @@ async def execute_code(
         cpu_time_limit=cpu_limit,
         memory_limit=memory_limit,
         wall_time_limit=wall_limit,
-        max_processes=min(
-            settings.JUDGE0_DEFAULT_MAX_PROCESSES,
-            settings.JUDGE0_DEFAULT_MAX_PROCESSES,
-        ),
-        max_file_size=min(
-            settings.JUDGE0_DEFAULT_MAX_FILE_SIZE,
-            settings.JUDGE0_DEFAULT_MAX_FILE_SIZE,
-        ),
+        max_processes=settings.JUDGE0_DEFAULT_MAX_PROCESSES,
+        max_file_size=settings.JUDGE0_DEFAULT_MAX_FILE_SIZE,
     )
 
     result = await run_in_threadpool(

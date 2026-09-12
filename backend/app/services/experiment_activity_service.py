@@ -495,10 +495,13 @@ class ExperimentActivityService:
         """
         if activity.status != ActivityStatus.PUBLISHED.value:
             reject_state_conflict(f"活动 {activity.activity_id} 未发布，不可作答")
+        # DB 时间列读回是 naive（与 list_student_activities 同款坑）——
+        # 与 aware 的 now 比较前必须归一，否则 TypeError → 500。
+        # 有时间窗的活动会稳定复现，无窗活动因两端皆 None 躲过。
         allowed, reason = is_submission_open(
             now or utcnow_aware(),
-            start_at=activity.start_at,
-            end_at=activity.end_at,
+            start_at=to_aware(activity.start_at) if activity.start_at else None,
+            end_at=to_aware(activity.end_at) if activity.end_at else None,
             allow_late_submit=activity.allow_late_submit,
         )
         if not allowed:

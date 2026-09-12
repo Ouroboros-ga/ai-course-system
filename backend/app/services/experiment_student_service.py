@@ -24,6 +24,7 @@ from app.models.experiment_model import (
     ExperimentAttempt,
     ExperimentDefinition,
     ExperimentRun,
+    ExperimentTestCase,
     ExperimentVersion,
     ExperimentPublishStatus,
 )
@@ -127,10 +128,11 @@ class ExperimentStudentService:
         student_id: int,
         experiment_id: str,
     ) -> dict:
-        """学生题目详情：公开面（题面/限制/起始代码）+ 我的作答摘要。
+        """学生题目详情：公开面（题面/限制/起始代码/公开样例）+ 我的作答摘要。
 
-        **不含任何 testcase**（隐藏的不给，非隐藏的也不在此给 —— 用例明细
-        属于教师资产；学生侧的评测解读走 diagnosis 通道）。
+        **隐藏用例不给**（明细属于教师资产；学生侧的评测解读走 diagnosis 通道）；
+        **非隐藏用例作为「样例」返回** —— OJ 惯例（设计稿②「样例」区）：
+        学生需要靠公开样例理解输入输出格式。
         """
         definition = definition_service.get_definition(
             session, course_id=course_id, experiment_id=experiment_id
@@ -152,6 +154,7 @@ class ExperimentStudentService:
 
         starter_code: dict = {}
         limits = {"cpu_time_limit": None, "memory_limit": None, "wall_time_limit": None}
+        samples: list[dict] = []
         if version is not None:
             raw = getattr(version, "starter_code", None)
             starter_code = dict(raw) if isinstance(raw, dict) else {}
@@ -160,6 +163,19 @@ class ExperimentStudentService:
                 "memory_limit": version.memory_limit,
                 "wall_time_limit": version.wall_time_limit,
             }
+            # 公开样例（is_hidden=False）——设计稿②「样例」区：学生靠样例理解
+            # 输入输出格式。隐藏用例绝不返回（防作弊红线）。
+            for case in session.exec(
+                select(ExperimentTestCase).where(
+                    ExperimentTestCase.version_id == version.version_id,
+                    ExperimentTestCase.is_hidden == False,  # noqa: E712
+                )
+            ).all():
+                samples.append({
+                    "name": case.case_name,
+                    "input": case.stdin,
+                    "output": case.expected_stdout,
+                })
 
         my = self._my_attempt_summary(
             session, course_id=course_id, student_id=student_id
@@ -177,6 +193,7 @@ class ExperimentStudentService:
             "language_whitelist": list(definition.language_whitelist or []),
             "limits": limits,
             "starter_code": starter_code,
+            "samples": samples,
             "knowledge_node_ids": list(definition.knowledge_node_ids or []),
             "stats": {
                 "attempt_total": attempt_total,
@@ -206,9 +223,18 @@ class ExperimentStudentService:
         experiment_id: Optional[str] = None,
         outcome: Optional[str] = None,
         language: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
         limit: int = 50,
-    ) -> list[dict]:
-        """我的提交记录（只含本人 runs）。结果筛选接受 outcome 值（accepted 等）。"""
+        offset: int = 0,
+    ) -> tuple[int, list[dict]]:
+        """我的提交记录（只含本人 runs）。结果筛选接受 outcome 值（accepted 等）。
+
+        `date_from` / `date_to`：YYYY-MM-DD（含端点），按提交时间过滤。
+
+        返回 ``(total, items)``：total 是**全部命中数**（分页前），不是截断后的
+        条数 —— 前端分页器靠它算总页数，撒谎的 total 会把后页吞掉。
+        """
         # run 不直接挂 experiment —— 经 attempt 关联（attempt.experiment_id）。
         stmt = select(ExperimentRun).where(
             ExperimentRun.course_id == course_id,
@@ -236,20 +262,46 @@ class ExperimentStudentService:
 
         items = []
         wanted = outcome.strip().lower() if outcome else None
+
+        # 时间范围（YYYY-MM-DD 含端点，UTC 口径）。DB 时间可能是 naive ——
+        # 用 to_aware 归一后比较，避免 naive/aware TypeError（PR-01 同款坑）。
+        from datetime import datetime as dt, timedelta, timezone
+
+        from app.core.time_utils import to_aware
+
+        def _parse_day(value: Optional[str], end: bool = False) -> Optional[dt]:
+            if not value:
+                return None
+            parsed = dt.strptime(value.strip(), "%Y-%m-%d")
+            if end:
+                parsed += timedelta(days=1) - timedelta(seconds=1)
+            return parsed.replace(tzinfo=timezone.utc)
+
+        day_from = _parse_day(date_from)
+        day_to = _parse_day(date_to, end=True)
+
         for r in rows:
             outcome_value = str(getattr(r.outcome, "value", r.outcome) or "").lower()
             if wanted and outcome_value != wanted:
                 continue
             if language is not None and r.language != language:
                 continue
+            if day_from or day_to:
+                submitted = to_aware(r.submitted_at) if r.submitted_at else None
+                if submitted is None:
+                    continue
+                if day_from and submitted < day_from:
+                    continue
+                if day_to and submitted > day_to:
+                    continue
             items.append(
                 self._serialize_run(
                     r, outcome_value, exp_by_attempt.get(r.attempt_id)
                 )
             )
-            if len(items) >= max(1, min(limit, 200)):
-                break
-        return items
+        total = len(items)
+        start = max(0, offset)
+        return total, items[start:start + max(1, min(limit, 200))]
 
     def get_my_submission(
         self,
@@ -325,7 +377,12 @@ class ExperimentStudentService:
     def _my_attempt_summary(
         self, session: OrmSession, *, course_id: int, student_id: int
     ) -> dict[str, dict]:
-        """我的维度：experiment_id -> {attempted, solved, best_score}。"""
+        """我的维度：experiment_id -> {attempted, solved, best_score}。
+
+        attempted = 存在过非 CANCELLED 尝试。CANCELLED 不算碰过
+        （与 max_attempts 计数口径一致）；SUBMITTED / FAILED 照算碰过 ——
+        交过卷pending终结、判题失败都是"尝试过"，标"未尝试"会骗学生重开一题。
+        """
         rows = session.exec(
             select(ExperimentAttempt).where(
                 ExperimentAttempt.course_id == course_id,
@@ -337,10 +394,11 @@ class ExperimentStudentService:
             item = summary.setdefault(
                 a.experiment_id, {"attempted": False, "solved": False, "best_score": None}
             )
-            if a.status == "in_progress":
-                item["attempted"] = True
-            if a.status == "finalized":
-                item["attempted"] = True
+            status_value = str(getattr(a.status, "value", a.status) or "")
+            if status_value == "cancelled":
+                continue
+            item["attempted"] = True
+            if status_value == "finalized":
                 if a.passed:
                     item["solved"] = True
                 if a.final_score is not None:

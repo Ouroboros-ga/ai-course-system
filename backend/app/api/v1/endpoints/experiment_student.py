@@ -76,24 +76,30 @@ async def list_my_submissions(
     experiment_id: Optional[str] = Query(default=None, max_length=64),
     outcome: Optional[str] = Query(default=None, max_length=32),
     language: Optional[str] = Query(default=None, max_length=50),
+    date_from: Optional[str] = Query(default=None, max_length=10),
+    date_to: Optional[str] = Query(default=None, max_length=10),
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """我的提交记录（按 token 学生过滤；筛选：题目 / 结果 / 语言）。"""
+    """我的提交记录（按 token 学生过滤；筛选：题目 / 结果 / 语言 / 日期；分页）。"""
     require_course_permission(session, current_user, course_id, "experiment.view")
-    items = student_service.list_my_submissions(
+    total, items = student_service.list_my_submissions(
         session,
         course_id=course_id,
         student_id=int(current_user["user_id"]),
         experiment_id=experiment_id,
         outcome=outcome,
         language=language,
+        date_from=date_from,
+        date_to=date_to,
         limit=limit,
+        offset=offset,
     )
     return unified_response(
         code=200, message="获取提交记录成功",
-        data={"items": items, "total": len(items)},
+        data={"items": items, "total": total},
     )
 
 

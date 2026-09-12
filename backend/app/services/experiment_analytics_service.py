@@ -7,11 +7,14 @@
 - 提交次数 = `ExperimentRun` 全量（含测试运行）；
 - 通过率 = finalized attempts 的 passed 比例；
 - 高频错题 = 非通过运行数最多的题目（按 finalized 之外的全部 run 计）；
-- 需要关注的学生 = 参与了活动但通过题数为 0，或最近 7 天无终结记录的在册学生。
+- 需要关注的学生 = 交过卷但通过题数为 0（finalized>0 且 passed==0），
+  或最近 7 天无终结记录的在册学生。从未作答的在册学生不进名单
+  （那是点名册问题不是学情问题；ever_submitted 照常返回供前端区分）。
 """
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from sqlalchemy import func
 from sqlmodel import Session as OrmSession, select
@@ -92,23 +95,28 @@ class ExperimentAnalyticsService:
             bucket = by_day.get(day, {"submissions": 0, "accepted": 0})
             trend.append({"date": day, **bucket})
 
-        # 高频错题：非通过（且已判定的）运行数降序，取前 5
-        problem_titles = {
-            d.experiment_id: d.title
-            for d in session.exec(
-                select(ExperimentDefinition).where(
-                    ExperimentDefinition.course_id == course_id
+        # 高频错题：非通过（且已判定的）运行数降序，取前 5。
+        # run 不直接挂 experiment —— 经 attempt 关联解析（与教师流水同一方式）。
+        # 注意：ExperimentRun 没有 experiment_id 列，直接读会 AttributeError
+        # 把整端点打成 500（有任一 WA/TLE… 运行即炸）。
+        attempt_ids = {run.attempt_id for run in run_rows}
+        exp_by_attempt: dict[str, str] = {}
+        if attempt_ids:
+            for attempt in session.exec(
+                select(ExperimentAttempt).where(
+                    ExperimentAttempt.attempt_id.in_(attempt_ids)  # type: ignore[attr-defined]
                 )
-            ).all()
-        }
+            ).all():
+                exp_by_attempt[attempt.attempt_id] = attempt.experiment_id
         wrong_by_problem: dict[str, int] = {}
         for run in run_rows:
             outcome_value = str(getattr(run.outcome, "value", run.outcome) or "").lower()
             if outcome_value in ("accepted", "pending"):
                 continue
-            if not run.experiment_id:
+            experiment_id = exp_by_attempt.get(run.attempt_id)
+            if not experiment_id:
                 continue
-            wrong_by_problem[run.experiment_id] = wrong_by_problem.get(run.experiment_id, 0) + 1
+            wrong_by_problem[experiment_id] = wrong_by_problem.get(experiment_id, 0) + 1
 
         # 诊断记录的 error_class 分布（有 diagnosis 数据才有；没有如实给空）
         diagnosis_rows = list(
@@ -124,6 +132,14 @@ class ExperimentAnalyticsService:
             error_class_counts[key] = error_class_counts.get(key, 0) + 1
 
         top_wrong = sorted(wrong_by_problem.items(), key=lambda kv: -kv[1])[:5]
+        problem_titles = {
+            d.experiment_id: d.title
+            for d in session.exec(
+                select(ExperimentDefinition).where(
+                    ExperimentDefinition.course_id == course_id
+                )
+            ).all()
+        }
         high_frequency_wrong = [
             {
                 "experiment_id": experiment_id,
@@ -165,17 +181,65 @@ class ExperimentAnalyticsService:
             idle_days = (
                 int((to_aware(now) - to_aware(last)).days) if last else None
             )
+            finalized_count = item["finalized"] if item else 0
             passed_count = item["passed"] if item else 0
-            needs = passed_count == 0 or (idle_days is not None and idle_days >= 7)
+            # passed==0 必须以"交过卷"为前提，否则全班未作答新生全进名单成噪音。
+            needs = (finalized_count > 0 and passed_count == 0) or (
+                idle_days is not None and idle_days >= 7
+            )
             if not needs:
                 continue
             attention.append({
                 "student_id": student_id,
-                "finalized_count": item["finalized"] if item else 0,
+                "finalized_count": finalized_count,
                 "passed_count": passed_count,
                 "idle_days": idle_days,
                 "ever_submitted": student_id in run_students,
             })
+
+        # ── 难度分布（设计稿⑥「难度分布正确率」缩水版）：按已发布题的难度
+        # 聚合 finalized 尝试数与通过数。仅覆盖**已发布**题（草稿题没有教学意义）。
+        published_defs = list(
+            session.exec(
+                select(ExperimentDefinition).where(
+                    ExperimentDefinition.course_id == course_id,
+                )
+            ).all()
+        )
+        attempt_by_exp: dict[str, dict[str, int]] = {}
+        for attempt in attempt_rows:
+            item = attempt_by_exp.setdefault(
+                attempt.experiment_id, {"attempts": 0, "passed": 0}
+            )
+            item["attempts"] += 1
+            if attempt.passed:
+                item["passed"] += 1
+
+        difficulty_distribution: dict[str, dict[str, Any]] = {}
+        for definition in published_defs:
+            if definition.publish_status != "published":
+                continue
+            bucket = difficulty_distribution.setdefault(
+                definition.difficulty or "unknown",
+                {"problems": 0, "attempt_total": 0, "passed_total": 0},
+            )
+            bucket["problems"] += 1
+            stats = attempt_by_exp.get(definition.experiment_id) or {}
+            bucket["attempt_total"] += stats.get("attempts", 0)
+            bucket["passed_total"] += stats.get("passed", 0)
+
+        # ── 逐题统计（教师题目管理「使用次数」列 + 看板通过率列用） ──
+        problem_stats = [
+            {
+                "experiment_id": definition.experiment_id,
+                "title": definition.title,
+                "difficulty": definition.difficulty,
+                "publish_status": definition.publish_status,
+                "attempt_total": (attempt_by_exp.get(definition.experiment_id) or {}).get("attempts", 0),
+                "passed_total": (attempt_by_exp.get(definition.experiment_id) or {}).get("passed", 0),
+            }
+            for definition in published_defs
+        ]
 
         return {
             "course_id": course_id,
@@ -188,6 +252,8 @@ class ExperimentAnalyticsService:
             "high_frequency_wrong": high_frequency_wrong,
             "error_class_counts": error_class_counts,
             "students_needing_attention": attention,
+            "difficulty_distribution": difficulty_distribution,
+            "problem_stats": problem_stats,
             "generated_at": now.isoformat(),
         }
 

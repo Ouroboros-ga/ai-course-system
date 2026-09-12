@@ -44,7 +44,10 @@ function formatDate(value) {
 }
 
 function openProblem(activity, problem) {
-  router.push(`/app/oj/problems/${problem.problem_definition_id}`)
+  // 活动归属随路由带过去 —— 详情页 Workbench 建 attempt 时回传服务端，
+  // 榜单/算分才认得这次作答是哪次作业的（否则恒为自由练习）。
+  const target = `/app/oj/problems/${problem.problem_definition_id}`
+  router.push(activity?.activity_id ? `${target}?activity=${activity.activity_id}` : target)
 }
 
 async function loadCourses() {

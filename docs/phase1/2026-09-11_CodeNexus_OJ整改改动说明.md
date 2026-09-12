@@ -890,3 +890,55 @@ PR-03 的延迟导入永久化；随迁后依赖图变成干净的星形。
 PR-00 → 01 → 02 → 03 → 04 → 05 → 06a → 06b → 07 → 09 全部落地
 （09 依前置提前做）。`experiment_service.py` 从 2309 行降到 793 行，
 域层 `domain/oj/` 新增 problems / activity / intelligence(hints) 三个模块。
+
+---
+
+## 13. PR-18 实施记录：活动作答归属链打通（2026-09-12 后端审计驱动）
+
+### 13.1 审计发现（先说坏消息）
+
+PR-07/08/11/12/14 落的是**读路径**：建活动、挂题（版本逐题冻结）、scope、
+发布、榜单、看板、学生活动页全有。但**写归属断了三处**：
+
+| # | 断裂 | 后果 |
+|---|---|---|
+| 1 | `create_attempt` 无 `activity_id` 参数；`_create_run_record` 不拷贝 | `attempt/run.activity_id` 恒 NULL（生产零写入者，只有测试直构造） |
+| 2 | `assert_submission_open` 零生产调用 | 活动窗口无人执行；关窗后照常建 attempt |
+| 3 | `max_submissions` 列建好，无任何读取 | 教师设了上限等于没设 |
+
+结果：`compute_student_score` / scoreboard 按 `activity_id` 查 —— **恒为空**。
+作业页点题进的是通用详情页（无 activity 上下文），学生交了也白交
+（相对活动而言）。另顺手逮到两个 500：学情高频错题读不存在的
+`run.experiment_id`（任一非 AC 运行即炸）；`assert_submission_open` 的
+naive/aware 直接比较（带窗活动必炸）。
+
+### 13.2 修法（写路径三件套 + 两处 500）
+
+- `create_attempt(..., activity_id=None)`：None = 自由练习（原语义零改动）；
+  有值走 `_resolve_activity_version` —— 可见性（404，不透露存在性）→
+  类型（非 homework 422，不静默降级）→ 窗口（409，迟交放行）→
+  题目在活动中（422）→ 返回挂题冻结的 `problem_version_id`。
+  max_attempts/冷却是**共享预算**（活动与自练同口径，否则重开 attempt
+  即绕过上限）。
+- `_create_run_record` 从 attempt 继承 `activity_id`（PR-07 既定冗余语义）；
+  `create_run` 内加 `_assert_activity_submission_allowed`：窗口重验 +
+  `max_submissions`（>0 才执行；已取消/系统失败的 run 不占预算，
+  口径以 `run_state` 为准）。
+- 端点：`AttemptCreateRequest.activity_id`、`_serialize_attempt.activity_id`；
+  前端作业页 `?activity=` → 详情页 → Workbench → 建 attempt，＋作业徽标。
+- 学情：高频错题经 attempt 映射；关注名单要求交过卷
+ （`finalized>0 且 passed==0`，或 `idle≥7天`）。
+- 提交列表：total 改命中总数（两端点同病），＋offset；教师端加
+  `student_id` 筛选（此前教师查单个学生只能全量拉）；教师行补 `activity_id`。
+- `_my_attempt_summary`：attempted＝存在非 CANCELLED（SUBMITTED/FAILED
+  不再显示"未尝试"）。
+- `sandbox.py` 死 `min()` 收敛（零行为变化）。
+
+### 13.3 验证
+
+- 新增 `tests/test_oj_activity_attribution.py` **18 passed**；
+- OJ 门禁 18 文件 **439 passed**（含 `test_p0_2_async_tasks`）；
+- 前端契约 110＋1 已知旧失败（CourseLayout，他线，本地树落后远端 38 笔，
+  合流后以远端为准）；experimentPublish/RunContract 15 绿。
+- 无迁移（全是既有列的行为接线），无 URL 破坏（全加法：新可选参数＋
+  响应加键；`total` 改真值是修 bug 不是改契约——此前的值恒错）。

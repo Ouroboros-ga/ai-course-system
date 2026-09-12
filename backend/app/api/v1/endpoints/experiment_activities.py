@@ -382,7 +382,9 @@ async def list_course_submissions(
     course_id: int,
     experiment_id: Optional[str] = Query(default=None, max_length=64),
     outcome: Optional[str] = Query(default=None, max_length=32),
+    student_id: Optional[int] = Query(default=None, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
@@ -390,11 +392,14 @@ async def list_course_submissions(
 
     与学生 façade 的 /submissions 分端点：教师视图带学生身份，
     且走 experiment.configure（全班评测明细是教师资产）。
+    total 是全部命中数（分页前），items 是本页切片。
     """
     require_course_permission(session, current_user, course_id, "experiment.configure")
     from app.models.user_model import User
 
     stmt = select(ExperimentRun).where(ExperimentRun.course_id == course_id)
+    if student_id is not None:
+        stmt = stmt.where(ExperimentRun.student_id == student_id)
     if experiment_id is not None:
         # run 不直接挂 experiment —— 经 attempt 关联解析
         stmt = stmt.join(  # type: ignore[arg-type]
@@ -433,6 +438,7 @@ async def list_course_submissions(
             "student_id": r.student_id,
             "username": usernames.get(r.student_id, "—"),
             "experiment_id": exp_by_attempt.get(r.attempt_id),
+            "activity_id": r.activity_id,
             "language": r.language,
             "outcome": outcome_value,
             "run_state": r.run_state,
@@ -442,9 +448,9 @@ async def list_course_submissions(
             "cpu_time_ms": r.cpu_time_ms,
             "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
         })
-        if len(items) >= limit:
-            break
+    total = len(items)
+    start = max(0, offset)
     return unified_response(
         code=200, message="获取评测记录成功",
-        data={"items": items, "total": len(items)},
+        data={"items": items[start:start + limit], "total": total},
     )

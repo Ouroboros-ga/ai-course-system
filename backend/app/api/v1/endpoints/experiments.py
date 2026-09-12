@@ -98,6 +98,9 @@ class VersionCreateRequest(BaseModel):
 
 class AttemptCreateRequest(BaseModel):
     return_anchor: dict = Field(default_factory=dict)
+    # 活动作答归属。不填 = 自由练习；填了走三道门（可见性/类型/窗口）
+    # + 冻结版本，见 ExperimentAttemptService.create_attempt。
+    activity_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class RunCreateRequest(BaseModel):
@@ -242,6 +245,7 @@ def _serialize_attempt(a, include_student_id: bool = True) -> dict[str, Any]:
         "final_score": a.final_score,
         "passed": a.passed,
         "evidence_id": a.evidence_id,
+        "activity_id": a.activity_id,
         "return_anchor": a.return_anchor,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "updated_at": a.updated_at.isoformat() if a.updated_at else None,
@@ -714,6 +718,7 @@ async def create_attempt(
         experiment_id=experiment_id,
         student_id=user_id,
         return_anchor=payload.return_anchor,
+        activity_id=payload.activity_id,
     )
     session.commit()
     session.refresh(attempt)

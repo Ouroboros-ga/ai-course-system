@@ -87,10 +87,13 @@ export function lockExperimentVersion(courseId, versionId) {
   return request.post(experimentPublishPaths(courseId, '', versionId).lock)
 }
 
-export function createExperimentAttempt(experimentId, courseId, returnAnchor = {}) {
+export function createExperimentAttempt(experimentId, courseId, returnAnchor = {}, activityId = null) {
+  const body = { return_anchor: returnAnchor }
+  // 活动归属：有值才带（自由练习不带，后端按 None 走原语义）。
+  if (activityId) body.activity_id = activityId
   return request.post(
     `/experiments/${encodeURIComponent(experimentId)}/attempts?course_id=${encodeURIComponent(courseId)}`,
-    { return_anchor: returnAnchor },
+    body,
     { skipErrorToast: true },
   )
 }

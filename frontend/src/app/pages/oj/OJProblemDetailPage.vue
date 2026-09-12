@@ -23,6 +23,8 @@ const route = useRoute()
 const router = useRouter()
 
 const experimentId = computed(() => String(route.params.experimentId || ''))
+// 活动归属：作业页带 ?activity= 进来；直达题库则为空（自由练习）。
+const activityId = computed(() => String(route.query.activity || ''))
 const courses = ref([])
 const courseId = ref('')
 const state = ref('loading')
@@ -133,6 +135,7 @@ onMounted(async () => {
         v-if="problem"
         :tone="problem.my_status === 'solved' ? 'green' : 'ink'"
       >{{ statusLabel(problem.my_status) }}</SfxBadge>
+      <SfxBadge v-if="activityId" tone="amber">作业作答 · 提交计入活动成绩</SfxBadge>
     </header>
 
     <SfxSkeleton v-if="state === 'loading'" :lines="6" block />
@@ -171,6 +174,25 @@ onMounted(async () => {
             v-html="renderContent(problem.description) || '暂无题面描述。'"
           ></div>
 
+          <div v-if="problem.samples?.length" class="oj-samples">
+            <h2 class="oj-section-title">样例</h2>
+            <div v-for="(sample, idx) in problem.samples" :key="idx" class="oj-sample">
+              <p class="sfx-t-caption sfx-t-secondary">
+                {{ sample.name || `样例 ${idx + 1}` }}
+              </p>
+              <div class="oj-sample-io">
+                <div class="oj-sample-block">
+                  <span class="sfx-t-caption sfx-t-secondary">输入</span>
+                  <pre>{{ sample.input }}</pre>
+                </div>
+                <div class="oj-sample-block">
+                  <span class="sfx-t-caption sfx-t-secondary">输出</span>
+                  <pre>{{ sample.output }}</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="oj-mine sfx-t-ui">
             <h2 class="oj-section-title">我的作答</h2>
             <p>
@@ -205,6 +227,7 @@ onMounted(async () => {
             :experiment="workbenchExperiment"
             :course-id="courseId"
             :languages="languages"
+            :activity-id="activityId"
             mode="both"
             @submit-complete="load"
           />
@@ -271,6 +294,15 @@ onMounted(async () => {
   margin-bottom: var(--space-2);
 }
 .oj-mine-subs { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
+.oj-samples { display: flex; flex-direction: column; gap: var(--space-3); }
+.oj-sample-io { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.oj-sample-block { display: flex; flex-direction: column; gap: var(--space-1); }
+.oj-sample-block pre {
+  background: var(--surface-subtle, rgba(0, 0, 0, 0.03));
+  padding: var(--space-2) var(--space-3); margin: 0;
+  font-family: var(--font-mono, monospace); font-size: var(--ui-sm-size);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
 .oj-mine-sub { display: flex; align-items: center; gap: var(--space-3); }
 .oj-workbench { min-width: 0; }
 @media (max-width: 1024px) {

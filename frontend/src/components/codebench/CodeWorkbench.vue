@@ -30,6 +30,8 @@ const props = defineProps({
   initialCode: { type: String, default: '' },
   initialLanguage: { type: String, default: '' },
   problemCollapsed: { type: Boolean, default: false },
+  // 活动作答归属：从作业页带 ?activity= 进来；空 = 自由练习（原语义不变）。
+  activityId: { type: String, default: '' },
 })
 
 const emit = defineEmits([
@@ -242,6 +244,7 @@ async function handleSubmit() {
       props.experiment.experiment_id,
       props.courseId,
       {},
+      props.activityId || null,
     )
 
     if (!attempt?.attempt_id) throw new Error('无法创建评测尝试')

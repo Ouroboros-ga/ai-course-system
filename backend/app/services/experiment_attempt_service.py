@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 from sqlalchemy import (
     case,
+    func,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import (
@@ -55,12 +56,13 @@ from app.domain.oj.judging.providers.judge0 import (
     SubmissionStatus,
     sandbox_client,
 )
-from app.domain.oj.judging.verdicts import reason_for_status
+from app.domain.oj.judging.verdicts import RunState, reason_for_status
 from app.services.experiment_problem_service import (  # noqa: F401
     _require_formal_experiment_capabilities,
     definition_service,
     version_service,
 )
+from app.services.experiment_activity_service import ExperimentActivityService
 from app.services.learning_evidence_context_service import upsert_learning_evidence_context
 from app.domain.learning.evidence import EvidenceType
 
@@ -80,6 +82,7 @@ class ExperimentAttemptService:
         experiment_id: str,
         student_id: int,
         return_anchor: Optional[dict] = None,
+        activity_id: Optional[str] = None,
     ) -> ExperimentAttempt:
         definition = definition_service.get_definition(
             session, course_id=course_id, experiment_id=experiment_id,
@@ -89,13 +92,28 @@ class ExperimentAttemptService:
             reject_resource_not_found(f"实验 {experiment_id} 不存在")
         if definition.publish_status != ExperimentPublishStatus.PUBLISHED:
             reject_state_conflict("实验未发布，无法创建尝试")
-        if not definition.default_version_id:
+
+        # 作答归属（活动作业 vs 自由练习）：活动路径固定挂题时冻结的版本，
+        # 不再动态解析 definition 的当前激活版本 —— 同一活动全体学生同卷公平。
+        # 自由练习（activity_id=None）沿用既有语义，走当前激活版本。
+        pinned_version_id = definition.default_version_id
+        if activity_id is not None:
+            pinned_version_id = self._resolve_activity_version(
+                session,
+                course_id=course_id,
+                experiment_id=experiment_id,
+                student_id=student_id,
+                activity_id=activity_id,
+            )
+        if not pinned_version_id:
             reject_state_conflict("实验缺少激活版本")
 
         # 检查尝试次数限制：统计所有非 CANCELLED 尝试（含已终结化），
         # 防止学生通过"创建→提交→终结化→创建"循环绕过 max_attempts 总次数限制。
+        # 活动作答与自由练习共享同一预算（同题同生同口径），不另设活动内计数 ——
+        # 否则"活动内重开 attempt"会成为绕过 max_attempts 的合法通道。
         version = version_service.get_version(
-            session, course_id=course_id, version_id=definition.default_version_id,
+            session, course_id=course_id, version_id=pinned_version_id,
         )
         if (
             version.experiment_id != definition.experiment_id
@@ -131,15 +149,60 @@ class ExperimentAttemptService:
 
         attempt = ExperimentAttempt(
             experiment_id=experiment_id,
-            version_id=definition.default_version_id,
+            version_id=pinned_version_id,
             course_id=course_id,
             student_id=student_id,
             status=AttemptStatus.IN_PROGRESS,
+            activity_id=activity_id,
             return_anchor=return_anchor or {},
         )
         session.add(attempt)
         session.flush()
         return attempt
+
+    @staticmethod
+    def _resolve_activity_version(
+        session: Session,
+        *,
+        course_id: int,
+        experiment_id: str,
+        student_id: int,
+        activity_id: str,
+    ) -> str:
+        """活动作答的三道门 + 冻结版本解析。
+
+        顺序即安全含义：不存在/跨课程 → 404；对该学生不可见 → 404
+        （不透露活动存在性）；类型未实现 → 422（绝不静默当 homework）；
+        未发布/窗口关闭 → 409；题目不在活动中 → 422。
+        返回挂题时逐题固化的 ``problem_version_id``（调用方不再回读
+        definition 的当前激活版本）。
+        """
+        activity_svc = ExperimentActivityService()
+        activity = activity_svc.get_activity(
+            session, course_id=course_id, activity_id=activity_id,
+        )
+        visible = activity_svc.resolve_visible_activity_ids(
+            session, student_id=student_id, course_id=course_id,
+        )
+        if activity.activity_id not in visible:
+            reject_resource_not_found(f"活动 {activity_id} 不存在")
+        if activity.type != "homework":
+            reject_validation_failed(
+                f"活动类型 {activity.type} 暂不支持作答",
+                details={"activity_id": activity_id, "type": activity.type},
+            )
+        activity_svc.assert_submission_open(session, activity=activity)
+        problems = activity_svc.list_problems(session, activity_id=activity.activity_id)
+        matched = next(
+            (p for p in problems if p.problem_definition_id == experiment_id),
+            None,
+        )
+        if matched is None:
+            reject_validation_failed(
+                f"实验 {experiment_id} 不在活动 {activity_id} 内",
+                details={"activity_id": activity_id, "experiment_id": experiment_id},
+            )
+        return matched.problem_version_id
 
     def student_summaries(
         self,
@@ -296,6 +359,17 @@ class ExperimentRunService:
         if attempt.status != AttemptStatus.IN_PROGRESS:
             reject_state_conflict("The experiment attempt is already submitted or finalized")
 
+        # 活动作答的提交时刻复核：窗口可能在建 attempt 之后关闭，且
+        # max_submissions 是"提交次数"预算 —— 语义点在提交不在建尝试。
+        # （并发竞态与既有 max_attempts 检查同级，不在此加锁。）
+        if attempt.activity_id:
+            self._assert_activity_submission_allowed(
+                session,
+                course_id=course_id,
+                student_id=student_id,
+                attempt=attempt,
+            )
+
         # 校验语言白名单
         definition = definition_service.get_definition(
             session, course_id=course_id, experiment_id=attempt.experiment_id,
@@ -319,6 +393,9 @@ class ExperimentRunService:
                     source_code=source_code,
                     student_id=student_id,
                     idempotency_key=idempotency_key,
+                    # 活动归属由 attempt 继承（PR-07 设计：attempt 归属创建后不可变，
+                    # run 侧冗余拷贝，换取 scoreboard/报表按活动拉 run 免 join）。
+                    activity_id=attempt.activity_id,
                 )
         except IntegrityError:
             existing = session.exec(
@@ -332,6 +409,54 @@ class ExperimentRunService:
             if existing is not None:
                 return existing
             raise
+
+    @staticmethod
+    def _assert_activity_submission_allowed(
+        session: Session,
+        *,
+        course_id: int,
+        student_id: int,
+        attempt: ExperimentAttempt,
+    ) -> None:
+        """活动提交复核：窗口重验 + 每生每题提交上限。
+
+        已取消/基础设施失败的 run 不占预算（取消从不是成绩， infra 失败不转嫁学生）。
+        判定口径以 ``run_state`` 为准（PR-01：状态是真相源，不读 outcome 猜）。
+        """
+        activity_svc = ExperimentActivityService()
+        activity = activity_svc.get_activity(
+            session, course_id=course_id, activity_id=attempt.activity_id,
+        )
+        activity_svc.assert_submission_open(session, activity=activity)
+        max_allowed = int(activity.max_submissions or 0)
+        if max_allowed <= 0:
+            return
+        used = session.exec(
+            select(func.count(ExperimentRun.id))
+            .join(
+                ExperimentAttempt,
+                ExperimentAttempt.attempt_id == ExperimentRun.attempt_id,
+            )
+            .where(
+                ExperimentRun.course_id == course_id,
+                ExperimentRun.student_id == student_id,
+                ExperimentAttempt.activity_id == activity.activity_id,
+                ExperimentAttempt.experiment_id == attempt.experiment_id,
+                ExperimentRun.run_state.notin_([
+                    RunState.CANCELLED.value,
+                    RunState.SYSTEM_ERROR.value,
+                ]),
+            )
+        ).one()
+        if int(used or 0) >= max_allowed:
+            reject_state_conflict(
+                f"活动本题提交次数已达上限（{max_allowed} 次）",
+                details={
+                    "activity_id": activity.activity_id,
+                    "experiment_id": attempt.experiment_id,
+                    "max_submissions": max_allowed,
+                },
+            )
 
     @staticmethod
     def _ensure_coding_diagnosis(session: Session, run: ExperimentRun) -> None:
@@ -371,6 +496,7 @@ class ExperimentRunService:
         source_code: str,
         student_id: int,
         idempotency_key: Optional[str] = None,
+        activity_id: Optional[str] = None,
     ) -> ExperimentRun:
         """Create a pending formal run record without executing student code.
 
@@ -399,6 +525,7 @@ class ExperimentRunService:
                 "duplicate_source": duplicate,
             },
             idempotency_key=idempotency_key,
+            activity_id=activity_id,
             outcome=RunOutcome.PENDING,
         )
         session.add(run)
