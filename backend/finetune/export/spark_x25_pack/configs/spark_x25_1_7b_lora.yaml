@@ -1,0 +1,42 @@
+# LLaMA-Factory LoRA SFT —— Spark-X2.5-1.7B(CS 学科 v2.2 数据)
+# 用法: llamafactory-cli train configs/spark_x25_1_7b_lora.yaml
+# 相同数据、相同超参,用于与 4B 做规模对照。
+
+### model
+model_name_or_path: XHToken/Spark-X2.5-1.7B
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target: q_k_v_proj,out_proj,gate_proj,up_proj,down_proj,g_proj
+
+### dataset
+dataset: spark_x25
+dataset_dir: data
+template: default
+cutoff_len: 2048
+overwrite_cache: true
+preprocessing_num_workers: 4
+
+### output
+output_dir: saves/spark-x25-1.7b/lora/sft
+logging_steps: 10
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+report_to: none
+
+### train(小模型可放大 batch)
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-4
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+gradient_checkpointing: true

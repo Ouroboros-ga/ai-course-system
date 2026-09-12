@@ -1,0 +1,45 @@
+{
+  "schema_version": "xh202620-finetune-export/1.0",
+  "source": {
+    "train": "backend/finetune/data/instruction_train.jsonl (197 条)",
+    "eval": "backend/finetune/data/instruction_eval.jsonl (31 条)",
+    "baseline": "backend/finetune/eval_baseline.json (10 问，防污染：不进训练集)"
+  },
+  "files": {
+    "spark_train_messages.jsonl": {
+      "rows": 2212,
+      "sha256": "d3aa8bb48287679dadb82c10155f3fa9072cbb858a227b6f8c7c9ed3a2d2dacc"
+    },
+    "spark_train_alpaca.jsonl": {
+      "rows": 2212,
+      "sha256": "a6d139e0daadcc84bf273438704f294c6b1fb176e79f4473991785de3cdefe86"
+    },
+    "spark_inference_input_target.jsonl": {
+      "rows": 50,
+      "sha256": "3c1e732f70532a81b9d44492b66a367acca836077fa5a2b0882b1f3dcb17c0c7"
+    },
+    "benchmark_only_input_target.jsonl": {
+      "rows": 10,
+      "sha256": "c6f3009d0952cb5cb1768b2f508a6fe9773e8089c7df94132ab1641660420a17"
+    }
+  },
+  "constraints": {
+    "train_min_note": "spark lite 训练集>=100 条；spark pro>=1500 条",
+    "inference_char_limit": 4000,
+    "inference_range": "10-200 条"
+  },
+  "usage": {
+    "service_id_path": [
+      "1. 讯飞星辰 MaaS(training.xfyun.cn) 创建数据集，上传 spark_train_messages.jsonl",
+      "2. 选择基座模型（spark lite 或开源 Qwen2.5），提交微调任务（约 10 分钟-数小时）",
+      "3. 训练成功后『发布为服务』并绑定讯飞应用 → 得到 ServiceID（OpenAI 兼容）",
+      "4. evaluate.py --base-url https://spark-api-open.xf-yun.com/v1 --model <ServiceID> 跑对比评测"
+    ],
+    "model_file_path": [
+      "1. 云 GPU（如 AutoDL 4090/24G）上传 train_lora.py + data/instruction_train.jsonl",
+      "2. 训练产出 lora_output/adapter_model.safetensors + adapter_config.json（即『模型文件』，几十 MB）",
+      "3. 交付：adapter 文件 + 基座声明(Qwen2.5-7B-Instruct) + model card；可选上传 ModelScope 得模型仓 ID"
+    ]
+  },
+  "issues": "全部约束校验通过"
+}

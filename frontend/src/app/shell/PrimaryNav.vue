@@ -147,7 +147,8 @@ watch([adminItem, navItems], () => nextTick(measureNav))
                 <span class="sfx-l1nav-brand-name">CodeNexus智码交响</span>
             </RouterLink>
 
-            <nav ref="linksRef" class="sfx-l1nav-links" aria-label="一级导航">
+            <nav ref="linksRef" class="sfx-l1nav-links" aria-label="一级导航"
+                v-nav-slider="{ inset: 'padding' }">
                 <RouterLink v-for="item in navItems" :key="item.to" :to="item.to" class="sfx-l1nav-link"
                     :class="{ 'is-active': isActive(item) }">
                     <component :is="item.icon" :size="17" />
@@ -194,7 +195,8 @@ watch([adminItem, navItems], () => nextTick(measureNav))
                             <X :size="18" />
                         </button>
                     </div>
-                    <nav class="sfx-l1nav-drawer-links" aria-label="导航菜单">
+                    <nav class="sfx-l1nav-drawer-links" aria-label="导航菜单"
+                        v-nav-slider="{ axis: 'y', variant: 'pill' }">
                         <RouterLink v-for="item in navItems" :key="item.to" :to="item.to" class="sfx-l1nav-drawer-link"
                             :class="{ 'is-active': isActive(item) }" @click="drawerOpen = false">
                             <component :is="item.icon" :size="18" />
@@ -310,15 +312,7 @@ watch([adminItem, navItems], () => nextTick(measureNav))
     color: var(--ink-900);
 }
 
-.sfx-l1nav-link.is-active::after {
-    content: '';
-    position: absolute;
-    left: var(--space-4);
-    right: var(--space-4);
-    bottom: -1px;
-    height: 2px;
-    background: var(--ink-900);
-}
+/* 当前项的 2px 底部指示线由 v-nav-slider 指令生成并滑动（原 is-active::after 已移除） */
 
 .sfx-l1nav-right {
     display: flex;
@@ -534,6 +528,9 @@ watch([adminItem, navItems], () => nextTick(measureNav))
     color: var(--text-secondary);
     font-size: var(--ui-md-size);
     font-weight: var(--ui-md-weight);
+    /* 置于滑动胶囊之上：胶囊由 v-nav-slider 作为首个子元素插入（z-index 0） */
+    position: relative;
+    z-index: 1;
 }
 
 .sfx-l1nav-drawer-link:hover {
@@ -541,22 +538,9 @@ watch([adminItem, navItems], () => nextTick(measureNav))
     color: var(--ink-700);
 }
 
-/* 当前项：墨蓝文字 + 墨蓝背景，左侧 3px 状态线（design.md 4.6/§12.5） */
+/* 当前项：墨蓝文字，选中背景由滑动胶囊承载（原静态背景与左侧 3px 线已移除） */
 .sfx-l1nav-drawer-link.is-active {
-    background: var(--ink-100);
     color: var(--ink-900);
-    position: relative;
-}
-
-.sfx-l1nav-drawer-link.is-active::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: var(--space-2);
-    bottom: var(--space-2);
-    width: 3px;
-    border-radius: var(--radius-full);
-    background: var(--ink-900);
 }
 
 .sfx-l1nav-drawer-foot {

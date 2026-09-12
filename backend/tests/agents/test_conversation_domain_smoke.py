@@ -57,8 +57,8 @@ def test_conversation_messages_table_structure(session):
     cols = {c["name"] for c in insp.get_columns("conversation_messages")}
     assert cols == {
         "id", "student_id", "course_id", "session_id", "trace_id", "role", "content",
-        "concept_id", "resource_id", "citations", "data_policy_version",
-        "message_kind", "retention_until", "created_at",
+        "concept_id", "resource_id", "citations", "discipline_references",
+        "data_policy_version", "message_kind", "retention_until", "created_at",
     }
 
     idx = {i["name"] for i in insp.get_indexes("conversation_messages")}
@@ -84,6 +84,15 @@ def test_persist_and_list_conversation_turn(session):
         concept_id="concept-recursion",
         resource_id="node-101",
         citations=[{"evidence_id": "ev-1", "title": "递归基础"}],
+        discipline_references=[{
+            "reference_id": "ref-1",
+            "release_id": "rel-1",
+            "result_type": "corpus_chunk",
+            "source_kind": "textbook",
+            "source_url": "https://example.test/chunk-1",
+            "matched_by": "vector",
+            "chunk_id": "chunk-1",
+        }],
     )
 
     rows = list_conversation_messages(session, student_id=STUDENT, course_id=COURSE, session_id=SESSION)
@@ -93,6 +102,11 @@ def test_persist_and_list_conversation_turn(session):
     assert rows[0].content == "什么是递归的终止条件？"
     assert rows[1].content.startswith("递归必须有基线条件")
     assert rows[1].citations == [{"evidence_id": "ev-1", "title": "递归基础"}]
+    # 学科参考是展示快照，必须随回答一起持久化，否则刷新后整块消失。
+    assert [r.get("reference_id") for r in rows[1].discipline_references] == ["ref-1"]
+    assert rows[1].discipline_references[0]["chunk_id"] == "chunk-1"
+    # 用户问题行没有学科参考，读回是空列表而不是 None。
+    assert rows[0].discipline_references == []
     assert rows[0].data_policy_version == CONVERSATION_DATA_POLICY_VERSION
     assert rows[0].retention_until is not None
     assert rows[0].trace_id == TRACE and rows[1].trace_id == TRACE

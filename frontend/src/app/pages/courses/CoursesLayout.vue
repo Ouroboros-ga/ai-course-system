@@ -41,7 +41,7 @@ provide('coursesContext', { openJoin, joinRefreshTick })
     <div class="sfx-courses-layout">
         <div class="sfx-l2nav">
             <div class="sfx-l2nav-inner">
-                <nav class="sfx-l2nav-links" aria-label="我的课程导航">
+                <nav class="sfx-l2nav-links" aria-label="我的课程导航" v-nav-slider="{ inset: 'padding' }">
                     <RouterLink v-for="tab in tabs" :key="tab.key" :to="tab.to" class="sfx-l2nav-link"
                         :class="{ 'is-active': activeKey === tab.key }">{{ tab.label }}</RouterLink>
                 </nav>
@@ -62,9 +62,12 @@ provide('coursesContext', { openJoin, joinRefreshTick })
             </div>
         </div>
 
-        <router-view v-slot="{ Component, route }">
+        <router-view v-slot="{ Component }">
+            <!-- design.md §6.4：中间层 <router-view> 必须保持无 key。
+                 此处曾用 :key="route.path" 强制重挂载，导致 L2 标签切换时
+                 子页面被销毁重建（骨架屏重放 + 高度塌陷），表现为屏幕闪烁。 -->
             <Transition name="sfx-page" mode="out-in">
-                <component :is="Component" :key="route.path" />
+                <component :is="Component" />
             </Transition>
         </router-view>
 
@@ -130,15 +133,7 @@ provide('coursesContext', { openJoin, joinRefreshTick })
     color: var(--ink-900);
 }
 
-.sfx-l2nav-link.is-active::after {
-    content: '';
-    position: absolute;
-    left: var(--space-4);
-    right: var(--space-4);
-    bottom: -1px;
-    height: 2px;
-    background: var(--ink-900);
-}
+/* 底部 2px 指示线由 v-nav-slider 指令生成并滑动（原 is-active::after 已移除） */
 
 .sfx-l2nav-join {
     display: inline-flex;
@@ -189,10 +184,6 @@ provide('coursesContext', { openJoin, joinRefreshTick })
         font-size: var(--ui-sm-size);
     }
 
-    .sfx-l2nav-link.is-active::after {
-        left: var(--space-2);
-        right: var(--space-2);
-    }
 
     .sfx-l2nav-join {
         padding: 0 var(--space-3);
