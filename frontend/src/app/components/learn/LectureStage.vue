@@ -1,7 +1,6 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
 import {
-  Captions,
   ChevronLeft,
   ChevronRight,
   FileQuestion,
@@ -35,7 +34,6 @@ const props = defineProps({
   playbackRate: { type: Number, default: 1 },
   volume: { type: Number, default: 0.85 },
   isMuted: { type: Boolean, default: false },
-  captionsEnabled: { type: Boolean, default: true },
   audioUrl: { type: String, default: '' },
   playlist: { type: Object, default: null },
   playlistIndex: { type: Number, default: 0 },
@@ -58,7 +56,6 @@ const emit = defineEmits([
   'rate-change',
   'volume-change',
   'mute-change',
-  'captions-change',
   'playlist-next',
   'playlist-previous',
   'media-seeked',
@@ -115,8 +112,23 @@ const activePptDeck = computed(() => {
   return decks.find(deck => deck.materialVersionId === versionId) || null
 })
 
+// 用户手动翻页优先于语音时间轴；只有播放推进到新的 cue 时才恢复自动跟随。
+// 否则 releasePptCue 的页码会立刻覆盖用户翻页的结果，表现为「上一页/下一页」点了没反应。
+const manualPage = ref(null)
+const releaseCueKey = computed(() => `${releasePptCue.value?.page ?? ''}:${releasePptCue.value?.materialVersionId ?? ''}`)
+
+watch(releaseCueKey, () => { manualPage.value = null })
+
+const activeSlidePage = computed(() => {
+  const manual = Number(manualPage.value)
+  if (Number.isFinite(manual) && manual >= 1) return Math.round(manual)
+  const cuePage = Number(releasePptCue.value?.page)
+  if (Number.isFinite(cuePage) && cuePage >= 1) return Math.round(cuePage)
+  return Math.max(1, Number(props.currentPage) || 1)
+})
+
 const releasePptPage = computed(() => {
-  const page = releasePptCue.value?.page ?? Math.max(1, Number(props.currentPage) || 1)
+  const page = activeSlidePage.value
   const materialVersionId = releasePptCue.value?.materialVersionId
   const pages = activePptDeck.value?.pages?.length
     ? activePptDeck.value.pages
@@ -127,7 +139,7 @@ const releasePptPage = computed(() => {
 })
 
 const effectiveSlide = computed(() => releasePptPage.value || props.currentSlide)
-const displayedPage = computed(() => releasePptCue.value?.page ?? Math.max(1, Number(props.currentPage) || 1))
+const displayedPage = computed(() => activeSlidePage.value)
 const displayedTotalPages = computed(() => {
   const pages = activePptDeck.value?.pages || []
   return pages.length
@@ -341,6 +353,8 @@ function handleTranscriptScroll() {
 
 function resumeFollow() {
   followPlayback.value = true
+  // 同时放弃手动翻页，让课件重新跟随语音时间轴。
+  manualPage.value = null
   const index = activeSubtitleIndex.value
   if (index >= 0) scrollTranscriptToActive(index)
 }
@@ -359,7 +373,10 @@ function handleEnded(event) {
 }
 
 function handlePageChange(page) {
-  emit('page-change', page)
+  const target = Math.min(Math.max(1, Math.round(Number(page) || 1)), Math.max(1, Number(displayedTotalPages.value) || 1))
+  if (target === displayedPage.value) return
+  manualPage.value = target
+  emit('page-change', target)
 }
 
 function formatTime(value) {
@@ -490,11 +507,11 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
             </SfxButton>
           </div>
           <nav class="sfx-stage-slide-nav" aria-label="课件翻页">
-            <SfxButton variant="tertiary" size="sm" :disabled="currentPage <= 1" aria-label="上一页课件" @click="handlePageChange(currentPage - 1)">
+            <SfxButton variant="tertiary" size="sm" :disabled="displayedPage <= 1" aria-label="上一页课件" @click="handlePageChange(displayedPage - 1)">
               <template #icon><ChevronLeft :size="16" /></template>
             </SfxButton>
             <span class="sfx-t-caption">{{ displayedPage }} / {{ displayedTotalPages }}</span>
-            <SfxButton variant="tertiary" size="sm" :disabled="currentPage >= totalPages" aria-label="下一页课件" @click="handlePageChange(currentPage + 1)">
+            <SfxButton variant="tertiary" size="sm" :disabled="displayedPage >= displayedTotalPages" aria-label="下一页课件" @click="handlePageChange(displayedPage + 1)">
               <template #icon><ChevronRight :size="16" /></template>
             </SfxButton>
           </nav>
@@ -584,10 +601,6 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
           <option :value="2">2.0×</option>
         </select>
       </label>
-      <SfxButton variant="tertiary" size="sm" :aria-pressed="captionsEnabled" @click="emit('captions-change', !captionsEnabled)">
-        <template #icon><Captions :size="16" /></template>
-        字幕
-      </SfxButton>
       <SfxButton variant="tertiary" size="sm" :disabled="!mediaElement" :aria-label="isMuted ? '取消静音' : '静音'" @click="emit('mute-change', !isMuted)">
         <template #icon><VolumeX v-if="isMuted || volume === 0" :size="16" /><Volume2 v-else :size="16" /></template>
         {{ isMuted ? '静音' : '声音' }}

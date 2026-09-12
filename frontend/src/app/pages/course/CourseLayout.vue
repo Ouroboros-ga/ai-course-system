@@ -177,7 +177,7 @@ onMounted(load)
           </div>
         </div>
 
-        <nav class="sfx-l2nav-links" aria-label="课程导航">
+        <nav class="sfx-l2nav-links" aria-label="课程导航" v-nav-slider="{ inset: 'padding' }">
           <template v-for="item in navItems" :key="item.key">
             <RouterLink
               v-if="item.enabled"
@@ -352,15 +352,7 @@ onMounted(load)
   color: var(--ink-900);
 }
 
-.sfx-l2nav-link.is-active::after {
-  content: '';
-  position: absolute;
-  left: var(--space-4);
-  right: var(--space-4);
-  bottom: -1px;
-  height: 2px;
-  background: var(--ink-900);
-}
+/* 底部 2px 指示线由 v-nav-slider 指令生成并滑动（原 is-active::after 已移除） */
 
 .sfx-l2nav-link.is-disabled {
   color: var(--text-disabled);

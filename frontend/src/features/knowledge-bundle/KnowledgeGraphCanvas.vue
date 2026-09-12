@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nodeTypeLabel } from '@/features/knowledge-bundle/nodeTypeLabels.js'
 
 const props = defineProps({
   nodes: { type: Array, default: () => [] },
@@ -34,27 +35,8 @@ const relationColors = {
   RELATED_TO:      '#73839B',
 }
 // 节点类型中文化（解决"部分标题仍为英文或语义较弱"遗留问题）
-const TYPE_LABELS = {
-  concept: '概念',
-  knowledge_point: '知识点',
-  skill: '技能',
-  topic: '主题',
-  chapter: '章节',
-  section: '小节',
-  method: '方法',
-  principle: '原理',
-  formula: '公式',
-  example: '示例',
-  definition: '定义',
-  theorem: '定理',
-  algorithm: '算法',
-  procedure: '流程',
-  assessment: '考核',
-  default: '节点',
-}
-function typeLabel(type) {
-  return TYPE_LABELS[String(type || '').toLowerCase()] || TYPE_LABELS.default
-}
+// 词表与节点列表/详情面板共用，统一维护在 nodeTypeLabels.js
+const typeLabel = nodeTypeLabel
 // 关系类型中文化（解决"部分标题仍为英文或语义较弱"遗留问题）
 const RELATION_LABELS = {
   PREREQUISITE_OF: '先修',
@@ -207,7 +189,34 @@ function rebuild() {
       relationByKey.set(key, { source, target, type, payload, count: 1 })
     }
   }
-  graph = { nodes, relations: [...relationByKey.values()], endpoint }
+  const relations = [...relationByKey.values()]
+  // 双向关系配对：A→B 与 B→A 两条线的两个端点完全相同，逐条绘制会画在同一条
+  // 几何线上互相压盖，肉眼只能看到其中一个箭头。这里把两端点相同、方向相反的
+  // 关系归成一组，绘制时合并为一条双向箭头线（见 drawRelationPair），颜色在
+  // 中点一分为二，两个方向的语义都能读出来。
+  // 注意：只影响绘制，graph.relations 仍逐条保留并照旧参与力学计算。
+  const pairGroups = new Map()
+  for (const relation of relations) {
+    const [left, right] = [relation.source.id, relation.target.id].slice().sort()
+    const groupKey = `${left}\u0000${right}`
+    let group = pairGroups.get(groupKey)
+    if (!group) {
+      group = { key: groupKey, forward: null, backward: null, members: [], count: 1 }
+      pairGroups.set(groupKey, group)
+    }
+    group.members.push(relation)
+    group.count = Math.max(group.count, relation.count || 1)
+    // 同一方向存在多条不同关系类型时，取证据最多（count 最大）的那条作为该
+    // 半边的代表色——半条线无法同时表达多种颜色。
+    const slot = relation.source.id === left ? 'forward' : 'backward'
+    if (!group[slot] || (relation.count || 1) > (group[slot].count || 1)) group[slot] = relation
+  }
+  for (const group of pairGroups.values()) {
+    // 单向关系保持原有单箭头绘制，不做任何合线处理。
+    if (!group.forward || !group.backward) continue
+    for (const relation of group.members) relation.pairGroup = group
+  }
+  graph = { nodes, relations, endpoint }
   // 大图（已聚类）完全不跑力导向预迭代，并使用稳定 hash 初始位置。
   // 避免 simulate 改变坐标 + fit 重置视图导致的抽搐跳变。
   // 小图保留力导向以呈现自然布局。
@@ -453,30 +462,82 @@ function fit() {
   draw()
 }
 
-function drawArrow(context, edge, highlighted) {
+// 关系颜色与线型是 design.md §12.10 要求的三重编码之一（颜色 + 线型 + 箭头）。
+function relationColor(edge) {
+  return relationColors[edge.type] || relationColors.RELATED_TO
+}
+
+// 同一对端点的多条关系合并后 count 变大，用对数权重避免线宽无限增长。
+function relationWeight(count) {
+  return Math.min(1.8, 1 + Math.log2(count || 1) * .12)
+}
+
+// 连线从源节点边缘出发、止于目标节点边缘，避免穿过节点圆心与文字。
+// 两端留同样的间距：双向线两端都有箭头，需要同样的箭头空间。
+function edgeGeometry(edge) {
   const [centerX, centerY] = worldToScreen(edge.source.x, edge.source.y)
   const [endX, endY] = worldToScreen(edge.target.x, edge.target.y)
   const angle = Math.atan2(endY - centerY, endX - centerX)
-  // 连线从源节点边缘出发、止于目标节点边缘，避免穿过节点圆心与文字
-  const startX = centerX + Math.cos(angle) * (15 * view.scale + 2)
-  const startY = centerY + Math.sin(angle) * (15 * view.scale + 2)
-  const x = endX - Math.cos(angle) * (17 * view.scale + 4)
-  const y = endY - Math.sin(angle) * (17 * view.scale + 4)
-  context.beginPath()
-  context.moveTo(startX, startY)
-  context.lineTo(x, y)
-  context.strokeStyle = relationColors[edge.type] || relationColors.RELATED_TO
-  context.globalAlpha = highlighted ? .98 : .2
-  const weight = Math.min(1.8, 1 + Math.log2(edge.count || 1) * .12)
-  context.lineWidth = (highlighted ? 2.2 : 1.1) * weight
-  context.stroke()
+  const gap = 17 * view.scale + 4
+  return {
+    angle,
+    startX: centerX + Math.cos(angle) * gap,
+    startY: centerY + Math.sin(angle) * gap,
+    endX: endX - Math.cos(angle) * gap,
+    endY: endY - Math.sin(angle) * gap,
+  }
+}
+
+function drawArrowHead(context, x, y, angle, color, size) {
   context.beginPath()
   context.moveTo(x, y)
-  context.lineTo(x - Math.cos(angle - .48) * 8, y - Math.sin(angle - .48) * 8)
-  context.lineTo(x - Math.cos(angle + .48) * 8, y - Math.sin(angle + .48) * 8)
+  context.lineTo(x - Math.cos(angle - .48) * size, y - Math.sin(angle - .48) * size)
+  context.lineTo(x - Math.cos(angle + .48) * size, y - Math.sin(angle + .48) * size)
   context.closePath()
-  context.fillStyle = context.strokeStyle
+  context.fillStyle = color
   context.fill()
+}
+
+function drawArrow(context, edge, highlighted) {
+  const { angle, startX, startY, endX, endY } = edgeGeometry(edge)
+  const color = relationColor(edge)
+  context.globalAlpha = highlighted ? .98 : .2
+  context.strokeStyle = color
+  context.lineWidth = (highlighted ? 2.2 : 1.1) * relationWeight(edge.count)
+  context.beginPath()
+  context.moveTo(startX, startY)
+  context.lineTo(endX, endY)
+  context.stroke()
+  drawArrowHead(context, endX, endY, angle, color, 8)
+  context.globalAlpha = 1
+}
+
+// 双向关系：A→B 与 B→A 共用同一条线，在中点把颜色一分为二，两端各保留一个
+// 指向本方向的箭头。颜色相同时与一条普通双向箭头线无异；颜色不同时，靠近箭头
+// 的半边使用该箭头的颜色，因此"两个方向 + 两种关系类型"可以同时读出，且不会
+// 出现两条精确重合、互相压盖的线。
+function drawRelationPair(context, group, highlighted) {
+  const forward = group.forward // left → right
+  const backward = group.backward // right → left
+  const { angle, startX, startY, endX, endY } = edgeGeometry(forward)
+  const midX = (startX + endX) / 2
+  const midY = (startY + endY) / 2
+  context.globalAlpha = highlighted ? .98 : .2
+  context.lineWidth = (highlighted ? 2.2 : 1.1) * relationWeight(group.count)
+  // 右端半段 + 指向右端的箭头属于 forward
+  context.strokeStyle = relationColor(forward)
+  context.beginPath()
+  context.moveTo(midX, midY)
+  context.lineTo(endX, endY)
+  context.stroke()
+  // 左端半段 + 指向左端的箭头属于 backward（箭头朝向为 forward 角度的反方向）
+  context.strokeStyle = relationColor(backward)
+  context.beginPath()
+  context.moveTo(startX, startY)
+  context.lineTo(midX, midY)
+  context.stroke()
+  drawArrowHead(context, endX, endY, angle, relationColor(forward), 8)
+  drawArrowHead(context, startX, startY, angle + Math.PI, relationColor(backward), 8)
   context.globalAlpha = 1
 }
 
@@ -492,11 +553,19 @@ function draw() {
   for (const edge of graph.relations) {
     if (edge.source.id === selected) connected.add(edge.target.id)
     if (edge.target.id === selected) connected.add(edge.source.id)
-    drawArrow(
-      context,
-      edge,
-      !selected || edge.source.id === selected || edge.target.id === selected,
-    )
+  }
+  // 双向关系组内的所有成员共享同一条线，每组只绘制一次，避免重复压盖。
+  const drawnGroups = new Set()
+  for (const edge of graph.relations) {
+    const highlighted = !selected || edge.source.id === selected || edge.target.id === selected
+    const group = edge.pairGroup
+    if (group) {
+      if (drawnGroups.has(group)) continue
+      drawnGroups.add(group)
+      drawRelationPair(context, group, highlighted)
+      continue
+    }
+    drawArrow(context, edge, highlighted)
   }
   for (const node of graph.nodes) {
     const [x, y] = worldToScreen(node.x, node.y)
@@ -514,13 +583,8 @@ function draw() {
       context.lineWidth = active ? 5 : 4
       context.stroke()
     }
-    if (active) {
-      context.beginPath()
-      context.arc(x, y, radius + 9, 0, Math.PI * 2)
-      context.strokeStyle = 'rgba(242, 106, 33, .48)'
-      context.lineWidth = 4
-      context.stroke()
-    }
+    // 选中态只保留"橙色实心 + 白色描边 + 半径放大 + 加粗标签"作为唯一焦点，
+    // 不再额外绘制橙色扩散圈（避免与邻域连线抢视觉、也避免选中时出现多余光圈）
     context.fillStyle = active ? '#9A3412' : '#172033'
     context.font = `${active ? 700 : 550} ${active ? 13 : 12}px Inter, "HarmonyOS Sans SC", "PingFang SC", system-ui, sans-serif`
     context.textAlign = 'center'

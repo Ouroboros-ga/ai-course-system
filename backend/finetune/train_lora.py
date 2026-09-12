@@ -103,6 +103,7 @@ def main() -> int:
     parser.add_argument("--lora-r", type=int, default=None)
     parser.add_argument("--lora-alpha", type=int, default=None)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
+    # 以下参数默认 None：由 --gpu-profile 预设解析，显式传值优先（见下方合并逻辑）
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=None)
@@ -113,6 +114,12 @@ def main() -> int:
                         help="QLoRA：4bit NF4 加载基座（显存不足时的降级方案，需 bitsandbytes）")
     parser.add_argument("--no-gradient-checkpointing", action="store_true",
                         help="关闭梯度检查点（默认开启，省显存）")
+    parser.add_argument("--resume-from-checkpoint", type=str, default=None,
+                        help="从 output-dir 下某 checkpoint-* 目录续训（断点续跑）")
+    parser.add_argument("--save-steps", type=int, default=0,
+                        help=">0 时按步保存 checkpoint(0 = 仅在每个 epoch 末保存)")
+    parser.add_argument("--logging-steps", type=int, default=10,
+                        help="每隔多少优化步打印一次 loss")
     parser.add_argument("--allow-cpu", action="store_true",
                         help="显式允许 CPU 训练（仅小基座可行，默认拒绝）")
     args = parser.parse_args()
@@ -186,6 +193,7 @@ def main() -> int:
 
     if not args.no_gradient_checkpointing and device != "cpu":
         model.gradient_checkpointing_enable()
+        model.config.use_cache = False
         print("[INFO] 梯度检查点已开启")
 
     lora_config = LoraConfig(
@@ -216,8 +224,9 @@ def main() -> int:
         learning_rate=learning_rate,
         lr_scheduler_type="cosine",
         warmup_ratio=0.03,
-        logging_steps=10,
-        save_strategy="epoch",
+        logging_steps=args.logging_steps,
+        save_strategy="steps" if args.save_steps > 0 else "epoch",
+        save_steps=args.save_steps if args.save_steps > 0 else None,
         eval_strategy="epoch" if eval_dataset is not None else "no",
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
         gradient_checkpointing=not args.no_gradient_checkpointing and device != "cpu",
@@ -228,7 +237,7 @@ def main() -> int:
     )
     trainer = Trainer(model=model, args=training_args, train_dataset=tokenized,
                       eval_dataset=eval_dataset, data_collator=collator)
-    trainer.train()
+    trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
 
     model.save_pretrained(str(args.output_dir))
     tokenizer.save_pretrained(str(args.output_dir))

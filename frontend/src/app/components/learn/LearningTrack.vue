@@ -1,6 +1,6 @@
 <script setup>
 import { nextTick, ref, watch } from 'vue'
-import { Check, ChevronLeft, ChevronRight, CircleAlert, Clock3, HelpCircle, Info, KeyRound, TriangleAlert } from 'lucide-vue-next'
+import { Check, ChevronLeft, ChevronRight, CircleAlert, CircleDashed, Clock3, HelpCircle, Info, KeyRound, TriangleAlert } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import { getCognitionDisplayState, getLearningDisplayState, getNodeDisplayState, summarizeLearningItems } from '@/features/student-learning/learningStatus.js'
 
@@ -20,10 +20,9 @@ const props = defineProps({
   cognitiveDetails: { type: Object, default: () => ({}) },
   cognitiveLoading: { type: Object, default: () => ({}) },
   collapsed: { type: Boolean, default: false },
-  canComplete: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select', 'inspect', 'open-knowledge', 'recommendation-action', 'toggle', 'complete'])
+const emit = defineEmits(['select', 'inspect', 'open-knowledge', 'recommendation-action', 'toggle'])
 const itemRefs = ref([])
 
 function setItemRef(element, index) {
@@ -121,7 +120,7 @@ const iconMap = {
   mastered: Check,
   needsMastery: CircleAlert,
   'needs-mastery': CircleAlert,
-  'not-started': TriangleAlert,
+  'not-started': CircleDashed,
   'in-progress': Clock3,
   degraded: TriangleAlert,
   'not-available': Info,
@@ -283,19 +282,6 @@ const indentStep = 12
         </section>
       </li>
     </ol>
-
-    <footer v-if="!collapsed && canComplete" class="sfx-track-complete">
-      <SfxButton
-        variant="primary"
-        size="sm"
-        class="sfx-track-complete-btn"
-        aria-label="标记当前知识点为已完成"
-        @click="emit('complete')"
-      >
-        <Check :size="14" />
-        完成本知识点
-      </SfxButton>
-    </footer>
   </aside>
 </template>
 
@@ -691,21 +677,6 @@ const indentStep = 12
 
 .sfx-track-key { color: var(--amber-500); flex-shrink: 0; }
 
-/* ============ 底部"完成本知识点" ============ */
-.sfx-track-complete {
-  flex: 0 0 auto;
-  padding: var(--space-3);
-  border-top: 1px solid var(--border-default);
-  background: var(--surface-soft);
-}
-
-.sfx-track-complete-btn {
-  width: 100%;
-  justify-content: center;
-}
-
-.sfx-track.is-collapsed .sfx-track-complete { display: none; }
-
 /* 收缩态：仅图标列。当前项不再绘制按展开态缩进定位的竖线（图标已居中，竖线会错位
    骑在图标上并露出残影），高亮收成胶囊形贴合图标，hover 同理。 */
 .sfx-track.is-collapsed .sfx-track-list { padding: var(--space-3) var(--space-1); gap: var(--space-1); }
@@ -783,8 +754,6 @@ const indentStep = 12
   .sfx-track-item-subrow .sfx-track-item-time,
   .sfx-track-item-subrow .sfx-track-item-progress,
   .sfx-track-item-subrow .sfx-track-item-detail-btn { display: none; }
-
-  .sfx-track-complete { display: none; }
 
   /* 详情卡片在横向滚动条内固定宽度，避免把整条拉宽 */
   .sfx-track-detail {

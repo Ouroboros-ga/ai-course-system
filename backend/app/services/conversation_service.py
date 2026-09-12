@@ -64,6 +64,7 @@ def persist_conversation_turn(
     concept_id: Optional[str] = None,
     resource_id: Optional[str] = None,
     citations: Optional[list[dict[str, Any]]] = None,
+    discipline_references: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     """Persist a question/answer turn (user message + assistant answer).
 
@@ -71,6 +72,12 @@ def persist_conversation_turn(
     share ``trace_id`` so a turn can be reconstructed. Failure is logged and
     swallowed: conversation persistence is a product-experience concern and
     must never block the teaching response.
+
+    ``discipline_references`` is the R14 supplementary ("学科参考") display
+    snapshot that the response already carries. Persisting it keeps the resumed
+    conversation identical to the live answer -- without it, the 学科参考 block
+    silently disappears after a refresh. It stays display-only: it is not part
+    of the ``citations`` evidence closure and never feeds mastery or the graph.
     """
     try:
         now = utcnow_aware()
@@ -90,7 +97,9 @@ def persist_conversation_turn(
                 trace_id=trace_id, role=ROLE_ASSISTANT, content=str(assistant_answer),
                 concept_id=str(concept_id) if concept_id is not None else None,
                 resource_id=str(resource_id) if resource_id is not None else None,
-                citations=list(citations or []), retention_until=retention,
+                citations=list(citations or []),
+                discipline_references=list(discipline_references or []),
+                retention_until=retention,
                 data_policy_version=CONVERSATION_DATA_POLICY_VERSION,
             ))
         for row in rows:
