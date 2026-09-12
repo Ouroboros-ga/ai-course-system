@@ -38,6 +38,8 @@ test('teacher version request enforces ACM payload fields and preserves hidden t
     max_file_size: 1024,
     passing_score: 1,
     writes_formal_evidence: true,
+    // F1b：未提供起始代码时透传空对象（服务端只做形状消毒，不编译不执行）。
+    starter_code: {},
     activate: true,
     test_cases: [
       { case_name: 'visible', stdin: '1\n', expected_stdout: '1\n', is_hidden: false, weight: 0.4 },

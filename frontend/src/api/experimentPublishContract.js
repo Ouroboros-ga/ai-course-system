@@ -26,7 +26,12 @@ export function buildVersionRequest(form) {
     max_processes: numeric(form.maxProcesses),
     max_file_size: numeric(form.maxFileSize),
     passing_score: 1.0,
-    writes_formal_evidence: true,
+    // F1c：是否计入学习证据。缺省 true（与后端模型默认一致）；教师显式关闭后
+    // 成绩仅记分，不写 LearningEvidence（B3 静默门的可视化对应项见出题页 F1d）。
+    writes_formal_evidence: form.writesFormalEvidence !== false,
+    // F1b：起始代码 {language: source}。只做形状消毒，服务端再截断；
+    // 学生工作台重置时按语言取用，无对应语言回退空编辑器。
+    starter_code: sanitizeStarterCode(form.starterCode),
     activate: true,
     test_cases: (form.testCases ?? []).map((testCase) => ({
       case_name: String(testCase.case_name ?? '').trim(),
@@ -36,4 +41,14 @@ export function buildVersionRequest(form) {
       weight: numeric(testCase.weight),
     })),
   }
+}
+
+function sanitizeStarterCode(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out = {}
+  for (const [lang, code] of Object.entries(value)) {
+    if (typeof lang !== 'string' || !lang.trim()) continue
+    out[lang.trim()] = String(code ?? '').slice(0, 20000)
+  }
+  return out
 }

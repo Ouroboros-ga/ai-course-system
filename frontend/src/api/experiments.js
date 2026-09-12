@@ -43,6 +43,38 @@ export function createExperimentVersion(courseId, experimentId, form) {
   )
 }
 
+/**
+ * 列出实验的全部版本（教师视图含未激活版本）。
+ * 注：列表项只含版本元数据，不含 test_cases；取测试用例请用 getExperimentVersion。
+ */
+export function listExperimentVersions(courseId, experimentId) {
+  return request.get(
+    `/experiments/${encodeURIComponent(experimentId)}/versions?course_id=${encodeURIComponent(courseId)}`,
+    { skipErrorToast: true },
+  )
+}
+
+/**
+ * 读取单个版本详情（教师视图完整暴露隐藏用例的 stdin / expected_stdout）。
+ * 用于「继续配置」时恢复既有测试集，避免用默认空用例覆盖已保存内容。
+ */
+export function getExperimentVersion(courseId, versionId) {
+  return request.get(
+    `/experiments/versions/${encodeURIComponent(versionId)}?course_id=${encodeURIComponent(courseId)}`,
+    { skipErrorToast: true },
+  )
+}
+
+/**
+ * 归档实验定义（软状态：置为 archived，不删除版本与尝试记录）。
+ * 仅用于清理草稿，使教师工作台的任务列表不再堆积废弃条目。
+ */
+export function archiveExperimentDefinition(courseId, experimentId) {
+  return request.post(
+    `/experiments/course/${encodeURIComponent(courseId)}/definitions/${encodeURIComponent(experimentId)}/archive`,
+  )
+}
+
 export function previewExperimentReferenceSolution(courseId, versionId, payload) {
   return request.post(
     experimentPublishPaths(courseId, '', versionId).preview,

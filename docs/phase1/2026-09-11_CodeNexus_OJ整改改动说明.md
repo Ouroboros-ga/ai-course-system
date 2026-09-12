@@ -782,3 +782,111 @@ homework 算分」这类无从排查的问题。同理，scope 的 `class` / `us
 | `test_oj_activity_service.py` | **29 passed**（生命周期/题目组织/窗口/可见范围/算分/跨课程隔离） |
 | OJ 全量门禁（7 文件） | 267 passed / 0 failed（7 文件：边界+域+服务+元数据+API+语义+characterization） |
 | 迁移往返 | upgrade → downgrade → re-upgrade 全绿 |
+
+---
+
+## 11. PR-03 实施记录：拆出题目侧服务 `experiment_problem_service.py`
+
+### 11.1 拆了什么
+
+`experiment_service.py` 曾以 **2309 行**承载全部 OJ 语义。本 PR 把「题目与版本」
+这一 bounded context 拆到独立文件（提交 `847cbd5f`，+564/−487）：
+
+| 迁移物 | 说明 |
+|---|---|
+| `ExperimentDefinitionService` | 定义 CRUD / 发布 / 归档 |
+| `ExperimentVersionService` | 版本 / 测试用例 / 锁定 |
+| `ExperimentPublishValidator` | 发布前置条件唯一权威 —— **仅被 `publish_definition` 使用**，故随迁 |
+| `definition_service` / `version_service` 单例 | 随类迁移 |
+| `_require_formal_experiment_capabilities` | 共享门卫迁入新模块，PR-04 拆 attempt/run 时同样从这里导入，避免门卫再搬家 |
+| `_validated_difficulty` / `_validated_tags` | PR-09 的域层→422 适配，随类迁移 |
+
+`experiment_service.py` 2309 → 1830 行；新模块 555 行。
+
+### 11.2 拆分约定（沿用 PR-02 的教训）
+
+- **不留 shim**：4 个外部调用方（`endpoints/experiments.py`、`tasks/handlers.py`、
+  `test_experiments.py`、`test_p0_2_async_tasks.py`）已彻底切换到新模块导入。
+- `experiment_service` 仍导入 `definition_service` / `version_service` ——
+  这是**真实依赖**（attempt/run/finalize 流程调用它们 15 处），不是兼容层。
+  区分标准：留 shim 是「没人用了还挂着」；这里是「还有 15 个调用点」，PR-04 后归零。
+- `ExperimentLabProjectionService` 在 `publish_definition` 内**函数级延迟导入**：
+  它同时被 run 终结流程使用（留守），模块级导入会成环；PR-04 收口。
+
+### 11.3 实施中的两处自纠（都被门禁逮住）
+
+1. **搬运脚本漏了模块级类引用**。脚本只收集「import 语句提供的名字」，
+   而 `publish_definition` 用的 `ExperimentPublishValidator` 是本文件顶层类 ——
+   门禁 1 failed（`NameError`）暴露。修法：对拆分结果跑
+   `used - defined` 静态查漏（过滤局部变量误报），随迁 Validator。
+2. **`handlers.py` 函数级导入注入缩进错位** → 8 failed 同一根因。
+   锚点替换对**缩进敏感**的多行语句不安全，改为整段重写后 `ast.parse` 过闸。
+
+**方法论沉淀**：AST 定位行段 → 抽出 → 双文件重组 → 按实际用名生成 import →
+`used - defined` 静态查漏 → 门禁回归。搬运脚本的两类漏网（类引用 / 函数级导入）
+都在查漏与门禁两道闸里被拦住。
+
+### 11.4 验证
+
+7 文件门禁 **241 passed / 0 failed**（characterization + run 语义 + 实验全链路 +
+元数据 + Activity API + 域边界）—— **拆分零行为变化**。
+
+---
+
+## 12. PR-04 + PR-06b 实施记录：作答侧拆分与 hint 规则归位
+
+### 12.1 PR-04：`experiment_attempt_service.py`（提交 `fa7cd9b4`，+1378/−1068）
+
+| 迁移物 | 行数 |
+|---|---|
+| `ExperimentAttemptService`（尝试创建/查询/权限） | 189 |
+| `ExperimentRunService`（Judge0 提交/取消/结果落库） | 474 |
+| `ExperimentFinalizeService`（终结出分/写正式证据） | 308 |
+| `ExperimentLabProjectionService`（实验室视图投影） | 74 |
+| 单例 `attempt_service` / `run_service` / `finalize_service` | — |
+
+`experiment_service.py` 1830 → **793 行**。三件套拆分完成：
+**题目侧 555 / 作答侧 1124 / 编排+提示+配额 793**。
+
+**依赖方向（单向无环）**：作答侧 → 题目侧（definition / version / 门卫）。
+题目侧对投影的引用改从作答侧导入 —— **收口了 PR-03 的函数级延迟导入**。
+
+**LabProjection 为什么随作答侧走**：它只服务 attempt/run 的投影
+（`project_terminated_attempt` / `ensure_projection`），留在旧文件会让
+PR-03 的延迟导入永久化；随迁后依赖图变成干净的星形。
+
+### 12.2 PR-06b：`domain/oj/intelligence/hints.py`
+
+`CodingHintService` 里可归位的语义只有三件，CRUD 留守：
+
+1. **`CODING_HINT_POLICY_VERSION` 归位** —— 策略版本号是审计字段，
+   单点定义防两份各自漂移（`test_service_uses_domain_version_not_private_copy`
+   用源码扫描守住：服务层再出现字面量就红）。
+2. **`assert_full_solution_allowed`** —— full_solution 门禁是**教学安全不变式**：
+   任何产生提示的路径（学生请求、finalize 附带、将来批量生成）都过同一道门。
+   留在 service 的 if 里，下一个写入点就会抄丢。域层接受枚举/字符串双形式
+   （不 import ORM），未知层级**不在此放行也不拒绝**（层级合法性是 ORM 枚举职责）。
+3. **`normalize_review_decision`** —— 审核决定值域收窄到 approved/rejected，
+   拼写变体（ok/pass）会让前端分支失控。
+
+### 12.3 实施自纠（三处，全被静态查漏/门禁逮住）
+
+1. 搬运脚本头部**重复生成 `from __future__`** → SyntaxError；
+2. 旧模块残留对 `CODING_HINT_POLICY_VERSION` 的真实依赖（CodingHintService
+   留守仍用）→ 注入块补名 —— 与 PR-03 的 Validator 漏网同型：
+   **「搬走的代码用的名字」和「留下的代码用的名字」要分开查**；
+3. `test_p1_fix2` 两处**函数级导入**漏切 → ImportError 后补切。
+
+**静态查漏脚本对函数级导入会误报**（如 `LearningEventType`）——
+判断标准：该名字是否在文件内有对应的函数级 `import` 行。
+
+### 12.4 验证
+
+11 文件门禁 **301 passed / 0 failed**（characterization + run 语义 + 实验全链路 +
+元数据 + Activity API + 域边界 + challenge + run_id 流 + hint 规则）。
+
+### 12.5 第一阶段收官
+
+PR-00 → 01 → 02 → 03 → 04 → 05 → 06a → 06b → 07 → 09 全部落地
+（09 依前置提前做）。`experiment_service.py` 从 2309 行降到 793 行，
+域层 `domain/oj/` 新增 problems / activity / intelligence(hints) 三个模块。
