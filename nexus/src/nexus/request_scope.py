@@ -99,33 +99,6 @@ def current_execution_mode() -> str | None:
     return _execution_mode_var.get()
 
 
-# NX-CT1（代码伴学）：本次对话绑定的本人提交（Backend 验主+投影后注入
-# 执行上下文）。工具内只读此作用域，不信任模型传参的 run_id/course_id。
-_submission_var: ContextVar[tuple[int, str] | None] = ContextVar(
-    "nexus_submission", default=None)
-
-
-def set_submission(course_id: int | None, run_id: str | None) -> Token:
-    """注入代码伴学提交作用域；非法值注入 None（工具侧 fail-closed）。"""
-    clean: tuple[int, str] | None = None
-    try:
-        cid = int(course_id) if course_id is not None else 0
-    except (TypeError, ValueError):
-        cid = 0
-    rid = (run_id or "").strip()[:64]
-    if cid > 0 and rid:
-        clean = (cid, rid)
-    return _submission_var.set(clean)
-
-
-def reset_submission(token: Token) -> None:
-    _submission_var.reset(token)
-
-
-def current_submission() -> tuple[int, str] | None:
-    return _submission_var.get()
-
-
 # F7：当前研究任务（工具链默认 task_id；服务端上下文，非模型可写参数）。
 _research_task_var: ContextVar[str | None] = ContextVar(
     "nexus_research_task", default=None)

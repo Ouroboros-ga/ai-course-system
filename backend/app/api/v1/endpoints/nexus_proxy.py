@@ -368,144 +368,10 @@ def _resolve_run_ref(session, current_user: dict, session_id: str, run_ref: Any)
     return run, step_id
 
 
-# NX-CT1-R5：题目上下文投影界限（与提交快照同一口径）。
-_PROBLEM_DESC_MAX = 4000
-_PROBLEM_IO_MAX = 800
-_PROBLEM_SAMPLES_MAX = 5
-# 用户编辑器代码快照：讨论材料（非评测事实），服务端只做有界透传。
-_CODE_SNAPSHOT_MAX = 8000
-
-
-async def _build_problem_context(
-    session, current_user: dict, course_id: Any, experiment_id: str
-) -> dict[str, Any]:
-    """代码伴学题目投影：已发布 + 本人可见才投影（不存在/未发布/无权一律 404）。
-
-    只给题干公开面：标题、描述、公开样例（输入/输出有界）。隐藏用例、
-    期望输出库、参考解一律不碰；源码走提交快照通道，不在这里。
-    """
-    from sqlmodel import select
-
-    from app.models.experiment_model import (
-        ExperimentDefinition,
-        ExperimentPublishStatus,
-        ExperimentTestCase,
-        ExperimentVersion,
-    )
-    from app.services.course_access_service import resolve_course_access
-
-    try:
-        cid = int(course_id)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PROBLEM_NOT_FOUND")
-    if cid <= 0 or not str(experiment_id or "").strip():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PROBLEM_NOT_FOUND")
-    try:
-        access = resolve_course_access(session, current_user, cid)
-        course_allowed = bool(access.allows("experiment.view"))
-    except HTTPException:
-        course_allowed = False
-    if not course_allowed:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="PROBLEM_FORBIDDEN")
-    definition = session.exec(
-        select(ExperimentDefinition).where(
-            ExperimentDefinition.experiment_id == str(experiment_id).strip()[:64],
-            ExperimentDefinition.course_id == cid,
-        )
-    ).first()
-    if definition is None or definition.publish_status != ExperimentPublishStatus.PUBLISHED:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PROBLEM_NOT_FOUND")
-    samples: list[dict[str, Any]] = []
-    samples_truncated = False
-    if definition.default_version_id:
-        rows = session.exec(
-            select(ExperimentTestCase).where(
-                ExperimentTestCase.version_id == definition.default_version_id,
-                ExperimentTestCase.course_id == cid,
-                ExperimentTestCase.is_hidden == False,  # noqa: E712 - 公开样例 only
-            ).order_by(ExperimentTestCase.id)
-        ).all()
-        if len(rows) > _PROBLEM_SAMPLES_MAX:
-            samples_truncated = True
-        for row in rows[:_PROBLEM_SAMPLES_MAX]:
-            stdin_text = str(row.stdin or "")
-            expected_text = str(row.expected_stdout or "")
-            samples.append({
-                "case_name": str(row.case_name or "")[:80],
-                "stdin": stdin_text[:_PROBLEM_IO_MAX],
-                "stdin_truncated": len(stdin_text) > _PROBLEM_IO_MAX,
-                "expected_stdout": expected_text[:_PROBLEM_IO_MAX],
-                "expected_truncated": len(expected_text) > _PROBLEM_IO_MAX,
-            })
-    description = str(definition.description or "")
-    return {
-        "kind": "oj_problem",
-        "experiment_id": definition.experiment_id,
-        "course_id": cid,
-        "title": str(definition.title or "")[:200],
-        "description": description[:_PROBLEM_DESC_MAX],
-        "description_truncated": len(description) > _PROBLEM_DESC_MAX,
-        "samples": samples,
-        "samples_truncated": samples_truncated,
-    }
-
-
-async def _build_oj_run_context(
-    session, current_user: dict, run_id: str
-) -> dict[str, Any]:
-    """代码伴学提交投影：归属三元组（run_id + course_id + 本人）命中才投影。
-
-    不存在/非本人一律 404（不区分）；只给摘要行，源码与产物尾部由 Nexus
-    `read_my_submission` 工具经内部端点按需拉取，不进这段前缀注记。
-    """
-    from sqlmodel import select
-
-    from app.models.experiment_model import ExperimentRun
-
-    try:
-        owner_id = int(_artifact_user_id(current_user))
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RUN_NOT_FOUND")
-    run = session.exec(
-        select(ExperimentRun).where(
-            ExperimentRun.run_id == run_id[:64],
-            ExperimentRun.student_id == owner_id,
-        )
-    ).first()
-    if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RUN_NOT_FOUND")
-    outcome = getattr(run.outcome, "value", run.outcome)
-    detail = (
-        f"判题 {outcome} · 通过 {int(run.passed_count or 0)}/{int(run.total_count or 0)}"
-        f" · 编译{'通过' if run.compile_ok else '失败'}"
-        + (f" · {run.error_code}" if run.error_code else "")
-    )[:200]
-    return {
-        "kind": "oj_submission",
-        "run_id": run.run_id,
-        "display_title": f"代码提交 {run.run_id[:12]}",
-        "status": str(outcome),
-        "detail": detail,
-        "course_id": run.course_id,
-        "submission_ref": {"course_id": run.course_id, "run_id": run.run_id},
-        "stale": False,
-        "observed_at": run.finished_at.isoformat() if run.finished_at else None,
-    }
-
-
 async def _build_run_context(
     session, current_user: dict, session_id: str, run_ref: Any
 ) -> dict[str, Any]:
-    """生成注入聊天上下文的运行快照白名单投影（有界、脱敏、无凭据/路径）。
-
-    ``run_`` 前缀的 OJ 提交走代码伴学投影（归属三元组校验，无 nexus 会话
-    绑定要求——绑定本身就是"本人最新提交"的声明）；其余走复现运行管道。
-    """
-    raw_id = ""
-    if isinstance(run_ref, dict):
-        raw_id = str(run_ref.get("run_id") or "").strip()
-    if raw_id.startswith("run_"):
-        return await _build_oj_run_context(session, current_user, raw_id)
+    """生成注入聊天上下文的运行快照白名单投影（有界、脱敏、无凭据/路径）。"""
     run, step_id = _resolve_run_ref(session, current_user, session_id, run_ref)
     if _run_provider(run) == "autonomous":
         return await _build_autonomous_run_context(
@@ -601,11 +467,10 @@ async def _build_autonomous_run_context(
 
 
 async def _inject_run_context(payload: NexusChatRequest, session, current_user: dict) -> None:
-    """把客户端 run_ref / problem_ref 替换为服务端白名单投影。
+    """把客户端 run_ref 替换为服务端白名单投影（客户端提交的执行事实不透传）。
 
-    客户端提交的执行事实不透传；客户端自带的 run_context / problem_context
-    键一律丢弃，投影只由本层生成。code_snapshot 是用户讨论材料（非事实断言），
-    原样透传但服务端强制截断；题干公开面走 problem_ref 投影，不信客户端原文。
+    run_ref 缺省（None）时保留 context 其余键原样（如 course_id）；客户端
+    自带的 run_context 键一律丢弃，投影只由本层生成。
     """
     context = dict(payload.context or {})
     run_ref = context.pop("run_ref", None)
@@ -613,20 +478,6 @@ async def _inject_run_context(payload: NexusChatRequest, session, current_user: 
     if run_ref is not None:
         context["run_context"] = await _build_run_context(
             session, current_user, payload.session_id, run_ref)
-    problem_ref = context.pop("problem_ref", None)
-    context.pop("problem_context", None)
-    if isinstance(problem_ref, dict) and str(problem_ref.get("experiment_id") or "").strip():
-        context["problem_context"] = await _build_problem_context(
-            session, current_user, context.get("course_id"),
-            str(problem_ref.get("experiment_id")).strip()[:64])
-    snapshot = context.get("code_snapshot")
-    if isinstance(snapshot, str) and snapshot.strip():
-        clipped = snapshot[:_CODE_SNAPSHOT_MAX]
-        context["code_snapshot"] = clipped
-        context["code_snapshot_truncated"] = len(snapshot) > _CODE_SNAPSHOT_MAX
-    else:
-        context.pop("code_snapshot", None)
-        context.pop("code_snapshot_truncated", None)
     payload.context = context or None
 
 

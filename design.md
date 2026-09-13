@@ -531,7 +531,12 @@ font-family:
 
 ### AppShell 多根页面边界（2026-09-13）
 
-页面带并列浮窗时会渲染多根节点（Fragment，如 OJ 空间的代码伴学浮窗）。把这种组件直接放进 `Transition mode="out-in"` 会导致离场永远完不成，切页后仅剩导航、主区白屏。`AppShell.vue` 因此用 `.sfx-shell-page` 实体容器承接过渡，再在容器内渲染页面；容器 key 取 `viewRoute.matched[1]?.path`（一级空间路由记录），不用完整 `route.path`，避免 OJ 二级标签切换时销毁整个布局。容器维持 flex 填充 + `min-height: 0`，不新增滚动层。
+OJ 布局追加代码伴学浮窗后会渲染多个根节点（Fragment）。直接把这种组件放入
+`Transition mode="out-in"` 会导致离场无法完成，切到学科知识库等页面后仅剩导航。
+`AppShell.vue` 因此以 `.sfx-shell-page` 实体容器承接过渡，再在容器内渲染页面。
+容器 key 使用 `viewRoute.matched[1]?.path`（一级空间路由记录），不使用完整
+`route.path`，避免 OJ 二级标签切换时销毁整个布局。容器维持 flex 填充和
+`min-height: 0`，不新增滚动层。
 
 ## 6.5 可选升级：交叉淡入淡出
 

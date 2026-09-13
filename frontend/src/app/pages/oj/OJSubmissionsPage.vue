@@ -1,8 +1,5 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { Sparkles } from 'lucide-vue-next'
-import { useCounterStore } from '@/stores/counter.js'
-import { CODE_TUTOR_BIND_EVENT } from '@/api/nexus.js'
 import { listExperimentCourses } from '@/api/labs.js'
 import { getOJProblem, listOJProblems, listOJSubmissions } from '@/api/oj.js'
 import { getExperimentRun } from '@/api/experiments.js'
@@ -22,16 +19,6 @@ const courses = ref([])
 const courseId = ref('')
 const state = ref('loading')
 const error = ref('')
-const counter = useCounterStore()
-
-/** NX-CT1：带着当前选中的提交去问代码伴学（只发引用声明，验主在服务端）。 */
-function askCodeTutor() {
-  const runId = selected.value?.run_id
-  if (!runId || !courseId.value) return
-  window.dispatchEvent(new CustomEvent(CODE_TUTOR_BIND_EVENT, {
-    detail: { courseId: courseId.value, runId: String(runId) },
-  }))
-}
 
 const problems = ref([])
 const problemFilter = ref('')
@@ -246,14 +233,6 @@ onMounted(async () => {
           <div class="oj-sub-detail-head">
             <h2 class="sfx-t-title3">{{ problemTitle(selected.experiment_id) }}</h2>
             <SfxBadge :tone="outcomeTone(selected.outcome)">{{ outcomeLabel(selected.outcome) }}</SfxBadge>
-            <SfxButton
-              v-if="counter.canUseNexus && selected.run_id"
-              variant="secondary"
-              size="sm"
-              @click="askCodeTutor"
-            >
-              <Sparkles :size="14" /> 问代码伴学
-            </SfxButton>
           </div>
           <dl class="oj-sub-facts sfx-t-ui">
             <div><dt>语言</dt><dd>{{ selected.language }}</dd></div>

@@ -629,9 +629,6 @@ export async function streamNexusMessage({
   model = null,
   attachmentIds = [],
   runRef = null,
-  // NX-CT1-R5：调用方附加的上下文声明（problem_ref/code_snapshot 等引用型字段；
-  // 详情一律后端投影或有界透传，本层只做键白名单式透传，不解释语义）。
-  contextExtra = null,
   onEvent,
   signal,
 }) {
@@ -652,18 +649,6 @@ export async function streamNexusMessage({
       if (runRef.step_id !== undefined && runRef.step_id !== null && String(runRef.step_id).trim() !== '') {
         body.context.run_ref.step_id = runRef.step_id
       }
-    }
-  }
-  // 附加引用声明：仅合并白名单键（problem_ref/code_snapshot），未知键丢弃。
-  if (contextExtra && typeof contextExtra === 'object') {
-    body.context = body.context || {}
-    if (contextExtra.problem_ref?.experiment_id) {
-      body.context.problem_ref = {
-        experiment_id: String(contextExtra.problem_ref.experiment_id).slice(0, 64),
-      }
-    }
-    if (typeof contextExtra.code_snapshot === 'string' && contextExtra.code_snapshot.trim()) {
-      body.context.code_snapshot = contextExtra.code_snapshot.slice(0, CODE_TUTOR_SNAPSHOT_MAX)
     }
   }
   // 模型网关 P0：服务端 allowlist 校验，清单外直接 400（见 NexusPage 模型下拉）。
@@ -725,83 +710,4 @@ export async function streamNexusMessage({
   } finally {
     reader.releaseLock()
   }
-}
-
-// ---------------------------------------------------------------------------
-// NX-CT1 代码伴学会话：每学生的常驻 Nexus 会话壳（预留 session_id）。
-// 不新增 mode（沿用 general 白名单）；绑定哪次提交只传 run_id 引用声明，
-// 详情一律由后端投影（伪造 run_context 会被 proxy 剥离）。
-// ---------------------------------------------------------------------------
-
-/** 代码伴学预留会话 ID：同一用户在所有页面共享这一个 Nexus 会话。 */
-export const CODE_TUTOR_SESSION_ID = 'code-tutor'
-
-/** 代码伴学绑定事件：提交页/工作区派发，本浮窗监听（detail: {courseId, runId}）。 */
-export const CODE_TUTOR_BIND_EVENT = 'nexus-code-tutor:bind'
-
-/**
- * 代码伴学题目关联事件（NX-CT1-R5）：题目页挂载/编辑器变化/提交完成时派发，
- * 本浮窗静默关联（不自动打开）。detail: {courseId, experimentId, title,
- * runId?, codeSnapshot?}——runId 缺省不断开已有绑定（由切题逻辑单独处理）。
- */
-export const CODE_TUTOR_PROBLEM_EVENT = 'nexus-code-tutor:problem'
-
-/** 用户编辑器代码快照上限（字符；与服务端 _CODE_SNAPSHOT_MAX 对齐）。 */
-export const CODE_TUTOR_SNAPSHOT_MAX = 8000
-
-/**
- * 纯构造：代码伴学请求体（可单测；发送走 streamCodeTutorMessage）。
- * runId 为空 = 未绑定对话（服务端工具 fail-closed 指引，不阻断发送）。
- * problemRef 只传 experiment_id 引用声明，题干详情一律后端投影；
- * codeSnapshot 是用户编辑器原文（讨论材料），服务端只做有界透传。
- */
-export function buildCodeTutorRequest({ message, courseId = null, runId = null, problemRef = null, codeSnapshot = null }) {
-  const body = { message, session_id: CODE_TUTOR_SESSION_ID }
-  if (courseId != null || runId || problemRef?.experiment_id || codeSnapshot) {
-    body.context = {}
-    if (courseId != null) body.context.course_id = courseId
-    if (runId) body.context.run_ref = { run_id: String(runId).slice(0, 64) }
-    if (problemRef?.experiment_id) {
-      body.context.problem_ref = { experiment_id: String(problemRef.experiment_id).slice(0, 64) }
-    }
-    if (typeof codeSnapshot === 'string' && codeSnapshot.trim()) {
-      body.context.code_snapshot = codeSnapshot.slice(0, CODE_TUTOR_SNAPSHOT_MAX)
-    }
-  }
-  return body
-}
-
-/**
- * 代码伴学流式对话：session 固定为预留值，其余与 streamNexusMessage 同语义。
- * @param {object} options
- * @param {string} options.message
- * @param {number} [options.courseId]
- * @param {string} [options.runId] 绑定的 ExperimentRun.run_id（仅引用声明）
- * @param {{experiment_id: string}} [options.problemRef] 关联题目（仅引用声明）
- * @param {string} [options.codeSnapshot] 编辑器代码原文（讨论材料，非评测事实）
- * @param {(evt: {event: string, data: object}) => void} options.onEvent
- * @param {AbortSignal} [options.signal]
- */
-export async function streamCodeTutorMessage({
-  message,
-  courseId = null,
-  runId = null,
-  problemRef = null,
-  codeSnapshot = null,
-  onEvent,
-  signal,
-}) {
-  return streamNexusMessage({
-    message,
-    sessionId: CODE_TUTOR_SESSION_ID,
-    courseId,
-    runRef: runId ? { run_id: runId } : null,
-    contextExtra: {
-      ...(problemRef?.experiment_id ? { problem_ref: { experiment_id: String(problemRef.experiment_id).slice(0, 64) } } : {}),
-      ...(typeof codeSnapshot === 'string' && codeSnapshot.trim()
-        ? { code_snapshot: codeSnapshot.slice(0, CODE_TUTOR_SNAPSHOT_MAX) } : {}),
-    },
-    onEvent,
-    signal,
-  })
 }

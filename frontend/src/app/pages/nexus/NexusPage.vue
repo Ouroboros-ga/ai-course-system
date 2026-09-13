@@ -2437,6 +2437,11 @@ function noteActivityArrived() {
 // ── 模型选择（模型网关 P0）：选项唯一来源 = /health models 清单
 // （服务端 allowlist 投影）；选择随请求透传，服务端强制校验。
 // localStorage 只记偏好，不做授权；清单外 id 发出去会被 400 打回。
+// 展示别名：下拉仅显示固定产品名，实际请求仍用 m.id（服务端 allowlist 校验）。
+const MODEL_DISPLAY_NAME = 'NexusAI-sparkx2.5-CSLora'
+function modelDisplayLabel(m) {
+  return `${MODEL_DISPLAY_NAME}${m?.default ? '（默认）' : ''}`
+}
 const selectedModel = ref(localStorage.getItem('nexus_model') || '')
 const availableModels = computed(() => health.value?.models?.available || [])
 const effectiveModel = computed(() => {
@@ -4281,8 +4286,8 @@ const emptySuggestions = computed(() =>
               :disabled="streaming"
               @change="selectModel($event.target.value)"
             >
-              <option v-for="m in availableModels" :key="m.id" :value="m.id">
-                {{ m.label }}{{ m.default ? '（默认）' : '' }}
+              <option v-for="m in availableModels" :key="m.id" :value="m.id" :title="m.id">
+                {{ modelDisplayLabel(m) }}
               </option>
             </select>
             <span

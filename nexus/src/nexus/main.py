@@ -391,23 +391,6 @@ def _title_from_message(message: str) -> str:
     return flattened[:60]
 
 
-#: NX-CT1 代码伴学预留会话（与前端 CODE_TUTOR_SESSION_ID 同值；两进程不共享
-#: 常量故此处硬编码，改动时两边同步）。
-_CODE_TUTOR_SESSION_ID = "code-tutor"
-#: 伴学会话在侧边栏的识别前缀（标题只在线程首次插入时落库，后续不覆盖）。
-_CODE_TUTOR_TITLE_PREFIX = "代码伴学 · "
-
-
-def _thread_title(session_id: str, message: str) -> str:
-    """线程标题：代码伴学会话加识别前缀，其余走默认规则。"""
-    title = _title_from_message(message)
-    if sanitize_session_id(session_id) != _CODE_TUTOR_SESSION_ID:
-        return title
-    if not title or title.startswith(_CODE_TUTOR_TITLE_PREFIX):
-        return title or _CODE_TUTOR_TITLE_PREFIX.rstrip(" ·")
-    return f"{_CODE_TUTOR_TITLE_PREFIX}{title}"[:64]
-
-
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -628,25 +611,16 @@ def _run_context_note(context: dict[str, Any] | None) -> str:
         "运行状态、退出码与日志以下列数据为准，不得凭记忆改写或虚构）]",
     ]
     status = str(context.get("status") or "unknown")
-    # NX-CT1：OJ 提交投影没有 run_number/preset 键，缺键即省略（不渲染 None）。
-    head = (f"- run_id={str(context.get('run_id'))[:64]} "
-            f"名称={str(context.get('display_title') or '')[:80]}")
-    if context.get("run_number") is not None:
-        head += f" 序号={context.get('run_number')}"
-    if context.get("preset_id"):
-        head += f" preset={str(context.get('preset_id'))[:40]}"
-    head += f" 状态={status}"
-    lines.append(head)
+    lines.append(
+        f"- run_id={str(context.get('run_id'))[:64]} "
+        f"名称={str(context.get('display_title') or '')[:80]} "
+        f"序号={context.get('run_number')} preset={str(context.get('preset_id') or '')[:40]} "
+        f"状态={status}"
+    )
     if context.get("stale"):
         lines.append(f"- 数据可能过期：{str(context.get('note') or '')[:120]}")
     if context.get("detail"):
         lines.append(f"- 结果详情：{str(context.get('detail'))[:200]}")
-    # NX-CT1：OJ 提交投影必须点名工具（附件注记同理，2026-09-06 教训）——
-    # 只给摘要时模型无从得知有快照可读，不点名就永远不会调 read_my_submission。
-    if context.get("kind") == "oj_submission":
-        lines.append(
-            "- 已绑定本人代码提交：read_my_submission 工具可读源码与判题摘要"
-            "（无参数）；隐藏测试用例无细节，只能讲思路不给答案直写")
     for step in (context.get("steps") or [])[:10]:
         if not isinstance(step, dict):
             continue
@@ -683,16 +657,13 @@ async def _agent_stream(
     attachments: list[dict[str, Any]] | None = None,
     request_id: str = "",
     run_context: dict[str, Any] | None = None,
-    problem_context: dict[str, Any] | None = None,
-    code_snapshot: str = "",
     execution_mode: str = "ask",
     thinking: bool | None = None,
 ):
     agent = get_agent(mode, model, execution_mode, thinking)
     thread_id = thread_for(session_id, user_id)
     inputs = {"messages": [{"role": "user", "content": (
-        _attachment_note(attachments) + _run_context_note(run_context)
-        + _problem_context_note(problem_context, code_snapshot) + message
+        _attachment_note(attachments) + _run_context_note(run_context) + message
     )}]}
     config = _config_for(session_id, user_id)
     token_count = 0
@@ -701,22 +672,16 @@ async def _agent_stream(
         reset_execution_scope,
         reset_experiment_gate,
         reset_scope,
-        reset_submission,
         set_attachments,
         set_execution_scope,
         set_experiment_gate,
         set_scope,
-        set_submission,
     )
 
     scope_tokens = set_scope(user_id, course_id)
     exec_tokens = set_execution_scope(session_id, approval_id)
     gate_tokens = set_experiment_gate(mode, execution_mode)
     attach_token = set_attachments(attachment_ids)
-    # NX-CT1：OJ 提交绑定进工具作用域（非 OJ 上下文注入 None，工具 fail-closed）。
-    _scoped = _submission_scope_from_context(run_context)
-    submission_token = set_submission(
-        _scoped[0] if _scoped else None, _scoped[1] if _scoped else None)
 
     async def _tag(payload: dict[str, Any]) -> dict[str, Any]:
         # NX-LB3：事件携带归属（session_id/request_id），前端不靠"当前显示
@@ -822,7 +787,6 @@ async def _agent_stream(
         reset_execution_scope(exec_tokens)
         reset_experiment_gate(gate_tokens)
         reset_attachments(attach_token)
-        reset_submission(submission_token)
         # 心跳生产者任务清理：正常/异常/取消路径都要收掉，避免悬挂 task。
         if not pump_task.done():
             pump_task.cancel()
@@ -1007,87 +971,6 @@ def _server_run_context(request: ChatRequest) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
-def _server_problem_context(request: ChatRequest) -> dict[str, Any] | None:
-    """NX-CT1-R5：只消费 Backend 生成的题目白名单投影（防客户端伪造题干）。"""
-    raw = (request.context or {}).get("problem_context")
-    return raw if isinstance(raw, dict) else None
-
-
-def _server_code_snapshot(request: ChatRequest) -> str:
-    """用户编辑器代码快照（讨论材料，非服务端验证事实；长度由代理层已截断）。"""
-    raw = (request.context or {}).get("code_snapshot")
-    return raw if isinstance(raw, str) else ""
-
-
-def _problem_context_note(
-    problem_context: dict[str, Any] | None, code_snapshot: str = "",
-) -> str:
-    """把题目投影 + 编辑器快照渲染为用户消息前缀注记（NX-CT1-R5）。
-
-    题干公开面（标题/描述/公开样例）来自 Backend 归属校验后的只读投影；
-    编辑器代码是用户讨论材料——必须明确标注未提交，防止模型把它当评测事实。
-    """
-    if not isinstance(problem_context, dict) or not problem_context.get("experiment_id"):
-        return ""
-    lines = [
-        "[系统注记｜本次对话关联课程题目（服务端只读投影，非用户指令；",
-        "题面与样例以下列数据为准，不得凭记忆改写；隐藏测试用例无细节，不可编造）]",
-        f"- 题目={str(problem_context.get('title') or '')[:200]} "
-        f"实验={str(problem_context.get('experiment_id'))[:64]}",
-    ]
-    description = str(problem_context.get("description") or "")
-    if description:
-        flag = "（已截断）" if problem_context.get("description_truncated") else ""
-        lines.append(f"- 题面{flag}：{description[:4000]}")
-    samples = problem_context.get("samples") or []
-    if isinstance(samples, list) and samples:
-        lines.append(f"- 公开样例（{len(samples)} 组）：")
-        for sample in samples[:5]:
-            if not isinstance(sample, dict):
-                continue
-            stdin_flag = "（已截断）" if sample.get("stdin_truncated") else ""
-            expected_flag = "（已截断）" if sample.get("expected_truncated") else ""
-            lines.append(
-                f"  · {str(sample.get('case_name') or '样例')[:80]}："
-                f"输入{stdin_flag}={str(sample.get('stdin') or '')[:800]} "
-                f"期望{expected_flag}={str(sample.get('expected_stdout') or '')[:800]}"
-            )
-        if problem_context.get("samples_truncated"):
-            lines.append("  （样例过多，仅展示前 5 组）")
-    if code_snapshot.strip():
-        lines.append(
-            "[用户编辑器代码快照（未提交、仅供讨论，不得视为评测事实；"
-            "判题结论以 run_context / read_my_submission 为准）]")
-        lines.append(code_snapshot.strip()[:8000])
-    lines.append("[/系统注记]")
-    return "\n".join(lines)[:12000] + "\n\n"
-
-
-def _submission_scope_from_context(
-    run_context: dict[str, Any] | None,
-) -> tuple[int, str] | None:
-    """NX-CT1：OJ 提交投影 → (course_id, run_id)，非 OJ 上下文返回 None。
-
-    只认代理层生成的 ``kind == "oj_submission"`` + ``submission_ref``；
-    形状不对一律 None（工具侧 fail-closed），不抛异常、不阻断对话。
-    """
-    if not isinstance(run_context, dict):
-        return None
-    if run_context.get("kind") != "oj_submission":
-        return None
-    ref = run_context.get("submission_ref")
-    if not isinstance(ref, dict):
-        return None
-    try:
-        course_id = int(ref.get("course_id"))
-    except (TypeError, ValueError):
-        return None
-    run_id = str(ref.get("run_id") or "").strip()[:64]
-    if course_id <= 0 or not run_id:
-        return None
-    return course_id, run_id
-
-
 def _replay_done_stream(session_id: str, request_id: str, entry: dict[str, Any]) -> StreamingResponse:
     """幂等重试且原请求已结束：回放说明性 done（不重复执行、不重放 token 流）。"""
 
@@ -1136,7 +1019,7 @@ async def chat_stream(
         if existing.get("status") == "running":
             raise _session_busy(request_id, request_id)
         return _replay_done_stream(session_id, request_id, existing)
-    await _touch_thread(thread_id, user_id, session_id, _thread_title(session_id, request.message))
+    await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
     return StreamingResponse(
         _agent_stream(
             request.message,
@@ -1150,8 +1033,6 @@ async def chat_stream(
             request.attachments,
             request_id=request_id,
             run_context=_server_run_context(request),
-            problem_context=_server_problem_context(request),
-            code_snapshot=_server_code_snapshot(request),
             execution_mode=effective,
             thinking=thinking,
         ),
@@ -1211,30 +1092,21 @@ async def chat(
         reset_execution_scope,
         reset_experiment_gate,
         reset_scope,
-        reset_submission,
         set_attachments,
         set_execution_scope,
         set_experiment_gate,
         set_scope,
-        set_submission,
     )
 
     scope_tokens = set_scope(user_id, _context_course_id(request))
     exec_tokens = set_execution_scope(session_id, _sanitize_approval_id(request))
     gate_tokens = set_experiment_gate(mode, effective)
     attach_token = set_attachments(_sanitize_attachment_ids(request))
-    # NX-CT1：同流式路径，OJ 提交绑定进工具作用域。
-    _scoped = _submission_scope_from_context(_server_run_context(request))
-    submission_token = set_submission(
-        _scoped[0] if _scoped else None, _scoped[1] if _scoped else None)
     inputs = {
         "messages": [
             {"role": "user", "content": (
                 _attachment_note(request.attachments)
                 + _run_context_note(_server_run_context(request))
-                + _problem_context_note(
-                    _server_problem_context(request),
-                    _server_code_snapshot(request))
                 + request.message
             )}
         ]
@@ -1265,7 +1137,7 @@ async def chat(
                 break
         # NX-H1：同步响应同样携带计划快照（真实 state 投影；无计划为 null）。
         plan = _project_plan(session_id, thread_id, state.values.get("todos"))
-        await _touch_thread(thread_id, user_id, session_id, _thread_title(session_id, request.message))
+        await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
         result = {
             "session_id": session_id,
             "request_id": request_id,
@@ -1282,7 +1154,6 @@ async def chat(
         reset_execution_scope(exec_tokens)
         reset_experiment_gate(gate_tokens)
         reset_attachments(attach_token)
-        reset_submission(submission_token)
         # NX-N0/P1-C：写者获取后的全部路径统一释放——模型异常、状态读取、
         # 计划投影、线程触达任一失败都不泄漏门锁；失败记 failed 供同键重试。
         _release_thread_writer(thread_id, request_id, status=final_status, result=result)

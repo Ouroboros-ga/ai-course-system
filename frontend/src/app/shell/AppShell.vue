@@ -40,10 +40,8 @@ watch(() => route.path, () => {
     <main ref="mainRef" class="sfx-shell-main">
       <router-view v-slot="{ Component, route: viewRoute }">
         <Transition name="sfx-page" mode="out-in">
-          <!-- 页面可能带并列浮窗而形成多根 Fragment；过渡必须挂在真实单根元素上，
-            否则 out-in 离场永远完不成、切页白屏（2026-09-13 线上实证：OJ 浮窗）。
-            key 只取一级空间（matched[1]），保留空间内部切换时的布局实例；
-            不用完整 route.path，避免 OJ 二级标签切换时销毁整个布局。 -->
+          <!-- 页面可能包含并列浮窗；过渡必须挂在真实元素上，避免 Fragment 离场卡死。
+               key 只取一级空间，保留 OJ 等空间内部切换时的布局实例。 -->
           <div v-if="Component" :key="viewRoute.matched[1]?.path" class="sfx-shell-page">
             <component :is="Component" />
           </div>
@@ -80,8 +78,6 @@ watch(() => route.path, () => {
   scrollbar-gutter: stable;
 }
 
-/* L2 过渡承载层：给 Transition 提供真实单根，不新增滚动层（overflow 不动），
-   不改变三层滚动模型；仅 flex 填充 + min-height: 0 承接页面高度链。 */
 .sfx-shell-page {
   display: flex;
   flex-direction: column;
