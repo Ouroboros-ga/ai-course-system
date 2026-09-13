@@ -763,14 +763,16 @@ async def nexus_internal_run_note_create(
 # 代码伴学：本人提交快照（只读、有界；用例输入/期望输出永不读取）。
 # 链路：Nexus `read_my_submission` 工具 → 本端点 → 结构化快照。
 # 红线：只返回归属三元组（run_id + course_id + student_id）命中的行；
-# test_summary 逐项白名单重建（仅 case_name/passed/reason），隐藏测试的
-# 输入输出即使未来写入该列也过不了本层；用例表（stdin/expected）碰都不碰；
-# test_report 产物不投影（可能含逐用例细节），只取 compile/stdout/stderr。
+# test_summary 逐项白名单重建（case_name/passed/reason/hidden + 仅公开用例
+# 的输入输出，隐藏用例即使未来写入 stdin/expected 也过不了本层）；用例表
+# （stdin/expected）碰都不碰；test_report 产物不投影（可能含逐用例细节），
+# 只取 compile/stdout/stderr（当前判题链路通常无产物行，有则附带）。
 # ---------------------------------------------------------------------------
 
 _SUBMISSION_SOURCE_MAX = 8000
 _SUBMISSION_MSG_MAX = 2000
 _SUBMISSION_ARTIFACT_MAX = 4000
+_SUBMISSION_IO_MAX = 1000
 _SUBMISSION_SUMMARY_MAX_ITEMS = 50
 # 可投影的产物类型白名单：编译输出与程序自身输出；测试报告排除在外。
 _SUBMISSION_ARTIFACT_TYPES = ("compile", "stdout", "stderr")
@@ -784,20 +786,40 @@ def _bounded_text(text: Any, limit: int) -> tuple[str, bool]:
 
 
 def _safe_test_summary(raw: Any) -> tuple[list[dict[str, Any]], bool]:
-    """test_summary 白名单重建：只留三键，多余键一律丢弃。"""
-    items = raw if isinstance(raw, list) else []
+    """test_summary 白名单重建。
+
+    真实形状是判题写入器定的 ``{"cases": [...]}``（见
+    experiment_attempt_service 汇总段），兼容裸 list 旧行。
+    每项只留 ``case_name/passed/reason/hidden``；公开用例（``hidden`` 为假）
+    才附带输入输出（学生题面本就可见 + 本人输出），各 ≤1000 字符；
+    隐藏用例的 stdin/expected/actual 即使未来写入也过不了本层。
+    """
+    if isinstance(raw, dict):
+        items = raw.get("cases") or []
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        items = []
     safe: list[dict[str, Any]] = []
     for item in items[:_SUBMISSION_SUMMARY_MAX_ITEMS]:
         if not isinstance(item, dict):
             continue
-        safe.append(
-            {
-                "case_name": str(item.get("case_name") or "")[:80],
-                "passed": bool(item.get("passed")),
-                "reason": str(item.get("reason") or "")[:200],
-            }
-        )
-    return safe, len(items) > _SUBMISSION_SUMMARY_MAX_ITEMS
+        hidden = bool(item.get("hidden"))
+        entry: dict[str, Any] = {
+            "case_name": str(item.get("case_name") or "")[:80],
+            "passed": bool(item.get("passed")),
+            "reason": str(item.get("reason") or "")[:200],
+            "hidden": hidden,
+        }
+        if not hidden:
+            # 公开用例 I/O：题面可见 + 本人输出，不构成新披露；隐藏用例免谈。
+            for key in ("stdin", "expected", "actual"):
+                text, truncated = _bounded_text(item.get(key), _SUBMISSION_IO_MAX)
+                entry[key] = text
+                entry[f"{key}_truncated"] = truncated
+        safe.append(entry)
+    total = len(items) if isinstance(items, list) else 0
+    return safe, total > _SUBMISSION_SUMMARY_MAX_ITEMS
 
 
 @router.get("/submission")

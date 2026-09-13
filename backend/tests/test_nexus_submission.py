@@ -68,11 +68,15 @@ def _seed_run(session, course_id, student_id, run_id=RUN_ID):
         total_count=3,
         score=0.33,
         error_code="WA",
-        test_summary=[
-            {"case_name": "sample1", "passed": True, "reason": ""},
-            {"case_name": "hidden1", "passed": False, "reason": "output mismatch",
-             "stdin": "SECRET-IN", "expected": "SECRET-OUT"},
-        ],
+        # 真实形状：判题写入器定的 {"cases": [...]}（experiment_attempt_service
+        # 汇总段）；公开用例带 I/O，隐藏用例只有 passed/reason。
+        test_summary={"cases": [
+            {"case_name": "sample1", "passed": True, "reason": "passed",
+             "hidden": False, "stdin": "1 2\n", "expected": "3\n",
+             "actual": "3\n"},
+            {"case_name": "hidden_a1b2c3", "passed": False,
+             "reason": "wrong_answer", "hidden": True},
+        ]},
     )
     session.add(run)
     session.flush()
@@ -119,10 +123,14 @@ def test_submission_owner_success(client, session, student_user, monkeypatch):
     assert sub["source_code"] == "print('hello')"
     assert sub["source_truncated"] is False
     assert sub["passed_count"] == 1 and sub["total_count"] == 3
-    # 白名单重建：多余键（stdin/expected）被剥离，只留三键。
+    # 白名单重建：公开用例 I/O 透传；隐藏用例仅四键、无 I/O。
     assert sub["test_summary"] == [
-        {"case_name": "sample1", "passed": True, "reason": ""},
-        {"case_name": "hidden1", "passed": False, "reason": "output mismatch"},
+        {"case_name": "sample1", "passed": True, "reason": "passed",
+         "hidden": False, "stdin": "1 2\n", "expected": "3\n",
+         "actual": "3\n", "stdin_truncated": False,
+         "expected_truncated": False, "actual_truncated": False},
+        {"case_name": "hidden_a1b2c3", "passed": False,
+         "reason": "wrong_answer", "hidden": True},
     ]
     # 产物：compile/stdout 在，test_report 不在。
     assert set(sub["artifacts"]) == {"compile", "stdout"}

@@ -620,6 +620,12 @@ def _run_context_note(context: dict[str, Any] | None) -> str:
         lines.append(f"- 数据可能过期：{str(context.get('note') or '')[:120]}")
     if context.get("detail"):
         lines.append(f"- 结果详情：{str(context.get('detail'))[:200]}")
+    # NX-CT1：OJ 提交投影必须点名工具（附件注记同理，2026-09-06 教训）——
+    # 只给摘要时模型无从得知有快照可读，不点名就永远不会调 read_my_submission。
+    if context.get("kind") == "oj_submission":
+        lines.append(
+            "- 已绑定本人代码提交：read_my_submission 工具可读源码与判题摘要"
+            "（无参数）；隐藏测试用例无细节，只能讲思路不给答案直写")
     for step in (context.get("steps") or [])[:10]:
         if not isinstance(step, dict):
             continue

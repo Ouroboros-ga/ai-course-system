@@ -1847,6 +1847,9 @@ test('NX-CT1 代码伴学浮窗：全局挂载+门控+绑定事件链', () => {
   assert.match(panel, /streamCodeTutorMessage\(/)
   assert.match(panel, /CODE_TUTOR_BIND_EVENT/)
   assert.match(panel, /getExperimentRun\(cid, rid\)/)
+  // 打开懒加载服务端历史（与 Nexus 页同 thread 续接）；表头按钮不启动拖拽。
+  assert.match(panel, /getNexusSessionMessages\(CODE_TUTOR_SESSION_ID\)/)
+  assert.match(panel, /closest\?\.\('button, textarea, input, a, summary'\)/)
   assert.match(panel, /var\(--surface-panel\)/)
   assert.match(panel, /position: fixed/)
   // 工作区：诊断区有带门控的伴学入口，只发引用声明。

@@ -15,6 +15,8 @@ import SfxError from '@/app/ui/SfxError.vue'
 import { showToast } from '@/utils/toast.js'
 import {
   CODE_TUTOR_BIND_EVENT,
+  CODE_TUTOR_SESSION_ID,
+  getNexusSessionMessages,
   streamCodeTutorMessage,
 } from '@/api/nexus.js'
 import { getExperimentRun } from '@/api/experiments.js'
@@ -29,7 +31,6 @@ const route = useRoute()
 
 const open = ref(false)
 const pos = ref({ x: 0, y: 0 })
-const placed = ref(false)
 const binding = ref(null) // { courseId, runId, outcome, passed, total }
 const verifying = ref(false)
 const messages = ref([]) // { role: 'user'|'assistant', text, toolNote }
@@ -73,7 +74,6 @@ function restore() {
   } catch {
     pos.value = defaultPos()
   }
-  placed.value = true
 }
 
 function persist() {
@@ -87,6 +87,7 @@ function toggle(force) {
   open.value = typeof force === 'boolean' ? force : !open.value
   persist()
   if (open.value) {
+    loadHistory()
     nextTick(() => inputRef.value?.focus())
   } else {
     stopStream()
@@ -94,10 +95,34 @@ function toggle(force) {
   }
 }
 
+/** 打开时懒加载服务端历史（与 Nexus 页面同 thread，天然续接；失败静默，下次打开重试）。 */
+let historyLoaded = false
+let historyLoading = false
+async function loadHistory() {
+  if (historyLoaded || historyLoading || messages.value.length) return
+  historyLoading = true
+  try {
+    const res = await getNexusSessionMessages(CODE_TUTOR_SESSION_ID)
+    const remote = Array.isArray(res?.messages) ? res.messages : []
+    messages.value = remote.slice(-30).map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      text: String(m.content || ''),
+    }))
+    historyLoaded = true
+  } catch {
+    // 服务端历史不可读不阻断：本窗继续可用，发送链路的错误会如实展示。
+  } finally {
+    historyLoading = false
+    nextTick(scrollBottom)
+  }
+}
+
 // ---- 拖拽（表头手柄，pointer 事件； released-motion 下仍可用，属用户直接操纵） ----
 let drag = null
 function onDragStart(event) {
   if (event.button !== undefined && event.button !== 0) return
+  // 表头内的可交互元素（收起按钮等）不启动拖拽。
+  if (event.target?.closest?.('button, textarea, input, a, summary')) return
   drag = { dx: event.clientX - pos.value.x, dy: event.clientY - pos.value.y }
   window.addEventListener('pointermove', onDragMove)
   window.addEventListener('pointerup', onDragEnd, { once: true })
@@ -150,6 +175,7 @@ function outcomeText(o) {
     accepted: '✓ 已通过', wrong_answer: '! 答案不对', time_limit_exceeded: '! 超时',
     memory_limit_exceeded: '! 超内存', runtime_error: '! 运行出错',
     compilation_error: '! 编译失败', pending: '◷ 判题中', running: '◷ 判题中',
+    unknown: '◇ 状态未知',
   }
   return map[String(o)] || `◇ ${o}`;
 }
@@ -366,6 +392,7 @@ function onResize() {
           ref="inputRef"
           v-model="draft"
           rows="1"
+          maxlength="10000"
           placeholder="问伴学：这段代码哪里有问题？"
           aria-label="向代码伴学提问"
           :disabled="streaming || verifying"
