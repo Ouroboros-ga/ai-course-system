@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
 import { listExperimentCourses } from '@/api/labs.js'
 import { getOJProblem, listOJSubmissions } from '@/api/oj.js'
+import { getCourseCapabilities } from '@/api/course_access.js'
 import { getSandboxHealth, getSandboxLanguages } from '@/api/sandbox.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
@@ -32,6 +33,10 @@ const error = ref('')
 const problem = ref(null)
 const languages = ref([])
 const mySubmissions = ref([])
+// 是否学生身份：非学生（教师/助教/预览）只给"运行测试"，正式提交隐藏 ——
+// 后端同样会 403 拦正式 attempt（PREVIEW_CANNOT_SUBMIT_FORMAL），这里是 UX 层。
+// 身份拿不到时默认按学生渲染（后端是最终 enforcement）。
+const isStudent = ref(true)
 
 const workbenchExperiment = computed(() => {
   if (!problem.value) return null
@@ -66,12 +71,14 @@ async function load() {
   state.value = 'loading'
   error.value = ''
   try {
-    const [detail, health, supported] = await Promise.all([
+    const [detail, health, supported, access] = await Promise.all([
       getOJProblem(courseId.value, experimentId.value),
       getSandboxHealth().catch(() => null),
       getSandboxLanguages().catch(() => null),
+      getCourseCapabilities(courseId.value).catch(() => null),
     ])
     problem.value = detail
+    isStudent.value = (access?.course_role || 'student') === 'student'
     languages.value = Array.isArray(supported?.languages) ? supported.languages : []
     // 我的最近提交（用于摘要；评测解读由 Workbench 内的 diagnosis 通道负责）
     const subs = await listOJSubmissions(courseId.value, {
@@ -144,6 +151,7 @@ onMounted(async () => {
         :tone="problem.my_status === 'solved' ? 'green' : 'ink'"
       >{{ statusLabel(problem.my_status) }}</SfxBadge>
       <SfxBadge v-if="activityId" tone="amber">作业作答 · 提交计入活动成绩</SfxBadge>
+      <SfxBadge v-if="!isStudent" tone="ink">预览模式 · 可运行测试，正式提交仅学生可用</SfxBadge>
     </header>
 
     <SfxSkeleton v-if="state === 'loading'" :lines="6" block />
@@ -236,7 +244,7 @@ onMounted(async () => {
             :course-id="courseId"
             :languages="languages"
             :activity-id="activityId"
-            mode="both"
+            :mode="isStudent ? 'both' : 'free'"
             @submit-complete="load"
           />
           <SfxEmpty

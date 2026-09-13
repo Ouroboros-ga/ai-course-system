@@ -472,6 +472,56 @@ class TestAnalyticsRobustness:
         assert len(flagged) == 1
 
 
+class TestPreviewCannotSubmitFormal:
+    """教师/预览身份：运行测试可以（自由沙箱，不落库），正式提交不行。
+
+    正式 attempt 一旦建出来，其 finalized 行会直接污染全班通过率、
+    学情看板与活动榜单 —— 且 finalize 会给教师写 LearningEvidence。
+    """
+
+    def test_teacher_create_attempt_403(
+        self, client, session, teacher_user, student_user, course,
+    ):
+        definition = _definition(session, course, teacher_user)
+        resp = client.post(
+            f"{EXPERIMENTS}/{definition.experiment_id}/attempts"
+            f"?course_id={course.id}",
+            json={"return_anchor": {}},
+            headers=_auth(teacher_user),
+        )
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["data"]["error_code"] == "PREVIEW_CANNOT_SUBMIT_FORMAL"
+
+    def test_teacher_create_run_403(
+        self, client, session, teacher_user, student_user, course,
+    ):
+        definition = _definition(session, course, teacher_user)
+        attempt = _attempt_row(
+            session, course, teacher_user, definition, status="in_progress",
+        )
+        resp = client.post(
+            f"{EXPERIMENTS}/attempts/{attempt.attempt_id}/runs"
+            f"?course_id={course.id}",
+            json={"language": "python3", "source_code": "print(1)"},
+            headers={**_auth(teacher_user), "Idempotency-Key": "t1"},
+        )
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["data"]["error_code"] == "PREVIEW_CANNOT_SUBMIT_FORMAL"
+
+    def test_student_create_attempt_still_ok(
+        self, client, session, teacher_user, student_user, course,
+    ):
+        definition = _definition(session, course, teacher_user)
+        resp = client.post(
+            f"{EXPERIMENTS}/{definition.experiment_id}/attempts"
+            f"?course_id={course.id}",
+            json={"return_anchor": {}},
+            headers=_auth(student_user),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["code"] == 201
+
+
 class TestSubmissionTotalsAndStatus:
     def test_total_is_truthful_with_offset(
         self, session, teacher_user, student_user, course,

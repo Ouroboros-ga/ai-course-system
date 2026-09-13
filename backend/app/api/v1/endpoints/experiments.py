@@ -20,8 +20,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from app.core.exceptions import unified_response
+from app.core.exceptions import reject, unified_response
 from app.core.security import get_current_user
+from app.models.access_control_model import CourseRole
 from app.models.database import get_session
 from app.models.experiment_model import (
     AttemptStatus,
@@ -691,6 +692,23 @@ async def lock_version(
     )
 
 
+def _require_student_for_formal(context) -> None:
+    """正式评测（建 attempt / 交 run）只认学生身份。
+
+    教师/助教/预览/管理员的运行走自由沙箱（`/sandbox/course/.../execute`，
+    不落库、不计分）；一旦允许非学生建正式 attempt，其 finalized 行会直接
+    污染全班通过率、学情看板与活动榜单 —— 且 finalize 会给教师写
+    LearningEvidence（学生提交分数必须拒绝，见 AGENTS.md §4.3）。
+    """
+    if context.role != CourseRole.STUDENT:
+        reject(
+            403,
+            "PREVIEW_CANNOT_SUBMIT_FORMAL",
+            "预览/教辅身份不能创建正式评测：运行测试请用编辑器「运行」，"
+            "正式提交仅学生可用（测试运行不统计、不计成绩）",
+        )
+
+
 # ---------------------------------------------------------------------------
 # 学生尝试
 # ---------------------------------------------------------------------------
@@ -712,6 +730,7 @@ async def create_attempt(
             detail={"error_code": "CODING_SANDBOX_DISABLED", "message": "Code sandbox is disabled for this course."},
         )
     user_id = int(current_user["user_id"])
+    _require_student_for_formal(context)
     attempt = attempt_service.create_attempt(
         session,
         course_id=course_id,
@@ -781,6 +800,7 @@ async def create_run(
             detail={"error_code": "CODING_SANDBOX_DISABLED", "message": "课程未启用代码沙箱能力"},
         )
     user_id = int(current_user["user_id"])
+    _require_student_for_formal(context)
     if not idempotency_key:
         from app.core.exceptions import reject_validation_failed
 
