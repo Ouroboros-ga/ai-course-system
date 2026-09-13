@@ -2063,3 +2063,20 @@ test('NX-CT1-R5 题目自动关联：引用声明+服务端投影+快照有界',
   assert.doesNotMatch(panel, /is-sub/)
   assert.doesNotMatch(panel, /function unbind\(\)/)
 })
+
+test('Judge0 状态映射：按上游状态表，编译/运行/信号类不得错位', () => {
+  // 线上实证 2026-09-13：旧表把 6 判成超内存、8 判成编译错误、9/10/11/12
+  // 判成系统错误（Python NZEC 报"系统错误"、编译失败报"超内存"）。
+  // 上游 Judge0 没有超内存状态 id：6=编译错误，7-12=运行错误，13/14=内部错误。
+  const provider = read('backend/app/domain/oj/judging/providers/judge0.py')
+  assert.match(provider, /6: SubmissionStatus\.COMPILATION_ERROR/)
+  assert.match(provider, /7: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /8: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /9: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /10: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /11: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /12: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /13: SubmissionStatus\.INTERNAL_ERROR/)
+  assert.doesNotMatch(provider, /6: SubmissionStatus\.MEMORY_LIMIT_EXCEEDED/)
+  assert.doesNotMatch(provider, /8: SubmissionStatus\.COMPILATION_ERROR/)
+})
