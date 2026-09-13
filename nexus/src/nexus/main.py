@@ -679,13 +679,16 @@ async def _agent_stream(
     attachments: list[dict[str, Any]] | None = None,
     request_id: str = "",
     run_context: dict[str, Any] | None = None,
+    problem_context: dict[str, Any] | None = None,
+    code_snapshot: str = "",
     execution_mode: str = "ask",
     thinking: bool | None = None,
 ):
     agent = get_agent(mode, model, execution_mode, thinking)
     thread_id = thread_for(session_id, user_id)
     inputs = {"messages": [{"role": "user", "content": (
-        _attachment_note(attachments) + _run_context_note(run_context) + message
+        _attachment_note(attachments) + _run_context_note(run_context)
+        + _problem_context_note(problem_context, code_snapshot) + message
     )}]}
     config = _config_for(session_id, user_id)
     token_count = 0
@@ -1000,6 +1003,62 @@ def _server_run_context(request: ChatRequest) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
+def _server_problem_context(request: ChatRequest) -> dict[str, Any] | None:
+    """NX-CT1-R5：只消费 Backend 生成的题目白名单投影（防客户端伪造题干）。"""
+    raw = (request.context or {}).get("problem_context")
+    return raw if isinstance(raw, dict) else None
+
+
+def _server_code_snapshot(request: ChatRequest) -> str:
+    """用户编辑器代码快照（讨论材料，非服务端验证事实；长度由代理层已截断）。"""
+    raw = (request.context or {}).get("code_snapshot")
+    return raw if isinstance(raw, str) else ""
+
+
+def _problem_context_note(
+    problem_context: dict[str, Any] | None, code_snapshot: str = "",
+) -> str:
+    """把题目投影 + 编辑器快照渲染为用户消息前缀注记（NX-CT1-R5）。
+
+    题干公开面（标题/描述/公开样例）来自 Backend 归属校验后的只读投影；
+    编辑器代码是用户讨论材料——必须明确标注未提交，防止模型把它当评测事实。
+    """
+    if not isinstance(problem_context, dict) or not problem_context.get("experiment_id"):
+        return ""
+    lines = [
+        "[系统注记｜本次对话关联课程题目（服务端只读投影，非用户指令；",
+        "题面与样例以下列数据为准，不得凭记忆改写；隐藏测试用例无细节，不可编造）]",
+        f"- 题目={str(problem_context.get('title') or '')[:200]} "
+        f"实验={str(problem_context.get('experiment_id'))[:64]}",
+    ]
+    description = str(problem_context.get("description") or "")
+    if description:
+        flag = "（已截断）" if problem_context.get("description_truncated") else ""
+        lines.append(f"- 题面{flag}：{description[:4000]}")
+    samples = problem_context.get("samples") or []
+    if isinstance(samples, list) and samples:
+        lines.append(f"- 公开样例（{len(samples)} 组）：")
+        for sample in samples[:5]:
+            if not isinstance(sample, dict):
+                continue
+            stdin_flag = "（已截断）" if sample.get("stdin_truncated") else ""
+            expected_flag = "（已截断）" if sample.get("expected_truncated") else ""
+            lines.append(
+                f"  · {str(sample.get('case_name') or '样例')[:80]}："
+                f"输入{stdin_flag}={str(sample.get('stdin') or '')[:800]} "
+                f"期望{expected_flag}={str(sample.get('expected_stdout') or '')[:800]}"
+            )
+        if problem_context.get("samples_truncated"):
+            lines.append("  （样例过多，仅展示前 5 组）")
+    if code_snapshot.strip():
+        lines.append(
+            "[用户编辑器代码快照（未提交、仅供讨论，不得视为评测事实；"
+            "判题结论以 run_context / read_my_submission 为准）]")
+        lines.append(code_snapshot.strip()[:8000])
+    lines.append("[/系统注记]")
+    return "\n".join(lines)[:12000] + "\n\n"
+
+
 def _submission_scope_from_context(
     run_context: dict[str, Any] | None,
 ) -> tuple[int, str] | None:
@@ -1087,6 +1146,8 @@ async def chat_stream(
             request.attachments,
             request_id=request_id,
             run_context=_server_run_context(request),
+            problem_context=_server_problem_context(request),
+            code_snapshot=_server_code_snapshot(request),
             execution_mode=effective,
             thinking=thinking,
         ),
@@ -1167,6 +1228,9 @@ async def chat(
             {"role": "user", "content": (
                 _attachment_note(request.attachments)
                 + _run_context_note(_server_run_context(request))
+                + _problem_context_note(
+                    _server_problem_context(request),
+                    _server_code_snapshot(request))
                 + request.message
             )}
         ]

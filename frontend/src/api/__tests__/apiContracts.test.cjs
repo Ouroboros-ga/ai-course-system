@@ -1963,8 +1963,7 @@ test('NX-CT1 代码伴学浮窗：OJ 内挂载+门控+绑定事件链', () => {
   assert.doesNotMatch(ojSubs, /NexusCodeTutorFloat/)
 })
 
-test('AppShell 过渡承载层：单根 keyed 容器防多根离场卡死', () => {
-  // 线上实证 2026-09-13：OJ 浮窗让页面变多根 Fragment，out-in 离场挂起、
+test('AppShell 过渡承载层：单根 keyed 容器防多根离场卡死', () => {  // 线上实证 2026-09-13：OJ 浮窗让页面变多根 Fragment，out-in 离场挂起、
   // 切其他二级菜单白屏。过渡必须挂真实单根；key 取一级空间，不用完整 path。
   const shell = read('frontend/src/app/shell/AppShell.vue')
   assert.match(shell, /<div v-if="Component" :key="viewRoute\.matched\[1\]\?\.path" class="sfx-shell-page">/)
@@ -2001,4 +2000,39 @@ test('学情页折线图：Filler 插件已注册（fill:true 不再告警）', 
   const page = read('frontend/src/app/pages/course/CourseAnalyticsPage.vue')
   assert.match(page, /Filler, Tooltip, Legend,/)
   assert.match(page, /LineElement, PointElement, Filler, Tooltip, Legend/)
+})
+
+test('NX-CT1-R5 题目自动关联：引用声明+服务端投影+快照有界', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const runtime = read('nexus/src/nexus/main.py')
+  const panel = read('frontend/src/app/components/nexus/NexusCodeTutorFloat.vue')
+  const page = read('frontend/src/app/pages/oj/OJProblemDetailPage.vue')
+  // 前端：problem_ref 只传 experiment_id；快照 8000 截断；事件分绑定/关联两种。
+  assert.match(client, /CODE_TUTOR_PROBLEM_EVENT = 'nexus-code-tutor:problem'/)
+  assert.match(client, /problem_ref = \{ experiment_id: String\(problemRef\.experiment_id\)/)
+  assert.match(client, /code_snapshot = codeSnapshot\.slice\(0, CODE_TUTOR_SNAPSHOT_MAX\)/)
+  assert.match(client, /problem_ref\?\.experiment_id/)
+  // 后端：problem_ref 走 OJ 题目投影（已发布+本人可见），伪造 problem_context 剥离，
+  // 快照服务端二次截断；隐藏用例表碰都不碰（只查 is_hidden=False）。
+  assert.match(backend, /async def _build_problem_context/)
+  assert.match(backend, /"kind": "oj_problem"/)
+  assert.match(backend, /context\.pop\("problem_context", None\)/)
+  assert.match(backend, /_CODE_SNAPSHOT_MAX = 8000/)
+  assert.match(backend, /is_hidden == False/)
+  assert.match(backend, /ExperimentPublishStatus\.PUBLISHED/)
+  // Runtime：题目注记双路径注入（流/非流），快照标注未提交。
+  assert.match(runtime, /def _problem_context_note/)
+  assert.match(runtime, /problem_context=_server_problem_context\(request\)/)
+  // 浮窗：题目事件静默关联（不自动打开）、切题清绑定、诊断失败才自显一次。
+  assert.match(panel, /CODE_TUTOR_PROBLEM_EVENT/)
+  assert.match(panel, /onProblemEvent/)
+  assert.match(panel, /maybeShowDiagnosis\(\)/)
+  assert.match(panel, /getCodingDiagnosis\(bound\.courseId, bound\.runId\)/)
+  assert.match(panel, /diagnosisShownFor/)
+  assert.match(panel, /unbindProblem/)
+  // 题目页：挂载广播+编辑器防抖快照+提交刷新最新提交。
+  assert.match(page, /announceToTutor\(\)/)
+  assert.match(page, /CODE_TUTOR_PROBLEM_EVENT/)
+  assert.match(page, /@code-change="onWorkbenchCodeChange"/)
 })

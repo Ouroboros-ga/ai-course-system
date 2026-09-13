@@ -1,11 +1,11 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft, Check, Copy, Languages, PanelRightClose, PanelRightOpen, Sparkles,
 } from 'lucide-vue-next'
 import { useCounterStore } from '@/stores/counter.js'
-import { CODE_TUTOR_BIND_EVENT } from '@/api/nexus.js'
+import { CODE_TUTOR_BIND_EVENT, CODE_TUTOR_PROBLEM_EVENT } from '@/api/nexus.js'
 import { listExperimentCourses } from '@/api/labs.js'
 import { getOJProblem, listOJProblems, listOJSubmissions } from '@/api/oj.js'
 import { getCourseCapabilities } from '@/api/course_access.js'
@@ -143,6 +143,8 @@ async function load() {
     mySubmissions.value = Array.isArray(subs?.items) ? subs.items : []
     state.value = 'ready'
     await loadProblemNo()
+    // 题目关联（含最新提交与编辑器快照）：浮窗静默接收，不自动打开。
+    announceToTutor()
   } catch (caught) {
     const status = caught?.response?.status
     error.value = status === 404 ? '题目不存在或未发布' : (caught?.message || '题目加载失败')
@@ -197,6 +199,55 @@ function formatOutcome(value) {
     time_limit_exceeded: '超时', compile_error: '编译错误', pending: '评测中',
   }[value] || value
 }
+
+/** NX-CT1-R5：向伴学浮窗广播题目关联（静默，不自动打开）。
+ * 带最新一次提交（若有）+ 编辑器当前代码快照；浮窗侧验主后绑定。 */
+function latestSubmission() {
+  const items = Array.isArray(mySubmissions.value) ? mySubmissions.value : []
+  if (!items.length) return null
+  const withTime = items.filter((s) => s.submitted_at || s.finished_at || s.created_at)
+  const pool = withTime.length ? withTime : items
+  return pool.reduce((best, cur) => {
+    const bt = Date.parse(best.submitted_at || best.finished_at || best.created_at || 0) || 0
+    const ct = Date.parse(cur.submitted_at || cur.finished_at || cur.created_at || 0) || 0
+    return ct > bt ? cur : best
+  })
+}
+
+function workbenchCode() {
+  try {
+    return String(workbenchRef.value?.getCode?.() ?? '')
+  } catch {
+    return ''
+  }
+}
+
+function announceToTutor() {
+  if (!courseId.value || !experimentId.value) return
+  const latest = latestSubmission()
+  window.dispatchEvent(new CustomEvent(CODE_TUTOR_PROBLEM_EVENT, {
+    detail: {
+      courseId: courseId.value,
+      experimentId: experimentId.value,
+      title: problem.value?.title || '',
+      runId: latest?.run_id || null,
+      codeSnapshot: workbenchCode(),
+    },
+  }))
+}
+
+let codeAnnounceTimer = null
+function onWorkbenchCodeChange() {
+  if (codeAnnounceTimer) window.clearTimeout(codeAnnounceTimer)
+  codeAnnounceTimer = window.setTimeout(() => {
+    codeAnnounceTimer = null
+    announceToTutor()
+  }, 1500)
+}
+
+onBeforeUnmount(() => {
+  if (codeAnnounceTimer) window.clearTimeout(codeAnnounceTimer)
+})
 
 /** NX-CT1：带着某次提交去问代码伴学（只发引用声明，验主在服务端）。 */
 function askCodeTutor(runId) {
@@ -374,6 +425,7 @@ onMounted(async () => {
             :languages="languages"
             :activity-id="activityId"
             :mode="isStudent ? 'both' : 'free'"
+            @code-change="onWorkbenchCodeChange"
             @submit-complete="load"
           />
           <SfxEmpty

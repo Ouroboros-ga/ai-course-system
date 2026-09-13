@@ -16,15 +16,17 @@ import { showToast } from '@/utils/toast.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
 import {
   CODE_TUTOR_BIND_EVENT,
+  CODE_TUTOR_PROBLEM_EVENT,
   CODE_TUTOR_SESSION_ID,
   getNexusSessionMessages,
   streamCodeTutorMessage,
 } from '@/api/nexus.js'
-import { getExperimentRun } from '@/api/experiments.js'
+import { getCodingDiagnosis, getExperimentRun } from '@/api/experiments.js'
 
 const POS_KEY = 'sfx:code-tutor:pos'
 const OPEN_KEY = 'sfx:code-tutor:open'
 const BIND_KEY = 'sfx:code-tutor:binding'
+const PROBLEM_KEY = 'sfx:code-tutor:problem'
 const WIN_W = 680
 const WIN_H = 600
 
@@ -33,6 +35,9 @@ const route = useRoute()
 const open = ref(false)
 const pos = ref({ x: 0, y: 0 })
 const binding = ref(null) // { courseId, runId, outcome, passed, total }
+const problem = ref(null) // { courseId, experimentId, title }
+const codeSnapshot = ref('') // 编辑器代码原文（讨论材料，不持久化，随题目页事件更新）
+const diagnosisShownFor = ref(null) // 已自显诊断的 runId（同 run 不重复拉取）
 const verifying = ref(false)
 const messages = ref([]) // { role: 'user'|'assistant', text, toolNote }
 const draft = ref('')
@@ -116,11 +121,54 @@ function toggle(force) {
   persist()
   if (open.value) {
     loadHistory()
+    maybeShowDiagnosis()
     nextTick(() => inputRef.value?.focus())
   } else {
     stopStream()
     nextTick(() => fabRef.value?.focus())
   }
+}
+
+/** 打开时若绑着失败的提交且尚未展示过诊断：自动拉取诊断详解并置顶呈现。
+ * 只读 GET，不存在（404）就静默记 flag 不再打扰；网络失败不清 flag，下次重进再试。 */
+async function maybeShowDiagnosis() {
+  const bound = binding.value
+  if (!bound?.runId || diagnosisShownFor.value === bound.runId) return
+  if (!isFailedOutcome(bound.outcome)) return
+  try {
+    const data = await getCodingDiagnosis(bound.courseId, bound.runId)
+    const record = data?.data ?? data ?? {}
+    if (!record || record.run_id == null) {
+      diagnosisShownFor.value = bound.runId
+      return
+    }
+    messages.value.push({ role: 'assistant', text: formatDiagnosis(record), diagnosis: true })
+    diagnosisShownFor.value = bound.runId
+    await nextTick()
+    scrollBottom()
+  } catch {
+    // 诊断拉取失败不阻断：用户仍可直接提问，伴学经提交快照作答。
+  }
+}
+
+function isFailedOutcome(outcome) {
+  return ['wrong_answer', 'time_limit_exceeded', 'memory_limit_exceeded',
+    'runtime_error', 'compilation_error'].includes(String(outcome))
+}
+
+function formatDiagnosis(record) {
+  const lines = [
+    `## 诊断详解（${outcomeText(record.outcome)}${record.passed_count != null ? ` · ${record.passed_count}/${record.total_count ?? '?'}` : ''}）`,
+    '',
+    `**结论**：${record.summary || record.error_class || '判题未通过'}`,
+  ]
+  const steps = Array.isArray(record.debug_steps) ? record.debug_steps.filter(Boolean) : []
+  if (steps.length) {
+    lines.push('', '**分步建议**：')
+    steps.slice(0, 5).forEach((step, i) => lines.push(`${i + 1}. ${step}`))
+  }
+  lines.push('', `（服务端诊断 \`diagnosis:${String(record.diagnosis_id || '').slice(0, 20)}\`，供参考；追问可继续深挖）`)
+  return lines.join('\n')
 }
 
 /** 打开时懒加载服务端历史（与 Nexus 页面同 thread，天然续接；失败静默，下次打开重试）。 */
@@ -227,11 +275,77 @@ async function bindSubmission({ courseId, runId }) {
 
 function unbind() {
   binding.value = null
+  diagnosisShownFor.value = null
   persistBinding()
 }
 
 function onBindEvent(event) {
   bindSubmission(event.detail || {})
+}
+
+/** 题目关联事件（NX-CT1-R5）：题目页派发，本浮窗静默关联、不自动打开。
+ * 切题（experimentId 变化）时旧提交绑定自动失效，避免把 A 题的 run 带到 B 题；
+ * 同题时只更新快照/标题，不碰已有绑定（静默润物，不打扰）。 */
+async function onProblemEvent(event) {
+  const detail = event.detail || {}
+  const cid = Number(detail.courseId)
+  const eid = String(detail.experimentId || '').slice(0, 64)
+  if (!Number.isInteger(cid) || cid <= 0 || !eid) return
+  const switched = !problem.value || problem.value.experimentId !== eid
+  problem.value = {
+    courseId: cid,
+    experimentId: eid,
+    title: String(detail.title || '').slice(0, 200),
+  }
+  persistProblem()
+  if ('codeSnapshot' in detail) {
+    codeSnapshot.value = typeof detail.codeSnapshot === 'string' ? detail.codeSnapshot : ''
+  }
+  if (switched) {
+    binding.value = null
+    diagnosisShownFor.value = null
+    persistBinding()
+  }
+  if (detail.runId) {
+    const next = await verifyBinding(cid, detail.runId)
+    if (next) {
+      binding.value = next
+      persistBinding()
+    }
+  }
+}
+
+function unbindProblem() {
+  problem.value = null
+  codeSnapshot.value = ''
+  binding.value = null
+  diagnosisShownFor.value = null
+  persistProblem()
+  persistBinding()
+}
+
+function persistProblem() {
+  try {
+    if (problem.value) {
+      localStorage.setItem(PROBLEM_KEY, JSON.stringify(problem.value))
+    } else {
+      localStorage.removeItem(PROBLEM_KEY)
+    }
+  } catch { /* 持久化失败不影响使用 */ }
+}
+
+/** 恢复上次关联题目（只恢复身份，不恢复编辑器快照——快照必须由题目页现取，防 stale 代码）。 */
+function restoreProblem() {
+  let saved = null
+  try {
+    saved = JSON.parse(localStorage.getItem(PROBLEM_KEY) || 'null')
+  } catch { saved = null }
+  if (!saved?.experimentId) return
+  problem.value = {
+    courseId: Number(saved.courseId) || null,
+    experimentId: String(saved.experimentId).slice(0, 64),
+    title: String(saved.title || '').slice(0, 200),
+  }
 }
 
 /** 恢复上次绑定：静默重验，失效（删课/无权）则静默解绑，不打扰用户。 */
@@ -292,8 +406,10 @@ async function send() {
   try {
     await streamCodeTutorMessage({
       message: text,
-      courseId: binding.value?.courseId ?? routeCourseId(),
+      courseId: binding.value?.courseId ?? problem.value?.courseId ?? routeCourseId(),
       runId: binding.value?.runId ?? null,
+      problemRef: problem.value ? { experiment_id: problem.value.experimentId } : null,
+      codeSnapshot: codeSnapshot.value || null,
       signal: ctrl.signal,
       onEvent: ({ event, data }) => {
         if (event === 'token') {
@@ -357,11 +473,14 @@ watch(draft, () => nextTick(autoGrow))
 onMounted(() => {
   restore()
   restoreBinding()
+  restoreProblem()
   window.addEventListener(CODE_TUTOR_BIND_EVENT, onBindEvent)
+  window.addEventListener(CODE_TUTOR_PROBLEM_EVENT, onProblemEvent)
   window.addEventListener('resize', onResize)
 })
 onBeforeUnmount(() => {
   window.removeEventListener(CODE_TUTOR_BIND_EVENT, onBindEvent)
+  window.removeEventListener(CODE_TUTOR_PROBLEM_EVENT, onProblemEvent)
   window.removeEventListener('resize', onResize)
   onDragEnd()
   stopStream()
@@ -408,8 +527,21 @@ function onResize() {
         </button>
       </header>
 
-      <!-- 绑定条 -->
+      <!-- 关联条：题目（服务端投影题干） + 提交（服务端验主） -->
       <div class="ct-binding">
+        <template v-if="problem">
+          <span class="ct-bind-ok" role="status">
+            <span aria-hidden="true">◇</span>
+            已关联《{{ problem.title || problem.experimentId.slice(0, 16) }}》
+            <template v-if="codeSnapshot"> · 含编辑器快照</template>
+          </span>
+          <SfxButton variant="tertiary" size="sm" @click="unbindProblem">取消关联</SfxButton>
+        </template>
+        <span v-else class="ct-bind-empty">
+          未关联题目——从 OJ 题目页进入会自动关联题干与编辑器代码。
+        </span>
+      </div>
+      <div v-if="problem" class="ct-binding is-sub">
         <template v-if="binding">
           <span class="ct-bind-ok" role="status">
             <span aria-hidden="true">◇</span>
@@ -422,14 +554,14 @@ function onResize() {
           </SfxButton>
         </template>
         <span v-else class="ct-bind-empty">
-          未绑定提交——从题目页/提交页点「问代码伴学」进入，伴学才能看到你的代码与判题。
+          未绑定提交——提交一次代码后点「问代码伴学」，伴学可见判题与报错。
         </span>
       </div>
 
       <!-- 消息区：内部独立滚动 -->
       <div ref="listRef" class="ct-messages">
         <div v-if="!messages.length" class="ct-welcome">
-          <p>我是你的代码伴学。绑定一次提交后，你可以问我：</p>
+          <p>我是你的代码伴学。{{ problem ? `当前关联《${problem.title || '题目'}》，` : '' }}你可以问我：</p>
           <ul>
             <li>「为什么这个用例过不了？」</li>
             <li>「编译报错是什么意思，怎么改？」</li>
@@ -616,6 +748,11 @@ function onResize() {
 }
 .ct-bind-empty {
   color: var(--text-muted);
+}
+/* 提交绑定条：题目条之下，缩进半级以示从属 */
+.ct-binding.is-sub {
+  background: var(--surface-panel);
+  padding-top: var(--space-1);
 }
 .ct-messages {
   flex: 1;
