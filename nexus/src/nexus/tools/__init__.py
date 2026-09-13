@@ -28,6 +28,7 @@ from nexus.tools.reproduction import (
     run_reproduction,
     update_reproduction_proposal,
 )
+from nexus.tools.submission import read_my_submission
 from nexus.tools.web_search import web_search as web_search_tool
 from nexus.experiment_intake import prepare_experiment
 
@@ -42,6 +43,8 @@ NEXUS_TOOLS = [
     plan_reproduction,
     run_reproduction,
     read_attachment,
+    # NX-CT1：代码伴学本人提交快照（无参数，读服务端绑定；未绑定 fail-closed）。
+    read_my_submission,
     # NX-R1a：上传论文全文证据薄链（Research-only）。
     collect_paper_evidence,
     read_paper_more,
@@ -81,6 +84,7 @@ __all__ = [
     "plan_reproduction",
     "run_reproduction",
     "read_attachment",
+    "read_my_submission",
     "collect_paper_evidence",
     "read_paper_more",
     "write_research_report",

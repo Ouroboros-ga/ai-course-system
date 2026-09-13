@@ -1,0 +1,666 @@
+<script setup>
+/**
+ * NX-CT1 代码伴学浮窗：每学生的常驻 Nexus 会话壳（session_id = 'code-tutor'）。
+ *
+ * - 挂在 AppShell 全局 fixed 层（不进页面内部，不破坏 design.md §5 三层滚动）；
+ * - 只读：绑定哪次提交仅传 run_id 引用声明，源码/判题/产物尾部由后端投影+
+ *   read_my_submission 工具按需拉取；本组件不请求、不存储源码；
+ * - 命名用 Nexus 品牌（"Nexus 代码伴学"），不出现 CodingAgent 独立品牌。
+ */
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { Send, Sparkles, Square, Unlink, Wrench, X } from 'lucide-vue-next'
+import SfxButton from '@/app/ui/SfxButton.vue'
+import SfxError from '@/app/ui/SfxError.vue'
+import { showToast } from '@/utils/toast.js'
+import {
+  CODE_TUTOR_BIND_EVENT,
+  CODE_TUTOR_SESSION_ID,
+  getNexusSessionMessages,
+  streamCodeTutorMessage,
+} from '@/api/nexus.js'
+import { getExperimentRun } from '@/api/experiments.js'
+
+const POS_KEY = 'sfx:code-tutor:pos'
+const OPEN_KEY = 'sfx:code-tutor:open'
+const WIN_W = 680
+const WIN_H = 600
+const MIN_VISIBLE = 48
+
+const route = useRoute()
+
+const open = ref(false)
+const pos = ref({ x: 0, y: 0 })
+const binding = ref(null) // { courseId, runId, outcome, passed, total }
+const verifying = ref(false)
+const messages = ref([]) // { role: 'user'|'assistant', text, toolNote }
+const draft = ref('')
+const streaming = ref(false)
+const thinking = ref(false)
+const streamError = ref(null)
+const aborter = ref(null)
+const fabRef = ref(null)
+const inputRef = ref(null)
+const listRef = ref(null)
+
+function routeCourseId() {
+  const raw = route.params?.courseId
+  const id = Number(raw)
+  return Number.isInteger(id) && id > 0 ? id : null
+}
+
+function defaultPos() {
+  return {
+    x: Math.max(16, window.innerWidth - WIN_W - 24),
+    y: Math.max(16, window.innerHeight - WIN_H - 24),
+  }
+}
+
+function clampPos(p) {
+  const w = Math.min(WIN_W, window.innerWidth - 32)
+  const h = Math.min(WIN_H, window.innerHeight - 32)
+  return {
+    x: Math.min(Math.max(p.x, MIN_VISIBLE - w), window.innerWidth - MIN_VISIBLE),
+    y: Math.min(Math.max(p.y, 0), window.innerHeight - MIN_VISIBLE),
+  }
+}
+
+function restore() {
+  try {
+    open.value = localStorage.getItem(OPEN_KEY) === '1'
+    const raw = localStorage.getItem(POS_KEY)
+    if (raw) pos.value = clampPos(JSON.parse(raw))
+    else pos.value = defaultPos()
+  } catch {
+    pos.value = defaultPos()
+  }
+}
+
+function persist() {
+  try {
+    localStorage.setItem(OPEN_KEY, open.value ? '1' : '0')
+    localStorage.setItem(POS_KEY, JSON.stringify(pos.value))
+  } catch { /* 持久化失败不影响使用 */ }
+}
+
+function toggle(force) {
+  open.value = typeof force === 'boolean' ? force : !open.value
+  persist()
+  if (open.value) {
+    loadHistory()
+    nextTick(() => inputRef.value?.focus())
+  } else {
+    stopStream()
+    nextTick(() => fabRef.value?.focus())
+  }
+}
+
+/** 打开时懒加载服务端历史（与 Nexus 页面同 thread，天然续接；失败静默，下次打开重试）。 */
+let historyLoaded = false
+let historyLoading = false
+async function loadHistory() {
+  if (historyLoaded || historyLoading || messages.value.length) return
+  historyLoading = true
+  try {
+    const res = await getNexusSessionMessages(CODE_TUTOR_SESSION_ID)
+    const remote = Array.isArray(res?.messages) ? res.messages : []
+    messages.value = remote.slice(-30).map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      text: String(m.content || ''),
+    }))
+    historyLoaded = true
+  } catch {
+    // 服务端历史不可读不阻断：本窗继续可用，发送链路的错误会如实展示。
+  } finally {
+    historyLoading = false
+    nextTick(scrollBottom)
+  }
+}
+
+// ---- 拖拽（表头手柄，pointer 事件； released-motion 下仍可用，属用户直接操纵） ----
+let drag = null
+function onDragStart(event) {
+  if (event.button !== undefined && event.button !== 0) return
+  // 表头内的可交互元素（收起按钮等）不启动拖拽。
+  if (event.target?.closest?.('button, textarea, input, a, summary')) return
+  drag = { dx: event.clientX - pos.value.x, dy: event.clientY - pos.value.y }
+  window.addEventListener('pointermove', onDragMove)
+  window.addEventListener('pointerup', onDragEnd, { once: true })
+}
+function onDragMove(event) {
+  if (!drag) return
+  pos.value = clampPos({ x: event.clientX - drag.dx, y: event.clientY - drag.dy })
+}
+function onDragEnd() {
+  drag = null
+  window.removeEventListener('pointermove', onDragMove)
+  persist()
+}
+
+// ---- 绑定：只接受事件声明 + 服务端验主（getExperimentRun 404 即拒收） ----
+async function bindSubmission({ courseId, runId }) {
+  const cid = Number(courseId)
+  const rid = String(runId || '').slice(0, 64)
+  if (!Number.isInteger(cid) || cid <= 0 || !rid) return
+  verifying.value = true
+  try {
+    const data = await getExperimentRun(cid, rid)
+    const run = data?.data ?? data ?? {}
+    binding.value = {
+      courseId: cid,
+      runId: rid,
+      outcome: run.outcome ?? run.status ?? 'unknown',
+      passed: run.passed_count ?? null,
+      total: run.total_count ?? null,
+    }
+    if (!open.value) toggle(true)
+    showToast('已绑定本次提交，伴学可见判题摘要', 'success')
+  } catch {
+    showToast('绑定失败：找不到该提交或无权访问', 'error')
+  } finally {
+    verifying.value = false
+  }
+}
+
+function unbind() {
+  binding.value = null
+}
+
+function onBindEvent(event) {
+  bindSubmission(event.detail || {})
+}
+
+function outcomeText(o) {
+  const map = {
+    accepted: '✓ 已通过', wrong_answer: '! 答案不对', time_limit_exceeded: '! 超时',
+    memory_limit_exceeded: '! 超内存', runtime_error: '! 运行出错',
+    compilation_error: '! 编译失败', pending: '◷ 判题中', running: '◷ 判题中',
+    unknown: '◇ 状态未知',
+  }
+  return map[String(o)] || `◇ ${o}`;
+}
+
+// ---- 对话 ----
+function scrollBottom() {
+  const el = listRef.value
+  if (!el) return
+  // 仅用户停留在底部附近时跟随，避免打断回看。
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) {
+    el.scrollTop = el.scrollHeight
+  }
+}
+
+function stopStream() {
+  try { aborter.value?.abort() } catch { /* 忽略 */ }
+  aborter.value = null
+  streaming.value = false
+  thinking.value = false
+}
+
+async function send() {
+  const text = draft.value.trim()
+  if (!text || streaming.value) return
+  draft.value = ''
+  streamError.value = null
+  messages.value.push({ role: 'user', text })
+  messages.value.push({ role: 'assistant', text: '', toolNote: '' })
+  streaming.value = true
+  thinking.value = true
+  const ctrl = new AbortController()
+  aborter.value = ctrl
+  await nextTick()
+  scrollBottom()
+  const target = messages.value[messages.value.length - 1]
+  try {
+    await streamCodeTutorMessage({
+      message: text,
+      courseId: binding.value?.courseId ?? routeCourseId(),
+      runId: binding.value?.runId ?? null,
+      signal: ctrl.signal,
+      onEvent: ({ event, data }) => {
+        if (event === 'token') {
+          thinking.value = false
+          target.text += data?.content || ''
+          scrollBottom()
+        } else if (event === 'reasoning') {
+          target.reasoning = (target.reasoning || '') + (data?.content || '')
+        } else if (event === 'tool_call') {
+          if (data?.name === 'read_my_submission') {
+            target.toolNote = '正在读取绑定的提交快照…'
+          }
+        } else if (event === 'tool_result') {
+          if (data?.name === 'read_my_submission') {
+            target.toolNote = data?.status === 'error'
+              ? `提交快照读取失败（${data?.code || '未知错误'}）`
+              : '已读取提交快照（含源码与判题摘要）'
+          }
+        } else if (event === 'error') {
+          thinking.value = false
+          streamError.value = {
+            code: data?.code || '',
+            message: data?.message || '伴学暂时不可用',
+          }
+        } else if (event === 'done') {
+          thinking.value = false
+        }
+      },
+    })
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      streamError.value = { code: error?.errorCode || '', message: error?.message || '伴学暂时不可用' }
+      // 失败不吞输入：恢复上次提问，用户可直接重发。
+      draft.value = text
+    }
+  } finally {
+    streaming.value = false
+    thinking.value = false
+    aborter.value = null
+    scrollBottom()
+  }
+}
+
+function onInputKeydown(event) {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault()
+    send()
+  }
+}
+
+function autoGrow() {
+  const el = inputRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, 132)}px`
+}
+
+watch(draft, () => nextTick(autoGrow))
+
+onMounted(() => {
+  restore()
+  window.addEventListener(CODE_TUTOR_BIND_EVENT, onBindEvent)
+  window.addEventListener('resize', onResize)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener(CODE_TUTOR_BIND_EVENT, onBindEvent)
+  window.removeEventListener('resize', onResize)
+  stopStream()
+})
+function onResize() {
+  pos.value = clampPos(pos.value)
+}
+</script>
+
+<template>
+  <div class="ct-float" aria-label="Nexus 代码伴学">
+    <!-- 工具球：折叠态唯一入口 -->
+    <button
+      v-if="!open"
+      ref="fabRef"
+      class="ct-fab"
+      type="button"
+      aria-label="打开 Nexus 代码伴学"
+      title="Nexus 代码伴学"
+      @click="toggle(true)"
+    >
+      <Sparkles :size="22" :stroke-width="1.8" />
+    </button>
+
+    <!-- 大对话窗：fixed 浮层，不挤压布局、不产生整页滚动 -->
+    <section
+      v-else
+      class="ct-window"
+      role="dialog"
+      aria-modal="false"
+      aria-label="Nexus 代码伴学对话窗口"
+      :style="{ left: `${pos.x}px`, top: `${pos.y}px` }"
+    >
+      <header class="ct-header" @pointerdown="onDragStart">
+        <div class="ct-title">
+          <Sparkles :size="18" :stroke-width="1.8" aria-hidden="true" />
+          <div>
+            <h2>Nexus 代码伴学</h2>
+            <p>只读你的提交快照 · 不执行代码</p>
+          </div>
+        </div>
+        <button class="ct-icon-btn" type="button" aria-label="收起代码伴学" @click="toggle(false)">
+          <X :size="18" />
+        </button>
+      </header>
+
+      <!-- 绑定条 -->
+      <div class="ct-binding">
+        <template v-if="binding">
+          <span class="ct-bind-ok" role="status">
+            <span aria-hidden="true">◇</span>
+            已绑定提交 <code>{{ binding.runId.slice(0, 16) }}</code>
+            · {{ outcomeText(binding.outcome) }}
+            <template v-if="binding.passed !== null"> · {{ binding.passed }}/{{ binding.total }}</template>
+          </span>
+          <SfxButton variant="tertiary" size="sm" @click="unbind">
+            <Unlink :size="14" /> 解绑
+          </SfxButton>
+        </template>
+        <span v-else class="ct-bind-empty">
+          未绑定提交——从题目页/提交页点「问代码伴学」进入，伴学才能看到你的代码与判题。
+        </span>
+      </div>
+
+      <!-- 消息区：内部独立滚动 -->
+      <div ref="listRef" class="ct-messages">
+        <div v-if="!messages.length" class="ct-welcome">
+          <p>我是你的代码伴学。绑定一次提交后，你可以问我：</p>
+          <ul>
+            <li>「为什么这个用例过不了？」</li>
+            <li>「编译报错是什么意思，怎么改？」</li>
+            <li>「我的思路卡在哪一步？」</li>
+          </ul>
+          <p class="ct-welcome-note">我只能看到你本人的提交与判题摘要，看不到隐藏测试用例，也不会替你写完整答案。</p>
+        </div>
+        <div
+          v-for="(m, i) in messages"
+          :key="i"
+          class="ct-msg"
+          :class="m.role === 'user' ? 'is-user' : 'is-assistant'"
+        >
+          <p class="ct-msg-role">{{ m.role === 'user' ? '你' : '代码伴学' }}</p>
+          <p v-if="m.toolNote" class="ct-tool-note">
+            <Wrench :size="13" aria-hidden="true" /> {{ m.toolNote }}
+          </p>
+          <p class="ct-msg-text">{{ m.text || (m.role === 'assistant' ? '…' : '') }}</p>
+          <details v-if="m.reasoning" class="ct-reasoning">
+            <summary>思考过程</summary>
+            <p>{{ m.reasoning }}</p>
+          </details>
+        </div>
+        <div v-if="thinking" class="ct-thinking" role="status" aria-live="polite">
+          <span class="ct-thinking-avatar" aria-hidden="true"><Sparkles :size="16" /></span>
+          <span class="ct-thinking-dots" aria-hidden="true"><span /><span /><span /></span>
+          <span>伴学思考中</span>
+        </div>
+        <SfxError
+          v-if="streamError"
+          variant="error"
+          title="伴学暂时不可用"
+          :description="`${streamError.message}${streamError.code ? `（${streamError.code}）` : ''}。输入框已恢复上次提问，可直接重发。`"
+          @retry="() => nextTick(() => inputRef?.focus())"
+        />
+      </div>
+
+      <!-- 输入区：底部固定 -->
+      <footer class="ct-input">
+        <textarea
+          ref="inputRef"
+          v-model="draft"
+          rows="1"
+          maxlength="10000"
+          placeholder="问伴学：这段代码哪里有问题？"
+          aria-label="向代码伴学提问"
+          :disabled="streaming || verifying"
+          @keydown="onInputKeydown"
+        />
+        <SfxButton
+          v-if="!streaming"
+          variant="primary"
+          size="sm"
+          :disabled="!draft.trim() || verifying"
+          :loading="verifying"
+          @click="send"
+        >
+          <Send :size="14" /> 发送
+        </SfxButton>
+        <SfxButton v-else variant="secondary" size="sm" @click="stopStream">
+          <Square :size="14" /> 停止
+        </SfxButton>
+      </footer>
+    </section>
+  </div>
+</template>
+
+<style scoped>
+.ct-float {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+.ct-fab {
+  pointer-events: auto;
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--radius-full);
+  background: var(--color-brand);
+  color: var(--text-inverse);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--ink-700);
+  transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+.ct-fab:hover {
+  background: var(--color-brand-hover);
+  transform: scale(1.06);
+}
+.ct-window {
+  pointer-events: auto;
+  position: absolute;
+  width: min(680px, calc(100vw - 32px));
+  height: min(600px, calc(100dvh - 32px));
+  min-width: min(360px, calc(100vw - 32px));
+  min-height: 420px;
+  background: var(--surface-panel);
+  border: var(--border-default);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ct-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--border-default);
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+  background: var(--surface-panel);
+}
+.ct-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--ink-700);
+  min-width: 0;
+}
+.ct-title h2 {
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.ct-title p {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.ct-icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.ct-icon-btn:hover {
+  background: var(--ink-100);
+  color: var(--ink-700);
+}
+.ct-binding {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle, #EDF0F3);
+  background: var(--surface-cool);
+  font-size: 13px;
+  line-height: 18px;
+}
+.ct-bind-ok {
+  color: var(--ink-700);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ct-bind-ok code {
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+}
+.ct-bind-empty {
+  color: var(--text-muted);
+}
+.ct-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.ct-welcome {
+  font-size: 16px;
+  line-height: 28px;
+  color: var(--text-primary);
+}
+.ct-welcome ul {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-4);
+  list-style: disc;
+  color: var(--text-secondary);
+}
+.ct-welcome-note {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.ct-msg {
+  max-width: 100%;
+}
+.ct-msg.is-user {
+  align-self: flex-end;
+  background: var(--ink-100);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  max-width: 85%;
+}
+.ct-msg.is-assistant {
+  align-self: flex-start;
+  max-width: 100%;
+  border-left: 3px solid var(--color-focus);
+  padding-left: var(--space-3);
+}
+.ct-msg-role {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.ct-msg-text {
+  font-size: 16px;
+  line-height: 28px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ct-tool-note {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-500);
+  margin-bottom: 4px;
+}
+.ct-reasoning {
+  margin-top: var(--space-2);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.ct-reasoning summary {
+  cursor: pointer;
+}
+.ct-thinking {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.ct-thinking-avatar {
+  display: flex;
+  color: var(--ink-500);
+  animation: ct-thinking-pulse 1.5s ease-in-out infinite;
+}
+.ct-thinking-dots span {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-500);
+  margin-right: 3px;
+  animation: ct-thinking-bounce 1.4s ease-in-out infinite;
+}
+.ct-thinking-dots span:nth-child(2) { animation-delay: 0.16s; }
+.ct-thinking-dots span:nth-child(3) { animation-delay: 0.32s; }
+.ct-input {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--border-default);
+  background: var(--surface-panel);
+}
+.ct-input textarea {
+  flex: 1;
+  min-height: 44px;
+  max-height: 132px;
+  resize: none;
+  border: var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 10px var(--space-3);
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-primary);
+  background: var(--surface-panel);
+}
+.ct-input textarea:focus {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 2px var(--ink-100);
+}
+.ct-input textarea::placeholder {
+  color: var(--text-muted);
+}
+/* 思考动画（design.md §7.4 规范的本地实现：仅智能体状态指示可用装饰性曲线） */
+@keyframes ct-thinking-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
+@keyframes ct-thinking-bounce {
+  0%, 100% { transform: translateY(0); opacity: 0.6; }
+  50% { transform: translateY(-4px); opacity: 1; }
+}
+
+</style>

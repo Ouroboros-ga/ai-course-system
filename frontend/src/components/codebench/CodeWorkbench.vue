@@ -1,6 +1,9 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { BookOpen, Terminal, ListChecks, Lightbulb, GripHorizontal, ChevronLeft, ChevronRight } from 'lucide-vue-next'
+import { BookOpen, Terminal, ListChecks, Lightbulb, GripHorizontal, ChevronLeft, ChevronRight, Sparkles } from 'lucide-vue-next'
+import SfxButton from '@/app/ui/SfxButton.vue'
+import { useCounterStore } from '@/stores/counter.js'
+import { CODE_TUTOR_BIND_EVENT } from '@/api/nexus.js'
 import CodeEditor from './CodeEditor.vue'
 import CodeOutput from './CodeOutput.vue'
 import CodeToolbar from './CodeToolbar.vue'
@@ -53,6 +56,17 @@ const emit = defineEmits([
   'submit-error',
   'update:problemCollapsed',
 ])
+
+const counter = useCounterStore()
+
+/** NX-CT1：带着本次正式提交去问代码伴学（只发引用声明，验主在服务端）。 */
+function askCodeTutor() {
+  const runId = formalRun.value?.run_id
+  if (!runId) return
+  window.dispatchEvent(new CustomEvent(CODE_TUTOR_BIND_EVENT, {
+    detail: { courseId: props.courseId, runId },
+  }))
+}
 
 // 状态
 const sourceCode = ref(props.initialCode || '')
@@ -614,6 +628,12 @@ defineExpose({
                   </ul>
                 </div>
               </div>
+              <div v-if="formalRun?.run_id && counter.canUseNexus" class="diag-ask">
+                <SfxButton variant="secondary" size="sm" @click="askCodeTutor">
+                  <Sparkles :size="14" /> 问代码伴学
+                </SfxButton>
+                <span class="diag-ask-hint">带着这次提交去问 Nexus 伴学（只读你的提交快照）</span>
+              </div>
             </div>
             <div v-else class="diagnosis-empty">
               <Lightbulb :size="32" :stroke-width="1.5" />
@@ -1069,6 +1089,20 @@ defineExpose({
 
 .diag-steps li {
   margin: 4px 0;
+}
+
+.diag-ask {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--code-border);
+}
+
+.diag-ask-hint {
+  font-size: 12px;
+  color: var(--code-muted);
 }
 
 .diagnosis-empty {

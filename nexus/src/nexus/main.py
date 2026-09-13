@@ -607,16 +607,25 @@ def _run_context_note(context: dict[str, Any] | None) -> str:
         "运行状态、退出码与日志以下列数据为准，不得凭记忆改写或虚构）]",
     ]
     status = str(context.get("status") or "unknown")
-    lines.append(
-        f"- run_id={str(context.get('run_id'))[:64]} "
-        f"名称={str(context.get('display_title') or '')[:80]} "
-        f"序号={context.get('run_number')} preset={str(context.get('preset_id') or '')[:40]} "
-        f"状态={status}"
-    )
+    # NX-CT1：OJ 提交投影没有 run_number/preset 键，缺键即省略（不渲染 None）。
+    head = (f"- run_id={str(context.get('run_id'))[:64]} "
+            f"名称={str(context.get('display_title') or '')[:80]}")
+    if context.get("run_number") is not None:
+        head += f" 序号={context.get('run_number')}"
+    if context.get("preset_id"):
+        head += f" preset={str(context.get('preset_id'))[:40]}"
+    head += f" 状态={status}"
+    lines.append(head)
     if context.get("stale"):
         lines.append(f"- 数据可能过期：{str(context.get('note') or '')[:120]}")
     if context.get("detail"):
         lines.append(f"- 结果详情：{str(context.get('detail'))[:200]}")
+    # NX-CT1：OJ 提交投影必须点名工具（附件注记同理，2026-09-06 教训）——
+    # 只给摘要时模型无从得知有快照可读，不点名就永远不会调 read_my_submission。
+    if context.get("kind") == "oj_submission":
+        lines.append(
+            "- 已绑定本人代码提交：read_my_submission 工具可读源码与判题摘要"
+            "（无参数）；隐藏测试用例无细节，只能讲思路不给答案直写")
     for step in (context.get("steps") or [])[:10]:
         if not isinstance(step, dict):
             continue
@@ -668,16 +677,22 @@ async def _agent_stream(
         reset_execution_scope,
         reset_experiment_gate,
         reset_scope,
+        reset_submission,
         set_attachments,
         set_execution_scope,
         set_experiment_gate,
         set_scope,
+        set_submission,
     )
 
     scope_tokens = set_scope(user_id, course_id)
     exec_tokens = set_execution_scope(session_id, approval_id)
     gate_tokens = set_experiment_gate(mode, execution_mode)
     attach_token = set_attachments(attachment_ids)
+    # NX-CT1：OJ 提交绑定进工具作用域（非 OJ 上下文注入 None，工具 fail-closed）。
+    _scoped = _submission_scope_from_context(run_context)
+    submission_token = set_submission(
+        _scoped[0] if _scoped else None, _scoped[1] if _scoped else None)
 
     async def _tag(payload: dict[str, Any]) -> dict[str, Any]:
         # NX-LB3：事件携带归属（session_id/request_id），前端不靠"当前显示
@@ -783,6 +798,7 @@ async def _agent_stream(
         reset_execution_scope(exec_tokens)
         reset_experiment_gate(gate_tokens)
         reset_attachments(attach_token)
+        reset_submission(submission_token)
         # 心跳生产者任务清理：正常/异常/取消路径都要收掉，避免悬挂 task。
         if not pump_task.done():
             pump_task.cancel()
@@ -967,6 +983,31 @@ def _server_run_context(request: ChatRequest) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
+def _submission_scope_from_context(
+    run_context: dict[str, Any] | None,
+) -> tuple[int, str] | None:
+    """NX-CT1：OJ 提交投影 → (course_id, run_id)，非 OJ 上下文返回 None。
+
+    只认代理层生成的 ``kind == "oj_submission"`` + ``submission_ref``；
+    形状不对一律 None（工具侧 fail-closed），不抛异常、不阻断对话。
+    """
+    if not isinstance(run_context, dict):
+        return None
+    if run_context.get("kind") != "oj_submission":
+        return None
+    ref = run_context.get("submission_ref")
+    if not isinstance(ref, dict):
+        return None
+    try:
+        course_id = int(ref.get("course_id"))
+    except (TypeError, ValueError):
+        return None
+    run_id = str(ref.get("run_id") or "").strip()[:64]
+    if course_id <= 0 or not run_id:
+        return None
+    return course_id, run_id
+
+
 def _replay_done_stream(session_id: str, request_id: str, entry: dict[str, Any]) -> StreamingResponse:
     """幂等重试且原请求已结束：回放说明性 done（不重复执行、不重放 token 流）。"""
 
@@ -1088,16 +1129,22 @@ async def chat(
         reset_execution_scope,
         reset_experiment_gate,
         reset_scope,
+        reset_submission,
         set_attachments,
         set_execution_scope,
         set_experiment_gate,
         set_scope,
+        set_submission,
     )
 
     scope_tokens = set_scope(user_id, _context_course_id(request))
     exec_tokens = set_execution_scope(session_id, _sanitize_approval_id(request))
     gate_tokens = set_experiment_gate(mode, effective)
     attach_token = set_attachments(_sanitize_attachment_ids(request))
+    # NX-CT1：同流式路径，OJ 提交绑定进工具作用域。
+    _scoped = _submission_scope_from_context(_server_run_context(request))
+    submission_token = set_submission(
+        _scoped[0] if _scoped else None, _scoped[1] if _scoped else None)
     inputs = {
         "messages": [
             {"role": "user", "content": (
@@ -1150,6 +1197,7 @@ async def chat(
         reset_execution_scope(exec_tokens)
         reset_experiment_gate(gate_tokens)
         reset_attachments(attach_token)
+        reset_submission(submission_token)
         # NX-N0/P1-C：写者获取后的全部路径统一释放——模型异常、状态读取、
         # 计划投影、线程触达任一失败都不泄漏门锁；失败记 failed 供同键重试。
         _release_thread_writer(thread_id, request_id, status=final_status, result=result)
