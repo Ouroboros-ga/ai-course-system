@@ -2035,4 +2035,7 @@ test('NX-CT1-R5 题目自动关联：引用声明+服务端投影+快照有界',
   assert.match(page, /announceToTutor\(\)/)
   assert.match(page, /CODE_TUTOR_PROBLEM_EVENT/)
   assert.match(page, /@code-change="onWorkbenchCodeChange"/)
+  // R6：提交绑定条已并入题目行（单行显示），is-sub 容器与单解绑逻辑删除。
+  assert.doesNotMatch(panel, /is-sub/)
+  assert.doesNotMatch(panel, /function unbind\(\)/)
 })
