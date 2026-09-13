@@ -33,6 +33,14 @@ const props = defineProps({
   problemCollapsed: { type: Boolean, default: false },
   // 活动作答归属：从作业页带 ?activity= 进来；空 = 自由练习（原语义不变）。
   activityId: { type: String, default: '' },
+  /**
+   * 隐藏内置的左侧题面栏。OJ 题目详情页的题面（含限制/样例/工具条）由页面自己渲染，
+   * 若此处再渲染一遍就是同一份题面出现两次。**默认 false = 现行行为**，
+   * 课程实验页（/app/lab）不受影响。
+   */
+  hideProblemPanel: { type: Boolean, default: false },
+  /** 呈现变体，透传给 CodeToolbar 与底部页签文案。默认 'course' = 现行行为。 */
+  variant: { type: String, default: 'course', validator: (v) => ['course', 'oj'].includes(v) },
 })
 
 const emit = defineEmits([
@@ -344,18 +352,29 @@ function stopResize() {
 }
 
 // Tab 定义
-const tabs = [
-  { key: 'input', label: '自定义输入', icon: Terminal },
-  { key: 'output', label: '输出结果', icon: Terminal },
-  { key: 'testcases', label: '测试详情', icon: ListChecks },
-  { key: 'diagnosis', label: '诊断讲解', icon: Lightbulb },
-]
+const tabs = computed(() => (
+  props.variant === 'oj'
+    ? [
+        { key: 'input', label: '输入', icon: Terminal },
+        { key: 'output', label: '输出', icon: Terminal },
+        { key: 'testcases', label: '测试详情', icon: ListChecks },
+        { key: 'diagnosis', label: '诊断讲解', icon: Lightbulb },
+      ]
+    : [
+        { key: 'input', label: '自定义输入', icon: Terminal },
+        { key: 'output', label: '输出结果', icon: Terminal },
+        { key: 'testcases', label: '测试详情', icon: ListChecks },
+        { key: 'diagnosis', label: '诊断讲解', icon: Lightbulb },
+      ]
+))
+
+const inputPaneTitle = computed(() => (props.variant === 'oj' ? '输入' : '自定义输入'))
 
 const visibleTabs = computed(() => {
   if (props.mode === 'free') {
-    return tabs.filter(t => ['input', 'output'].includes(t.key))
+    return tabs.value.filter(t => ['input', 'output'].includes(t.key))
   }
-  return tabs
+  return tabs.value
 })
 
 // 监听实验变化
@@ -402,13 +421,28 @@ defineExpose({
   submit: handleSubmit,
   getCode: () => sourceCode.value,
   setCode: (code) => { sourceCode.value = code },
+  /**
+   * 写入自测标准输入（OJ 题面样例区的「运行」按钮用）。
+   * 只改输入、不自动触发运行 —— 用户可能想先改两行再跑。
+   */
+  setStdin: (text) => { stdin.value = String(text ?? '') },
+  getStdin: () => stdin.value,
+  /** 把底部面板切到指定页签（样例「运行」需要把输出面板亮出来）。 */
+  setActiveTab: (tab) => { activeTab.value = tab },
 })
 </script>
 
 <template>
-  <div class="code-workbench" :class="{ 'is-problem-collapsed': problemCollapsed }">
-    <!-- 左侧：题目描述（可收缩，参考 SfxLocalRail 设计） -->
-    <aside class="wb-problem" :class="{ 'is-collapsed': problemCollapsed }">
+  <div
+    class="code-workbench"
+    :class="{
+      'is-problem-collapsed': problemCollapsed && !hideProblemPanel,
+      'is-single-column': hideProblemPanel,
+    }"
+  >
+    <!-- 左侧：题目描述（可收缩，参考 SfxLocalRail 设计）。
+         OJ 详情页题面由页面自己渲染 → 传 hideProblemPanel 时整栏不挂载。 -->
+    <aside v-if="!hideProblemPanel" class="wb-problem" :class="{ 'is-collapsed': problemCollapsed }">
       <!-- 收缩态：垂直标题条 -->
       <div v-if="problemCollapsed" class="problem-collapsed-bar">
         <div class="collapsed-icon">
@@ -460,6 +494,9 @@ defineExpose({
         :can-submit="canSubmit && mode !== 'free'"
         :show-reset="true"
         :show-copy="true"
+        :variant="variant"
+        :run-label="variant === 'oj' ? '自测' : '运行'"
+        :submit-label="variant === 'oj' ? '提交' : '提交评测'"
         @update:selected-language="handleLanguageChange"
         @run="handleFreeRun"
         @submit="handleSubmit"
@@ -513,7 +550,7 @@ defineExpose({
           <!-- 自定义输入 -->
           <div v-show="activeTab === 'input'" class="tab-pane">
             <div class="pane-header">
-              <span class="pane-title">自定义输入</span>
+              <span class="pane-title">{{ inputPaneTitle }}</span>
             </div>
             <textarea
               v-model="stdin"
@@ -605,6 +642,18 @@ defineExpose({
 
 .code-workbench.is-problem-collapsed {
   grid-template-columns: 56px minmax(0, 1fr);
+}
+
+/* 单列（OJ 详情页）：题面由页面自己渲染，工作台不占左栏。
+   必须同时覆盖 is-problem-collapsed —— 用户上次在实验页收起了题面时
+   localStorage 会留下 problemCollapsed=true，否则会渲染出 56px 的空栏。 */
+.code-workbench.is-single-column,
+.code-workbench.is-single-column.is-problem-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.code-workbench.is-single-column .wb-editor-area {
+  grid-column: 1;
 }
 
 /* 左侧题目描述面板（可收缩，参考 SfxLocalRail 设计模式） */

@@ -1,11 +1,17 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Play, Send, ChevronDown, RotateCcw, Copy, Check } from 'lucide-vue-next'
+import { Code2, Play, Send, ChevronDown, RotateCcw, Copy, Check } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 
 const props = defineProps({
   languages: { type: Array, default: () => [] },
   selectedLanguage: { type: String, default: '' },
+  /**
+   * 呈现变体。默认 'course' = 原样（课程实验页在用）。
+   * 'oj' = OJ 题目详情页的呈现：左侧多一个「代码」页签与「自测」入口，
+   * 语言下拉右侧加一个只读的编译级别状态位。**默认值保证既有页面零变化。**
+   */
+  variant: { type: String, default: 'course', validator: (v) => ['course', 'oj'].includes(v) },
   runState: {
     type: String,
     default: 'idle',
@@ -20,6 +26,9 @@ const props = defineProps({
   canSubmit: { type: Boolean, default: true },
   showReset: { type: Boolean, default: false },
   showCopy: { type: Boolean, default: false },
+  /** OJ 变体下的运行/提交文案（截图为「自测」/「提交」）。 */
+  runLabel: { type: String, default: '运行' },
+  submitLabel: { type: String, default: '提交评测' },
 })
 
 const emit = defineEmits([
@@ -95,8 +104,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="code-toolbar" ref="toolbarRef">
+  <div class="code-toolbar" :class="{ 'is-oj': variant === 'oj' }" ref="toolbarRef">
     <div class="toolbar-left">
+      <!-- OJ 变体：静态「代码」页签（本系统只有一个代码视图，不做假页签切换） -->
+      <span v-if="variant === 'oj'" class="oj-code-tab">
+        <Code2 :size="14" />
+        <span>代码</span>
+      </span>
+
       <!-- 语言选择器 -->
       <div class="lang-selector" :class="{ 'is-open': langDropdownOpen }">
         <button
@@ -122,6 +137,15 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
+
+      <!-- OJ 变体：编译优化级别状态位。
+           ⚠️ 故意做成静态文本而不是下拉 —— 本系统判题环境没有"优化级别"这个可调维度，
+           造一个点了没反应的控件比不显示更糟。 -->
+      <span
+        v-if="variant === 'oj'"
+        class="oj-opt-chip"
+        title="判题环境使用固定的编译参数，优化级别不可调"
+      >O2</span>
     </div>
 
     <div class="toolbar-right">
@@ -153,9 +177,9 @@ onBeforeUnmount(() => {
         重置
       </SfxButton>
 
-      <!-- 运行按钮（自由测试） -->
+      <!-- 运行按钮（自由测试）；OJ 变体下文案为「自测」 -->
       <SfxButton
-        variant="secondary"
+        :variant="variant === 'oj' ? 'primary' : 'secondary'"
         size="sm"
         @click="handleRun"
         :disabled="!canRun || isSubmitting"
@@ -164,7 +188,7 @@ onBeforeUnmount(() => {
         <template #icon>
           <Play :size="14" :fill="'currentColor'" />
         </template>
-        运行
+        {{ runLabel }}
       </SfxButton>
 
       <!-- 提交按钮（正式评测） -->
@@ -178,7 +202,7 @@ onBeforeUnmount(() => {
         <template #icon>
           <Send :size="14" />
         </template>
-        提交评测
+        {{ submitLabel }}
       </SfxButton>
     </div>
   </div>
@@ -200,6 +224,34 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* ── OJ 变体（题目详情页）：只在这一支里出现截图里的「代码」页签与 O2 状态位 ── */
+.oj-code-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--code-text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.oj-opt-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px dashed var(--code-border);
+  border-radius: 6px;
+  color: var(--code-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: help;
+  user-select: none;
+  white-space: nowrap;
 }
 
 /* 语言选择器 */

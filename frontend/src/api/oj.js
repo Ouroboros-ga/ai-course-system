@@ -12,6 +12,14 @@ const courseBase = (courseId) => `/experiments/course/${courseId}`
 
 // ── 学生题库 façade（PR-10） ──
 
+/**
+ * 学生题库列表。
+ * params 整体透传给后端，因此 B1 提出的扩展参数**无需改前端**即可生效：
+ *   search / difficulty / tags / status / page / page_size（现行）
+ *   search_in / difficulty_min / difficulty_max / tag_mode / source / year /
+ *   sort_by / sort_order（接口规范 B1，后端未实现前传了也只是被忽略）
+ * 见 docs/phase1/2026-09-13_OJ题目列表与详情页界面复刻_接口规范与前端改动.md
+ */
 export const listOJProblems = (courseId, params = {}) =>
   request.get(`${courseBase(courseId)}/problems`, { params })
 

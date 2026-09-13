@@ -1,18 +1,26 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { RefreshCw } from 'lucide-vue-next'
 import { listExperimentCourses } from '@/api/labs.js'
 import { listOJProblems } from '@/api/oj.js'
-import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
-import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+import OjFilterPanel from './components/OjFilterPanel.vue'
+import OjProblemTable from './components/OjProblemTable.vue'
+import { buildProblemNoIndex, formatPassRate, sortProblems } from './ojTheme.js'
 
 /**
- * OJ 题库列表（PR-10，设计稿①）。
- * 只列已发布题；筛选：搜索 / 难度 / 我的状态 / 标签；显示全班通过率与我的状态。
- * 我的「已通过」口径 = 存在 passed 的正式尝试（与正式学习证据同口径）。
+ * OJ 题库列表（复刻参考截图的列表页）。
+ *
+ * 数据流：
+ *  ① catalog —— **不打任何筛选**拉一次全量课程目录，只用于①题号派生②顶部摘要。
+ *     ⚠️ 题号必须由它派生：用筛选后的结果编号，一筛选整列题号就会平移
+ *     （ojTheme.test.js 有专门的反向验证用例钉住这点）。
+ *  ② problems —— 带筛选 + 分页的服务端结果，是表格的唯一数据源。
+ *
+ * 学生身份下只列已发布题（PUBLISHED + course_catalog），由后端 façade 保证。
  */
 const router = useRouter()
 
@@ -23,43 +31,91 @@ const error = ref('')
 const problems = ref([])
 const total = ref(0)
 const page = ref(1)
-
-const search = ref('')
-const difficulty = ref('')
-const status = ref('')
-const selectedTags = ref([])
 const pageSize = ref(20)
-const stats = ref({ total: 0, solved: 0, attempted: 0, not_attempted: 0, avg_pass_rate: null })
 
-const difficulties = ['easy', 'medium', 'hard']
-const sortBy = ref('default')
+/** 全量课程目录（未筛选）—— 题号与摘要的唯一来源。 */
+const catalog = ref([])
+const catalogTotal = ref(0)
+const CATALOG_PAGE_SIZE = 100
 
-const sortedProblems = computed(() => {
-  const items = [...problems.value]
-  if (sortBy.value === 'pass_rate_desc') {
-    items.sort((a, b) => (b.pass_rate ?? -1) - (a.pass_rate ?? -1))
-  } else if (sortBy.value === 'pass_rate_asc') {
-    items.sort((a, b) => (a.pass_rate ?? 1) - (b.pass_rate ?? 1))
-  }
-  return items
+const filters = ref({
+  difficulty: '',
+  status: '',
+  search: '',
+  searchInStatement: false,
+  selectedTags: [],
 })
-const statusOptions = [
-  { value: 'not_attempted', label: '未尝试' },
-  { value: 'attempted', label: '尝试过' },
-  { value: 'solved', label: '已通过' },
-]
+const sortBy = ref('default')
+const sortOrder = ref('asc')
+const selected = ref([])
+// 默认开启多选（参考截图里每行可见勾选框）；关掉时清空选中，避免留下不可见的"幽灵选择"
+const multiSelect = ref(true)
 
-const allTags = computed(() => {
+/** 题号索引：catalog → { experiment_id: '#015' }。 */
+const problemNoIndex = computed(() => buildProblemNoIndex(catalog.value))
+const problemNoOf = (problem) => problemNoIndex.value.get(String(problem?.experiment_id)) || '—'
+
+/** 后端是否支持按题面正文检索（接口规范 B1 的 search_in）。 */
+const statementSearchSupported = false
+
+const banks = computed(() => courses.value.map((course) => ({
+  key: String(course.course_id),
+  label: course.title || `课程 ${course.course_id}`,
+})))
+
+const tagOptions = computed(() => {
   const seen = new Set()
-  for (const item of problems.value) {
+  for (const item of catalog.value) {
     for (const tag of item.tags || []) seen.add(tag)
   }
   return [...seen].sort((a, b) => a.localeCompare(b, 'zh'))
 })
 
-async function loadCourses() {
-  courses.value = await listExperimentCourses()
-  courseId.value = courses.value[0] ? String(courses.value[0].course_id) : ''
+const summary = computed(() => {
+  const items = catalog.value
+  const solved = items.filter((item) => item.my_status === 'solved').length
+  const attempted = items.filter((item) => item.my_status === 'attempted').length
+  const rates = items.filter((item) => item.pass_rate !== null && item.pass_rate !== undefined).map((item) => item.pass_rate)
+  const avg = rates.length ? rates.reduce((sum, rate) => sum + rate, 0) / rates.length : null
+  return {
+    total: catalogTotal.value || items.length,
+    solved,
+    attempted,
+    avg: formatPassRate(avg),
+  }
+})
+
+const sortedProblems = computed(() => sortProblems(problems.value, {
+  sortBy: sortBy.value,
+  sortOrder: sortOrder.value,
+  problemNoOf: (problem) => problemNoOf(problem),
+}))
+
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+
+/** 页码窗口：始终最多 7 个，避免几百页时把分页条撑爆。 */
+const pageNumbers = computed(() => {
+  const last = totalPages.value
+  const current = page.value
+  if (last <= 7) return Array.from({ length: last }, (_, i) => i + 1)
+  const start = Math.max(1, Math.min(current - 3, last - 6))
+  return Array.from({ length: 7 }, (_, i) => start + i)
+})
+
+function buildParams(extra = {}) {
+  const params = { page: page.value, page_size: pageSize.value, ...extra }
+  const search = filters.value.search.trim()
+  if (search) params.search = search
+  if (filters.value.difficulty) params.difficulty = filters.value.difficulty
+  if (filters.value.status) params.status = filters.value.status
+  if (filters.value.selectedTags.length) params.tags = filters.value.selectedTags.join(',')
+  return params
+}
+
+async function loadCatalog() {
+  const data = await listOJProblems(courseId.value, { page: 1, page_size: CATALOG_PAGE_SIZE })
+  catalog.value = Array.isArray(data?.items) ? data.items : []
+  catalogTotal.value = Number(data?.total || catalog.value.length)
 }
 
 async function load() {
@@ -70,33 +126,14 @@ async function load() {
   state.value = 'loading'
   error.value = ''
   try {
-    const params = { page: page.value, page_size: pageSize.value }
-    if (search.value.trim()) params.search = search.value.trim()
-    if (difficulty.value) params.difficulty = difficulty.value
-    if (status.value) params.status = status.value
-    if (selectedTags.value.length) params.tags = selectedTags.value.join(',')
-
-    // 统计卡口径 = 全量题（一次拉 100 条足够课程目录规模），与列表分页解耦
-    const [data, all] = await Promise.all([
-      listOJProblems(courseId.value, params),
-      listOJProblems(courseId.value, { page: 1, page_size: 100 }),
+    const [data] = await Promise.all([
+      listOJProblems(courseId.value, buildParams()),
+      loadCatalog(),
     ])
-    const allItems = Array.isArray(all?.items) ? all.items : []
     problems.value = Array.isArray(data?.items) ? data.items : []
     total.value = Number(data?.total || 0)
-
-    const solved = allItems.filter((i) => i.my_status === 'solved').length
-    const attempted = allItems.filter((i) => i.my_status === 'attempted').length
-    const rates = allItems.filter((i) => i.pass_rate !== null).map((i) => i.pass_rate)
-    stats.value = {
-      total: Number(all?.total || allItems.length),
-      solved,
-      attempted,
-      not_attempted: Math.max(0, statsTotal(allItems.length) - solved - attempted),
-      avg_pass_rate: rates.length
-        ? rates.reduce((sum, r) => sum + r, 0) / rates.length
-        : null,
-    }
+    // 换页/换课后旧的勾选会指向上页的题 —— 直接清掉比留下"幽灵选中"更诚实
+    selected.value = []
     state.value = 'ready'
   } catch (caught) {
     error.value = caught?.message || '题库加载失败'
@@ -104,68 +141,50 @@ async function load() {
   }
 }
 
-function toggleTag(tag) {
-  const idx = selectedTags.value.indexOf(tag)
-  if (idx >= 0) selectedTags.value.splice(idx, 1)
-  else selectedTags.value.push(tag)
+function resetPageAndLoad() {
   page.value = 1
   load()
 }
 
-function resetFilters() {
-  search.value = ''
-  difficulty.value = ''
-  status.value = ''
-  selectedTags.value = []
-  page.value = 1
-  load()
-}
-
-function statsTotal(count) {
-  return count
-}
-
-function totalPages() {
-  return Math.max(1, Math.ceil(total.value / pageSize))
+function clearAll() {
+  filters.value = { difficulty: '', status: '', search: '', searchInStatement: false, selectedTags: [] }
+  sortBy.value = 'no'
+  sortOrder.value = 'asc'
+  resetPageAndLoad()
 }
 
 function gotoPage(next) {
-  if (next < 1 || next > totalPages() || next === page.value) return
+  if (next < 1 || next > totalPages.value || next === page.value) return
   page.value = next
   load()
 }
 
-function difficultyLabel(value) {
-  return { easy: '简单', medium: '中等', hard: '困难' }[value] || value || '—'
-}
-
-function difficultyTone(value) {
-  return { easy: 'green', medium: 'amber', hard: 'red' }[value] || 'ink'
-}
-
-function statusLabel(value) {
-  return { solved: '已通过', attempted: '尝试过', not_attempted: '未尝试' }[value] || value
-}
-
-function statusTone(value) {
-  return { solved: 'green', attempted: 'amber', not_attempted: 'ink' }[value] || 'ink'
-}
-
-function formatRate(rate) {
-  return rate === null || rate === undefined ? '—' : `${Math.round(rate * 1000) / 10}%`
-}
-
-function openProblem(item) {
-  // 带上当前选中课程：详情页必须用同一课程查题，否则多课学生会 404
+function openProblem(problem) {
+  // 带上当前选中课程：详情页用同一课程查题，否则多课学生会 404
   router.push({
-    path: `/app/oj/problems/${item.experiment_id}`,
+    path: `/app/oj/problems/${problem.experiment_id}`,
     query: { course: courseId.value },
   })
 }
 
+watch(courseId, () => {
+  page.value = 1
+  load()
+})
+
+watch([pageSize], () => {
+  page.value = 1
+  load()
+})
+
 onMounted(async () => {
   try {
-    await loadCourses()
+    courses.value = await listExperimentCourses()
+    courseId.value = courses.value[0] ? String(courses.value[0].course_id) : ''
+    if (!courseId.value) {
+      state.value = 'empty'
+      return
+    }
     await load()
   } catch (caught) {
     error.value = caught?.message || '课程加载失败'
@@ -175,193 +194,145 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="sfx-page">
+  <div class="sfx-page oj-bank">
     <header class="sfx-page-header">
       <div>
-        <h1 class="sfx-t-title1">题库列表</h1>
+        <h1 class="sfx-t-title1">题目列表</h1>
         <p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">
-          课程已发布的编程题目。作答、提交与评测解读都在题目详情页完成。
+          课程已发布的编程题目。点开题目即进入作答页，运行与评测都在那里完成。
         </p>
       </div>
-      <SfxButton variant="secondary" size="sm" @click="load">刷新</SfxButton>
+      <div class="sfx-page-actions oj-head-actions">
+        <span v-if="state === 'ready'" class="oj-head-summary">
+          已通过 <strong>{{ summary.solved }}</strong>
+          · 尝试过 <strong>{{ summary.attempted }}</strong>
+          · 平均通过率 <strong>{{ summary.avg || '—' }}</strong>
+        </span>
+        <SfxButton variant="secondary" size="sm" :loading="state === 'loading'" @click="load">
+          <template #icon><RefreshCw :size="14" /></template>
+          刷新
+        </SfxButton>
+      </div>
     </header>
 
-    <label v-if="courses.length" class="oj-course-select sfx-t-ui">
-      <span class="oj-course-label">课程</span>
-      <select v-model="courseId" class="sfx-select" @change="page = 1; load()">
-        <option v-for="course in courses" :key="course.course_id" :value="String(course.course_id)">
-          {{ course.title }}
-        </option>
-      </select>
-    </label>
-
-    <section v-if="state === 'ready'" class="oj-stats">
-      <div class="sfx-panel oj-stat">
-        <span class="sfx-t-caption sfx-t-secondary">题目总数</span>
-        <strong class="oj-stat-num">{{ stats.total }}</strong>
-      </div>
-      <div class="sfx-panel oj-stat">
-        <span class="sfx-t-caption sfx-t-secondary">已通过</span>
-        <strong class="oj-stat-num">{{ stats.solved }}</strong>
-      </div>
-      <div class="sfx-panel oj-stat">
-        <span class="sfx-t-caption sfx-t-secondary">尝试过</span>
-        <strong class="oj-stat-num">{{ stats.attempted }}</strong>
-      </div>
-      <div class="sfx-panel oj-stat">
-        <span class="sfx-t-caption sfx-t-secondary">平均通过率</span>
-        <strong class="oj-stat-num">{{ formatRate(stats.avg_pass_rate) }}</strong>
-      </div>
-    </section>
-
-    <section class="sfx-panel oj-filters">
-      <div class="oj-filters-row">
-        <input
-          v-model="search"
-          class="sfx-input oj-search"
-          type="search"
-          placeholder="搜索题目名称…"
-          @keyup.enter="page = 1; load()"
-        />
-        <select v-model="difficulty" class="sfx-select" @change="page = 1; load()">
-          <option value="">全部难度</option>
-          <option v-for="d in difficulties" :key="d" :value="d">{{ difficultyLabel(d) }}</option>
-        </select>
-        <select v-model="status" class="sfx-select" @change="page = 1; load()">
-          <option value="">全部状态</option>
-          <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
-        <select v-model="sortBy" class="sfx-select" @change="load()">
-          <option value="default">默认排序</option>
-          <option value="pass_rate_desc">通过率从高到低</option>
-          <option value="pass_rate_asc">通过率从低到高</option>
-        </select>
-        <SfxButton variant="secondary" size="sm" @click="resetFilters">重置</SfxButton>
-        <SfxButton variant="primary" size="sm" @click="page = 1; load()">筛选</SfxButton>
-        <select v-model.number="pageSize" class="sfx-select" @change="page = 1; load()">
-          <option :value="10">10 条/页</option>
-          <option :value="20">20 条/页</option>
-          <option :value="50">50 条/页</option>
-        </select>
-      </div>
-      <div v-if="allTags.length" class="oj-tag-row">
-        <span
-          v-for="tag in allTags"
-          :key="tag"
-          role="button"
-          tabindex="0"
-          class="oj-tag"
-          :class="{ 'is-active': selectedTags.includes(tag) }"
-          @click="toggleTag(tag)"
-          @keyup.enter="toggleTag(tag)"
-        >{{ tag }}</span>
-      </div>
-    </section>
-
-    <SfxSkeleton v-if="state === 'loading'" :lines="6" block />
-    <SfxError v-else-if="state === 'error'" :description="error" @retry="load" />
-    <SfxEmpty
-      v-else-if="state === 'empty' || !problems.length"
-      title="没有符合条件的题目"
-      description="调整筛选条件，或等教师发布新题目。"
+    <OjFilterPanel
+      v-model:active-bank="courseId"
+      v-model:difficulty="filters.difficulty"
+      v-model:status="filters.status"
+      v-model:search="filters.search"
+      v-model:search-in-statement="filters.searchInStatement"
+      v-model:selected-tags="filters.selectedTags"
+      :banks="banks"
+      :tag-options="tagOptions"
+      :total="total"
+      :loading="state === 'loading'"
+      :statement-search-supported="statementSearchSupported"
+      @search="resetPageAndLoad"
+      @clear-all="clearAll"
     />
-    <section v-else class="sfx-panel oj-table-panel">
-      <table class="oj-table">
-        <thead>
-          <tr>
-            <th class="oj-col-title">题目</th>
-            <th>难度</th>
-            <th>标签</th>
-            <th>通过率</th>
-            <th>我的状态</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="item in sortedProblems"
-            :key="item.experiment_id"
-            class="oj-row"
+
+    <SfxSkeleton v-if="state === 'loading' && !problems.length" :lines="6" block />
+    <SfxError v-else-if="state === 'error'" :description="error" @retry="load" />
+    <template v-else>
+      <OjProblemTable
+        v-model:sort-by="sortBy"
+        v-model:sort-order="sortOrder"
+        v-model:selected="selected"
+        v-model:multi-select="multiSelect"
+        :problems="sortedProblems"
+        :problem-no-of="problemNoOf"
+        :loading="state === 'loading'"
+        @open="openProblem"
+      />
+
+      <div v-if="totalPages > 1" class="oj-pager">
+        <span class="oj-pager-info">共 {{ total }} 题 · 第 {{ page }} / {{ totalPages }} 页</span>
+        <div class="oj-pager-pages">
+          <span
             role="button"
             tabindex="0"
-            @click="openProblem(item)"
-            @keyup.enter="openProblem(item)"
-          >
-            <td class="oj-col-title">
-              <span class="oj-problem-title">{{ item.title }}</span>
-            </td>
-            <td>
-              <SfxBadge :tone="difficultyTone(item.difficulty)">
-                {{ difficultyLabel(item.difficulty) }}
-              </SfxBadge>
-            </td>
-            <td class="oj-col-tags">
-              <span v-for="tag in (item.tags || []).slice(0, 3)" :key="tag" class="oj-tag oj-tag-static">{{ tag }}</span>
-              <span v-if="(item.tags || []).length > 3" class="sfx-t-caption sfx-t-secondary">
-                +{{ item.tags.length - 3 }}
-              </span>
-            </td>
-            <td class="sfx-t-ui">{{ formatRate(item.pass_rate) }}</td>
-            <td>
-              <SfxBadge :tone="statusTone(item.my_status)">{{ statusLabel(item.my_status) }}</SfxBadge>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      <div v-if="totalPages() > 1" class="oj-pager sfx-t-ui">
-        <span>共 {{ total }} 题</span>
-        <span
-          v-for="p in totalPages()"
-          :key="p"
-          role="button"
-          tabindex="0"
-          class="oj-page-num"
-          :class="{ 'is-active': p === page }"
-          @click="gotoPage(p)"
-          @keyup.enter="gotoPage(p)"
-        >{{ p }}</span>
+            class="oj-page-btn"
+            :class="{ 'is-disabled': page <= 1 }"
+            aria-label="上一页"
+            @click="gotoPage(page - 1)"
+            @keyup.enter="gotoPage(page - 1)"
+          >上一页</span>
+          <span
+            v-for="p in pageNumbers"
+            :key="p"
+            role="button"
+            tabindex="0"
+            class="oj-page-num"
+            :class="{ 'is-active': p === page }"
+            :aria-current="p === page ? 'page' : undefined"
+            @click="gotoPage(p)"
+            @keyup.enter="gotoPage(p)"
+          >{{ p }}</span>
+          <span
+            role="button"
+            tabindex="0"
+            class="oj-page-btn"
+            :class="{ 'is-disabled': page >= totalPages }"
+            aria-label="下一页"
+            @click="gotoPage(page + 1)"
+            @keyup.enter="gotoPage(page + 1)"
+          >下一页</span>
+        </div>
       </div>
-    </section>
+
+      <p v-if="catalogTotal > catalog.length" class="oj-pager-note">
+        题号按课程目录顺序派生，当前仅覆盖前 {{ catalog.length }} 题；剩余题目题号显示为「—」。
+      </p>
+    </template>
   </div>
 </template>
 
 <style scoped>
-.oj-course-select { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
-.oj-course-label { flex: 0 0 auto; white-space: nowrap; }
-/* label 文本在 flex 里被压成一字一行（2026-09-12 云端截图发现）——nowrap 修 */
-.oj-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-5); }
-.oj-stat { display: flex; flex-direction: column; gap: var(--space-1); }
-.oj-stat-num { font-size: 22px; color: var(--ink-900); }
-.oj-filters { display: flex; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-5); }
-.oj-filters-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-.oj-search { flex: 1; min-width: 200px; }
-.oj-tag-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.oj-tag {
-  padding: 2px var(--space-3);
+.oj-head-actions { flex-wrap: wrap; justify-content: flex-end; }
+.oj-head-summary { font-size: var(--ui-sm-size); color: var(--text-secondary); white-space: nowrap; }
+.oj-head-summary strong { color: var(--text-primary); }
+
+.oj-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+.oj-pager-info { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--ui-sm-size); color: var(--text-secondary); }
+/* 基础 .sfx-select 是 width:100%（base.css）—— 行内必须显式约束宽度 */
+.oj-pager-size { width: auto; flex: 0 0 auto; min-height: 32px; font-size: var(--ui-sm-size); }
+.oj-pager-pages { display: flex; align-items: center; gap: var(--space-1); }
+.oj-page-btn,
+.oj-page-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 var(--space-2);
   border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
   font-size: var(--ui-sm-size);
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
 }
-.oj-tag:hover { color: var(--ink-900); border-color: var(--ink-700); }
-.oj-tag.is-active { background: var(--ink-900); border-color: var(--ink-900); color: var(--surface-panel); }
-.oj-tag-static { cursor: default; }
-.oj-tag-static:hover, .oj-tag-static:active { color: var(--text-secondary); border-color: var(--border-default); }
-.oj-table-panel { padding: 0; overflow-x: auto; }
-.oj-table { width: 100%; border-collapse: collapse; font-size: var(--ui-md-size); }
-.oj-table th, .oj-table td { text-align: left; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border-default); white-space: nowrap; }
-.oj-table th { color: var(--text-secondary); font-weight: var(--ui-md-weight); font-size: var(--ui-sm-size); }
-.oj-row { cursor: pointer; }
-.oj-row:hover { background: var(--surface-subtle, rgba(0, 0, 0, 0.02)); }
-.oj-col-title { min-width: 220px; }
-.oj-problem-title { color: var(--ink-900); }
-.oj-col-tags { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
-.oj-pager { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); color: var(--text-secondary); }
-.oj-page-num { padding: 2px var(--space-2); cursor: pointer; border: 1px solid transparent; }
-.oj-page-num.is-active { border-color: var(--ink-900); color: var(--ink-900); }
+.oj-page-btn:hover,
+.oj-page-num:hover { border-color: var(--border-strong); color: var(--ink-900); }
+.oj-page-num.is-active {
+  background: var(--ink-900);
+  border-color: var(--ink-900);
+  color: var(--text-inverse);
+}
+.oj-page-btn.is-disabled { color: var(--text-disabled); cursor: not-allowed; border-color: var(--border-subtle); }
 
-/* 基础样式 .sfx-input/.sfx-select 是 width:100%（base.css）——横向行里必须
-   显式约束宽度，否则每个控件各占一行（2026-09-11 截图复核发现）。 */
-.oj-filters-row .sfx-input, .oj-filters-row .sfx-select { width: auto; flex: 0 0 auto; min-width: 150px; }
+.oj-pager-note { margin: var(--space-3) 0 0; font-size: var(--ui-sm-size); color: var(--text-muted); }
+
+@media (max-width: 760px) {
+  .oj-head-actions { justify-content: flex-start; }
+  .oj-pager { flex-direction: column; align-items: flex-start; }
+}
 </style>
