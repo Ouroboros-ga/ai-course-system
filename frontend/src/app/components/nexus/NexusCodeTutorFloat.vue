@@ -9,7 +9,7 @@
  */
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Send, Sparkles, Square, Unlink, Wrench, X } from 'lucide-vue-next'
+import { Send, Sparkles, Square, Wrench, X } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import { showToast } from '@/utils/toast.js'
@@ -273,12 +273,6 @@ async function bindSubmission({ courseId, runId }) {
   }
 }
 
-function unbind() {
-  binding.value = null
-  diagnosisShownFor.value = null
-  persistBinding()
-}
-
 function onBindEvent(event) {
   bindSubmission(event.detail || {})
 }
@@ -527,34 +521,23 @@ function onResize() {
         </button>
       </header>
 
-      <!-- 关联条：题目（服务端投影题干） + 提交（服务端验主） -->
+      <!-- 关联条：题目（服务端投影题干） + 提交（服务端验主），单行 -->
       <div class="ct-binding">
         <template v-if="problem">
           <span class="ct-bind-ok" role="status">
             <span aria-hidden="true">◇</span>
             已关联《{{ problem.title || problem.experimentId.slice(0, 16) }}》
             <template v-if="codeSnapshot"> · 含编辑器快照</template>
+            <template v-if="binding">
+              · 提交 <code>{{ binding.runId.slice(0, 16) }}</code>
+              {{ outcomeText(binding.outcome) }}
+              <template v-if="binding.passed !== null"> {{ binding.passed }}/{{ binding.total }}</template>
+            </template>
           </span>
           <SfxButton variant="tertiary" size="sm" @click="unbindProblem">取消关联</SfxButton>
         </template>
         <span v-else class="ct-bind-empty">
           未关联题目——从 OJ 题目页进入会自动关联题干与编辑器代码。
-        </span>
-      </div>
-      <div v-if="problem" class="ct-binding is-sub">
-        <template v-if="binding">
-          <span class="ct-bind-ok" role="status">
-            <span aria-hidden="true">◇</span>
-            已绑定提交 <code>{{ binding.runId.slice(0, 16) }}</code>
-            · {{ outcomeText(binding.outcome) }}
-            <template v-if="binding.passed !== null"> · {{ binding.passed }}/{{ binding.total }}</template>
-          </span>
-          <SfxButton variant="tertiary" size="sm" @click="unbind">
-            <Unlink :size="14" /> 解绑
-          </SfxButton>
-        </template>
-        <span v-else class="ct-bind-empty">
-          未绑定提交——提交一次代码后点「问代码伴学」，伴学可见判题与报错。
         </span>
       </div>
 
@@ -748,11 +731,6 @@ function onResize() {
 }
 .ct-bind-empty {
   color: var(--text-muted);
-}
-/* 提交绑定条：题目条之下，缩进半级以示从属 */
-.ct-binding.is-sub {
-  background: var(--surface-panel);
-  padding-top: var(--space-1);
 }
 .ct-messages {
   flex: 1;
