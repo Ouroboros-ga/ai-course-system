@@ -632,7 +632,7 @@ defineExpose({
                   </ul>
                 </div>
               </div>
-              <div v-if="formalRun?.run_id && counter.canUseNexus" class="diag-ask">
+              <div v-if="formalRun?.run_id && counter.canUseNexus && props.variant === 'oj'" class="diag-ask">
                 <SfxButton variant="secondary" size="sm" @click="askCodeTutor">
                   <Sparkles :size="14" /> 问代码伴学
                 </SfxButton>

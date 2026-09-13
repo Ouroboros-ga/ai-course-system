@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import L2TabsLayout from '@/app/shell/L2TabsLayout.vue'
+import NexusCodeTutorFloat from '@/app/components/nexus/NexusCodeTutorFloat.vue'
 import { listFacadeCourseItems } from '@/api/facade.js'
 import { useCounterStore } from '@/stores/counter.js'
 
@@ -11,6 +12,7 @@ import { useCounterStore } from '@/stores/counter.js'
  * 纯前端入口显隐，服务端仍按 experiment.configure 强制。
  */
 const isTeacher = ref(false)
+const counter = useCounterStore()
 
 const studentTabs = [
   { key: 'assignments', label: '活动作业', to: '/app/oj/assignments' },
@@ -43,11 +45,12 @@ onMounted(async () => {
   } catch {
     hasBuildingCourse = false
   }
-  const counter = useCounterStore()
   isTeacher.value = hasBuildingCourse || counter.canManageUsers
 })
 </script>
 
 <template>
   <L2TabsLayout :tabs="tabs()" aria-label="OJ 题库导航" />
+  <!-- NX-CT1 代码伴学浮窗：只在 OJ 题库空间挂载（fixed 层，不进页面滚动容器） -->
+  <NexusCodeTutorFloat v-if="counter.canUseNexus" />
 </template>

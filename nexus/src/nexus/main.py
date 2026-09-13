@@ -391,6 +391,23 @@ def _title_from_message(message: str) -> str:
     return flattened[:60]
 
 
+#: NX-CT1 代码伴学预留会话（与前端 CODE_TUTOR_SESSION_ID 同值；两进程不共享
+#: 常量故此处硬编码，改动时两边同步）。
+_CODE_TUTOR_SESSION_ID = "code-tutor"
+#: 伴学会话在侧边栏的识别前缀（标题只在线程首次插入时落库，后续不覆盖）。
+_CODE_TUTOR_TITLE_PREFIX = "代码伴学 · "
+
+
+def _thread_title(session_id: str, message: str) -> str:
+    """线程标题：代码伴学会话加识别前缀，其余走默认规则。"""
+    title = _title_from_message(message)
+    if sanitize_session_id(session_id) != _CODE_TUTOR_SESSION_ID:
+        return title
+    if not title or title.startswith(_CODE_TUTOR_TITLE_PREFIX):
+        return title or _CODE_TUTOR_TITLE_PREFIX.rstrip(" ·")
+    return f"{_CODE_TUTOR_TITLE_PREFIX}{title}"[:64]
+
+
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -1056,7 +1073,7 @@ async def chat_stream(
         if existing.get("status") == "running":
             raise _session_busy(request_id, request_id)
         return _replay_done_stream(session_id, request_id, existing)
-    await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
+    await _touch_thread(thread_id, user_id, session_id, _thread_title(session_id, request.message))
     return StreamingResponse(
         _agent_stream(
             request.message,
@@ -1180,7 +1197,7 @@ async def chat(
                 break
         # NX-H1：同步响应同样携带计划快照（真实 state 投影；无计划为 null）。
         plan = _project_plan(session_id, thread_id, state.values.get("todos"))
-        await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
+        await _touch_thread(thread_id, user_id, session_id, _thread_title(session_id, request.message))
         result = {
             "session_id": session_id,
             "request_id": request_id,

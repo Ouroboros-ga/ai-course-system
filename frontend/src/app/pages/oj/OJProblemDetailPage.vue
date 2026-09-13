@@ -15,6 +15,7 @@ import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+import NexusCodeTutorFloat from '@/app/components/nexus/NexusCodeTutorFloat.vue'
 import CodeWorkbench from '@/components/codebench/CodeWorkbench.vue'
 import { renderContent } from '@/utils/markdownRenderer.js'
 import {
@@ -386,6 +387,8 @@ onMounted(async () => {
       </div>
     </template>
   </div>
+  <!-- NX-CT1 代码伴学浮窗：题目详情页单独挂载（非 OJLayout 子路由） -->
+  <NexusCodeTutorFloat v-if="counter.canUseNexus" />
 </template>
 
 <style scoped>

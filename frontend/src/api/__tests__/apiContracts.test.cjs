@@ -1913,12 +1913,14 @@ test('NX-CT1 代码伴学：预留会话+引用声明+服务端投影链不断',
   assert.match(tool, /\/api\/v1\/nexus-internal\/submission/)
 })
 
-test('NX-CT1 代码伴学浮窗：全局挂载+门控+绑定事件链', () => {
+test('NX-CT1 代码伴学浮窗：OJ 内挂载+门控+绑定事件链', () => {
   const shell = read('frontend/src/app/shell/AppShell.vue')
+  const ojLayout = read('frontend/src/app/pages/oj/OJLayout.vue')
   const panel = read('frontend/src/app/components/nexus/NexusCodeTutorFloat.vue')
   const bench = read('frontend/src/components/codebench/CodeWorkbench.vue')
-  // AppShell 全局 fixed 层挂载，显隐只看平台门控（后端真强制）。
-  assert.match(shell, /NexusCodeTutorFloat v-if="counter\.canUseNexus"/)
+  // R4：浮窗只挂 OJ（Layout+题目详情），不再全局挂 AppShell。
+  assert.doesNotMatch(shell, /NexusCodeTutorFloat/)
+  assert.match(ojLayout, /NexusCodeTutorFloat v-if="counter\.canUseNexus"/)
   // 浮窗：经预留会话发送（session 封装在 nexus.js 内）；绑定只收事件声明；操作按钮走 SfxButton。
   assert.match(panel, /streamCodeTutorMessage\(/)
   assert.match(panel, /CODE_TUTOR_BIND_EVENT/)
@@ -1940,9 +1942,9 @@ test('NX-CT1 代码伴学浮窗：全局挂载+门控+绑定事件链', () => {
   assert.doesNotMatch(panel, /border-bottom:\s*var\(--border-(default|strong|subtle)\)/)
   assert.match(panel, /var\(--surface-panel\)/)
   assert.match(panel, /position: fixed/)
-  // 工作区：诊断区有带门控的伴学入口，只发引用声明。
+  // 工作区：诊断区伴学入口仅 OJ 变体可见（课程页 variant 不挂浮窗，点了也无人收）。
   assert.match(bench, /问代码伴学/)
-  assert.match(bench, /counter\.canUseNexus/)
+  assert.match(bench, /counter\.canUseNexus && props\.variant === 'oj'/)
   assert.match(bench, /CODE_TUTOR_BIND_EVENT/)
   // R3：OJ 题目页我的提交逐行 + 提交页详情头均有伴学入口（门控+引用声明）。
   const ojDetail = read('frontend/src/app/pages/oj/OJProblemDetailPage.vue')
@@ -1955,7 +1957,8 @@ test('NX-CT1 代码伴学浮窗：全局挂载+门控+绑定事件链', () => {
   assert.match(ojSubs, /counter\.canUseNexus/)
   assert.match(ojSubs, /selected\.value\?\.run_id/)
   assert.match(ojSubs, /CODE_TUTOR_BIND_EVENT/)
-  // 全局性：浮窗只挂 AppShell，不进任何页面组件（切页不卸载）。
-  assert.doesNotMatch(ojDetail, /NexusCodeTutorFloat/)
+  // R4：浮窗只活在 OJ 空间（Layout 覆盖列表类页面，详情页独立挂载；提交页由 Layout 覆盖）。
+  // AppShell 与其他页面一律不挂载——切出 OJ 即卸载，符合"只做在 OJ 题库"。
+  assert.match(ojDetail, /NexusCodeTutorFloat v-if="counter\.canUseNexus"/)
   assert.doesNotMatch(ojSubs, /NexusCodeTutorFloat/)
 })
