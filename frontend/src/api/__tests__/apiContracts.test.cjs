@@ -2080,3 +2080,9 @@ test('Judge0 状态映射：按上游状态表，编译/运行/信号类不得�
   assert.doesNotMatch(provider, /6: SubmissionStatus\.MEMORY_LIMIT_EXCEEDED/)
   assert.doesNotMatch(provider, /8: SubmissionStatus\.COMPILATION_ERROR/)
 })
+
+test('Nexus SYSTEM_PROMPT：来源宣告节制句在位', () => {
+  // 用户定稿要求：命中预设直接推进，不重复宣告来源；丢了这句"已命中预设"会每轮复读。
+  const agent = read('nexus/src/nexus/agent.py')
+  assert.match(agent, /来源只在首次相关时提一次/)
+})
