@@ -2086,3 +2086,14 @@ test('Nexus SYSTEM_PROMPT：来源宣告节制句在位', () => {
   const agent = read('nexus/src/nexus/agent.py')
   assert.match(agent, /来源只在首次相关时提一次/)
 })
+
+test('Nexus 审批卡：过期预检+错误码人话（过期连点不再裸409）', () => {
+  // 线上实证：15 分钟 TTL 过期后点批准，decide 409 APPROVAL_EXPIRED，
+  // 旧文案只有"批准失败请重试"→用户连点→继续 409。
+  const nx = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  assert.match(nx, /function isApprovalExpired\(item\)/)
+  assert.match(nx, /expiresAt \?\? .*expires_at|expires_at \?\? .*expiresAt/)
+  assert.match(nx, /APPROVAL_EXPIRED/)
+  assert.match(nx, /APPROVAL_STATE_CONFLICT/)
+  assert.match(nx, /重新提案/)
+})

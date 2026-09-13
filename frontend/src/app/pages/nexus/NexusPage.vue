@@ -827,6 +827,7 @@ function normalizeApproval(src) {
     license: ap.repo_license || ap.license || '',
     budget: ap.budget || {},
     planHash: ap.plan_hash || ap.hash || '',
+    expiresAt: ap.expires_at ?? ap.expiresAt ?? null,
     expiresAt: ap.expires_at || '',
     proposalId: ap.proposal_id || '',
     proposalVersion: ap.proposal_version ?? ap.version ?? null,
@@ -855,10 +856,33 @@ const pendingItems = computed(() => {
   return [...map.values()]
 })
 
+/** 审批是否已过有效期（秒级 epoch；缺字段视为未知→放行服务端裁决）。
+ * 兼容服务端蛇形 expires_at 与归一化驼峰 expiresAt 两种形状。 */
+function isApprovalExpired(item) {
+  const exp = Number(item?.expiresAt ?? item?.expires_at)
+  if (!Number.isFinite(exp) || exp <= 0) return false
+  return Date.now() / 1000 >= exp
+}
+
+/** 审批决定失败的人话映射（线上实证：过期票据连点只会反复 409）。 */
+function approvalDecisionErrorMessage(err, fallback) {
+  const code = err?.response?.data?.code || err?.response?.data?.detail || err?.code || ''
+  if (code === 'APPROVAL_EXPIRED') return '审批已过期，请在对话里让智能体重新提案（旧卡点批准无效）'
+  if (code === 'APPROVAL_STATE_CONFLICT') return '该审批已处理（已批准/已拒绝/已执行），请刷新查看最新状态，不要重复点击'
+  if (code === 'APPROVAL_NOT_FOUND') return '审批已不可恢复（可能已清理），请让智能体重新提案'
+  if (code === 'APPROVAL_FORBIDDEN') return '无权操作他人的审批'
+  return err?.message || fallback
+}
+
 /** 服务端恢复项（没有 SSE turn）批准：decide 后走同一 execute 核销 */
 async function approveRestored(item) {
   if (item.turn) {
     await decideApprovalFor(item.turn, 'approved')
+    await loadPendingApprovals()
+    return
+  }
+  if (isApprovalExpired(item)) {
+    showToast('审批已过期，请在对话里让智能体重新提案', 'error')
     await loadPendingApprovals()
     return
   }
@@ -870,12 +894,7 @@ async function approveRestored(item) {
     })
     showToast('已批准并提交执行', 'success')
   } catch (err) {
-    const code = err?.response?.data?.code || err?.code || ''
-    if (code === 'APPROVAL_STALE' || code === 'APPROVAL_INVALID') {
-      showToast('方案已更新或票据失效，请重新确认', 'error')
-    } else {
-      showToast('批准失败，请重试', 'error')
-    }
+    showToast(approvalDecisionErrorMessage(err, '批准失败，请重试'), 'error')
   }
   await loadPendingApprovals()
 }
@@ -896,7 +915,7 @@ async function approveRestoredWithAuto(item) {
     })
     showToast('已切换 Auto 并批准提交执行', 'success')
   } catch (err) {
-    showToast(err?.message || '切换并批准失败，未执行任何操作', 'error')
+    showToast(approvalDecisionErrorMessage(err, '切换并批准失败，未执行任何操作'), 'error')
   }
   await loadPendingApprovals()
 }
@@ -907,11 +926,16 @@ async function rejectRestored(item) {
     await loadPendingApprovals()
     return
   }
+  if (isApprovalExpired(item)) {
+    showToast('审批已过期，无需再拒绝；需要执行请让智能体重新提案', 'error')
+    await loadPendingApprovals()
+    return
+  }
   try {
     await decideNexusApproval(item.id, 'rejected')
     showToast('已拒绝', 'success')
-  } catch {
-    showToast('拒绝失败，请重试', 'error')
+  } catch (err) {
+    showToast(approvalDecisionErrorMessage(err, '拒绝失败，请重试'), 'error')
   }
   await loadPendingApprovals()
 }
@@ -1945,6 +1969,10 @@ async function decideApprovalFor(turn, decision) {
     return
   }
   if (ap.status !== 'pending') return
+  if (isApprovalExpired(ap)) {
+    ap.error = '审批已过期，请在对话里让智能体重新提案'
+    return
+  }
   ap.deciding = true
   ap.error = null
   try {
