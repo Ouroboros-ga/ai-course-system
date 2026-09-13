@@ -26,6 +26,33 @@ const UNSET_DIFFICULTY = { label: '暂无评定', color: '#8A94A6', tier: '未�
 /** 难度升序（筛选下拉与排序都用它，别再各自写一遍数组）。 */
 export const OJ_DIFFICULTY_ORDER = ['easy', 'medium', 'hard']
 
+/**
+ * 「题目难度范围」的可选项（对齐参考截图的单个下拉）。
+ *
+ * 三档难度做区间只有三种有意义的选法：单档、以及「提高及以上」这种开口区间。
+ * `min`/`max` 与服务端 `difficulty_min` / `difficulty_max` 一一对应
+ * （闭区间；`max` 为 null = 不设上界）。空值 = 不筛选。
+ */
+export const OJ_DIFFICULTY_RANGES = [
+  { value: '', label: '题目难度范围', min: null, max: null },
+  { value: 'easy', label: '普及', min: 'easy', max: 'easy' },
+  { value: 'medium+', label: '提高及以上', min: 'medium', max: null },
+  { value: 'hard', label: '省选/NOI-', min: 'hard', max: 'hard' },
+]
+
+/** 下拉值 → 接口查询参数。空值不产出任何参数（= 不筛选）。 */
+export function difficultyRangeParams(value) {
+  const hit = OJ_DIFFICULTY_RANGES.find((range) => range.value === value)
+  if (!hit || !hit.min) return {}
+  return hit.max
+    ? { difficulty_min: hit.min, difficulty_max: hit.max }
+    : { difficulty_min: hit.min }
+}
+
+export function difficultyRangeLabel(value) {
+  return OJ_DIFFICULTY_RANGES.find((range) => range.value === value)?.label || ''
+}
+
 export function difficultyMeta(value) {
   const key = String(value ?? '').trim().toLowerCase()
   return OJ_DIFFICULTY_META[key] || UNSET_DIFFICULTY
@@ -129,11 +156,30 @@ export function passRateWidth(rate) {
   return `${Math.min(100, Math.max(2, n * 100)).toFixed(1)}%`
 }
 
-/* ── 排序 ──────────────────────────────────────────────────────────
- * ⚠️ 现行后端是「先分页再返回」，所以前端排序只覆盖当前页。
- * 接口规范 B1 已提出把排序下沉到服务端；在它落地前，这里排的是**当前页**，
- * 页面必须在 UI 上说明这点，别让学生以为看到了全库第 1 名。
+/**
+ * OJ 的时间显示：后端给的是 **UTC ISO（带 +00:00）**，用浏览器本地时区渲染。
+ *
+ * ⚠️ 曾经三个页面用 `.slice(0, 16).replace('T', ' ')` 硬切字符串 ——
+ * 那显示的是 **UTC 墙钟**，与北京时间差 8 小时（教师填 20:00、界面显示 20:00、
+ * 实际次日凌晨 04:00 才生效）。一律走这里，别再手写切片。
  */
+export function formatDateTime(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+/* ── 排序（**参考实现**，与服务端 `domain/oj/problems/catalog.py` 的
+   `compare_records` 逐条对齐：五列 + 升降序 + 「无数据永远沉底」）──────
+
+   ⚠️ 题库列表页**不得**用它替代服务端排序。列表是服务端分页的，本地排序只能排到
+   「当前页」，跨页时第一名是错的（B1 落地前就是这个症状）。
+   它只服务于两类场景：
+     ① 已经拿到**全量**结果的页面（如测验/复盘导出）；
+     ② 离线演示 / 接口未部署时的降级。
+   两条路径的口径必须保持一致 —— 差异会立刻表现为「同一批题在两处顺序不同」。
+*/
 const SORT_ACCESSORS = {
   no: (p, noOf) => ({ v: String(noOf?.(p) ?? ''), missing: false }),
   title: (p) => ({ v: String(p?.title ?? ''), missing: false }),

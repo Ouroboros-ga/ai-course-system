@@ -4,12 +4,16 @@ import assert from 'node:assert/strict'
 import {
   OJ_DIFFICULTY_ORDER,
   buildProblemNoIndex,
+  compareCodepoints,
   difficultyMeta,
+  difficultyRangeLabel,
+  difficultyRangeParams,
   formatMemoryLimit,
   formatPassRate,
   formatProblemNo,
   formatTimeLimit,
   passRateWidth,
+  resolveProblemNo,
   sortProblems,
   tagColor,
 } from '../ojTheme.js'
@@ -182,4 +186,45 @@ test('sortProblems: 未知排序列与空输入原样返回，不得抛错', () 
   const original = [{ title: 'b' }, { title: 'a' }]
   sortProblems(original, { sortBy: 'title' })
   assert.deepEqual(original.map((i) => i.title), ['b', 'a'])
+})
+
+test('compareCodepoints: 按字符码比较（必须与服务端 Python sorted 一致）', () => {
+  assert.equal(compareCodepoints('exp_a-1', 'exp_a_1'), -1) // '-' 0x2D < '_' 0x5F
+  assert.equal(compareCodepoints('exp_a_1', 'exp_ab'), -1) // '_' 0x5F < 'b' 0x62
+  assert.equal(compareCodepoints('same', 'same'), 0)
+  assert.equal(compareCodepoints('b', 'a'), 1)
+})
+
+test('buildProblemNoIndex: 标点参与排序（localeCompare 会把它们当可忽略字符）', () => {
+  const index = buildProblemNoIndex([
+    { experiment_id: 'exp_a_1' },
+    { experiment_id: 'exp_a-1' },
+    { experiment_id: 'exp_ab' },
+  ])
+  assert.equal(index.get('exp_a-1'), '#001')
+  assert.equal(index.get('exp_a_1'), '#002')
+  assert.equal(index.get('exp_ab'), '#003')
+})
+
+test('resolveProblemNo: 服务端字段优先，缺失才降级到本地派生', () => {
+  const index = buildProblemNoIndex([{ experiment_id: 'exp_a' }, { experiment_id: 'exp_b' }])
+  // 服务端给了就用它 —— 哪怕与本地派生不同，服务端是权威
+  assert.equal(resolveProblemNo({ experiment_id: 'exp_b', problem_no: '#042' }, index), '#042')
+  // 缺失 / 空串 / 占位符 → 降级
+  assert.equal(resolveProblemNo({ experiment_id: 'exp_b' }, index), '#002')
+  assert.equal(resolveProblemNo({ experiment_id: 'exp_b', problem_no: '' }, index), '#002')
+  assert.equal(resolveProblemNo({ experiment_id: 'exp_b', problem_no: '—' }, index), '#002')
+  assert.equal(resolveProblemNo({ experiment_id: 'exp_zzz' }, index), '—')
+  assert.equal(resolveProblemNo(null, index), '—')
+})
+
+test('difficultyRangeParams: 下拉值 → 闭区间参数（对齐服务端 resolve_difficulty_bounds）', () => {
+  assert.deepEqual(difficultyRangeParams(''), {})
+  assert.deepEqual(difficultyRangeParams('easy'), { difficulty_min: 'easy', difficulty_max: 'easy' })
+  // 「提高及以上」是开口区间：只给下界，上界交给服务端默认
+  assert.deepEqual(difficultyRangeParams('medium+'), { difficulty_min: 'medium' })
+  assert.deepEqual(difficultyRangeParams('hard'), { difficulty_min: 'hard', difficulty_max: 'hard' })
+  assert.deepEqual(difficultyRangeParams('nope'), {})
+  assert.equal(difficultyRangeLabel('medium+'), '提高及以上')
+  assert.equal(difficultyRangeLabel('nope'), '')
 })

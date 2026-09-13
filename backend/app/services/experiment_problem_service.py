@@ -52,6 +52,7 @@ from app.domain.oj.judging.compare import (
     is_expected_output_asserted,
 )
 from app.domain.oj.problems.metadata import normalize_difficulty, normalize_tags
+from app.domain.oj.problems.catalog import normalize_source, normalize_year
 
 
 
@@ -87,6 +88,32 @@ def _validated_tags(values: Optional[list[str]]) -> list[str]:
         reject_validation_failed(str(exc))
         raise
 
+def _validated_source(value: Optional[str]) -> Optional[str]:
+    """规范化来源；非法长度转 422。
+
+    **空串 = 清空**（域层 `normalize_source` 归 `None`）。`None` 已被 PATCH
+    语义占为「别动」，因此清空需要一个显式的空值 —— 与 `tags` 用 `[]` 清空
+    同一套约定，不是临时发明。
+    """
+    try:
+        return normalize_source(value)
+    except ValueError as exc:
+        reject_validation_failed(str(exc))
+        raise
+
+def _validated_year(value: Optional[int]) -> Optional[int]:
+    """规范化年份；非法取值转 422。
+
+    **`0` = 清空**（域层 `normalize_year` 把 `CLEAR_YEAR` 归 `None`），
+    理由同 `_validated_source`。越界（<1970 / >2100）是**填错**不是「清空」，
+    抛 422 而不是静默落到边界。
+    """
+    try:
+        return normalize_year(value)
+    except ValueError as exc:
+        reject_validation_failed(str(exc))
+        raise
+
 class ExperimentDefinitionService:
     """教师管理课程实验定义"""
 
@@ -101,6 +128,8 @@ class ExperimentDefinitionService:
         knowledge_node_ids: Optional[list[int]] = None,
         difficulty: Optional[str] = None,
         tags: Optional[list[str]] = None,
+        source: Optional[str] = None,
+        year: Optional[int] = None,
         max_attempts: int = 3,
         cooldown_minutes: int = 30,
         created_by: int,
@@ -119,6 +148,8 @@ class ExperimentDefinitionService:
             knowledge_node_ids=list(knowledge_node_ids or []),
             difficulty=_validated_difficulty(difficulty),
             tags=_validated_tags(tags),
+            source=_validated_source(source),
+            year=_validated_year(year),
             max_attempts=max_attempts,
             cooldown_minutes=cooldown_minutes,
             publish_status=ExperimentPublishStatus.DRAFT,
@@ -172,9 +203,17 @@ class ExperimentDefinitionService:
         language_whitelist: Optional[list[str]] = None,
         difficulty: Optional[str] = None,
         tags: Optional[list[str]] = None,
+        source: Optional[str] = None,
+        year: Optional[int] = None,
         max_attempts: Optional[int] = None,
         cooldown_minutes: Optional[int] = None,
     ) -> ExperimentDefinition:
+        """PATCH 语义：`None` = 别动。
+
+        标量字段的**清空**用各自类型的空值表达（`source=""`、`year=0`），
+        因为 `None` 已被「别动」占用 —— 与列表字段用 `[]` 清空同源。
+        把 `None` 当默认值会让教师「改个标题」就把来源与年份清掉。
+        """
         definition = self.get_definition(session, course_id=course_id, experiment_id=experiment_id)
         if language_whitelist is not None:
             invalid = [lang for lang in language_whitelist if lang not in ALLOWED_LANGUAGES]
@@ -189,6 +228,10 @@ class ExperimentDefinitionService:
             definition.difficulty = _validated_difficulty(difficulty)
         if tags is not None:
             definition.tags = _validated_tags(tags)
+        if source is not None:
+            definition.source = _validated_source(source)
+        if year is not None:
+            definition.year = _validated_year(year)
         if max_attempts is not None:
             definition.max_attempts = max_attempts
         if cooldown_minutes is not None:

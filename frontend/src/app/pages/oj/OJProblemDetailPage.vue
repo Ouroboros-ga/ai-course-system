@@ -62,6 +62,21 @@ const timeLimit = computed(() => formatTimeLimit(problem.value?.limits?.cpu_time
 const memoryLimit = computed(() => formatMemoryLimit(problem.value?.limits?.memory_limit))
 const difficulty = computed(() => difficultyMeta(problem.value?.difficulty))
 
+/** 题面语言标签：文案取自 B2 的 `statement_locales`，不在模板里写死「中文」。 */
+const LOCALE_LABELS = { zh: '中文', en: 'English' }
+const statementLocales = computed(() => {
+  const list = problem.value?.statement_locales
+  return Array.isArray(list) && list.length ? list : ['zh']
+})
+const statementLocaleLabel = computed(
+  () => LOCALE_LABELS[problem.value?.statement_default_locale] || LOCALE_LABELS.zh,
+)
+const statementTooltip = computed(() => (
+  statementLocales.value.length > 1
+    ? `可选题面语言：${statementLocales.value.map((code) => LOCALE_LABELS[code] || code).join(' / ')}`
+    : '当前题目只提供中文题面'
+))
+
 const workbenchExperiment = computed(() => {
   if (!problem.value) return null
   return {
@@ -82,8 +97,14 @@ async function loadCourses() {
     : (courses.value[0] ? String(courses.value[0].course_id) : '')
 }
 
-/** 题号：由未筛选的课程目录派生，与列表页同一套口径（ojTheme.buildProblemNoIndex）。 */
+/** 题号：**服务端下发的 problem_no 是权威**（与列表页同源，B2）。
+ *  只有接口没给（未部署 / 离线演示）才降级到本地派生，规则与 `ojTheme` 一致。 */
 async function loadProblemNo() {
+  const provided = String(problem.value?.problem_no || '')
+  if (provided && provided !== '—') {
+    problemNo.value = provided
+    return
+  }
   try {
     const catalog = await listOJProblems(courseId.value, { page: 1, page_size: 100 })
     const items = Array.isArray(catalog?.items) ? catalog.items : []
@@ -224,6 +245,8 @@ onMounted(async () => {
               :title="`本系统难度：${difficulty.tier}`"
             >{{ difficulty.label }}</span>
             <span v-for="tag in problem.tags || []" :key="tag" class="oj-inline-tag">{{ tag }}</span>
+            <span v-if="problem.source" class="oj-inline-tag">来源：{{ problem.source }}</span>
+            <span v-if="problem.year" class="oj-inline-tag">{{ problem.year }} 年</span>
           </div>
 
           <div class="oj-statement-tools">
@@ -237,9 +260,9 @@ onMounted(async () => {
               <component :is="copiedKey === 'markdown' ? Check : Copy" :size="14" />
               {{ copiedKey === 'markdown' ? '已复制' : '复制 Markdown' }}
             </span>
-            <span class="oj-tool is-static" title="当前题目只提供中文题面">
+            <span class="oj-tool is-static" :title="statementTooltip">
               <Languages :size="14" />
-              中文
+              {{ statementLocaleLabel }}
             </span>
             <span
               role="button"

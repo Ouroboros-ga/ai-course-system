@@ -95,6 +95,18 @@ class ExperimentDefinition(SQLModel, table=True):
         default_factory=list, sa_column=Column(JSON),
         description="标签，自由文本、保序去重（规范化见 domain/oj/problems）",
     )
+    # B1（2026-09-13）：题目来源与年份。参考截图的「所属题库」筛选项与
+    # 「显示算法标签」列上的年份 chip 都靠这两列；此前只有自由文本 tags，
+    # 无法按来源聚合筛选。两列均可空 —— 「自编题」本来就没有来源与年份。
+    # 规范化见 domain/oj/problems/catalog.py 的 normalize_source / normalize_year。
+    source: Optional[str] = Field(
+        default=None, index=True, max_length=64,
+        description="题目来源 / 所属题库（如 Codeforces、UVA、自编），可空",
+    )
+    year: Optional[int] = Field(
+        default=None, index=True,
+        description="题目年份（1970–2100），可空",
+    )
     max_attempts: int = Field(default=3, description="最大尝试次数")
     cooldown_minutes: int = Field(default=30, description="尝试冷却（分钟）")
     origin: str = Field(default="teacher", index=True, max_length=32)

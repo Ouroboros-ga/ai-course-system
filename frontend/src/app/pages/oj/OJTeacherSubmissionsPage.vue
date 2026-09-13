@@ -1,12 +1,13 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { listFacadeCourses } from '@/api/facade.js'
+import { listFacadeCourseItems } from '@/api/facade.js'
 import { listOJCourseSubmissions, listOJProblems } from '@/api/oj.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+import { formatDateTime } from './ojTheme.js'
 
 /**
  * 评测记录（教师，设计稿侧栏「评测记录」）：课程全量提交流水。
@@ -43,8 +44,9 @@ function outcomeTone(value) {
 }
 
 async function loadCourses() {
-  const building = await listFacadeCourses('building').catch(() => [])
-  courses.value = building || []
+  // `/facade/courses` 返回 {items, total, ...} 信封，不是裸数组 —— 必须解包，
+  // 否则 courseId 恒为空、整页只显示「没有可管理的教学课程」（2026-09-13 实测）。
+  courses.value = await listFacadeCourseItems('building').catch(() => [])
   courseId.value = courses.value[0] ? String(courses.value[0].course_id) : ''
   if (!courseId.value) state.value = 'empty'
 }
@@ -138,7 +140,7 @@ onMounted(async () => {
         </thead>
         <tbody>
           <tr v-for="row in items" :key="row.run_id">
-            <td class="sfx-t-ui">{{ row.submitted_at ? row.submitted_at.slice(0, 16).replace('T', ' ') : '—' }}</td>
+            <td class="sfx-t-ui">{{ formatDateTime(row.submitted_at) }}</td>
             <td class="sfx-t-ui">{{ row.username }}</td>
             <td class="sfx-t-ui">{{ problemTitle(row.experiment_id) }}</td>
             <td><SfxBadge :tone="outcomeTone(row.outcome)">{{ outcomeLabel(row.outcome) }}</SfxBadge></td>

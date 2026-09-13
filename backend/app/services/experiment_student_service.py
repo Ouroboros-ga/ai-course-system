@@ -18,7 +18,7 @@ from typing import Optional
 from sqlalchemy import case, func
 from sqlmodel import Session as OrmSession, select
 
-from app.core.exceptions import reject_resource_not_found
+from app.core.exceptions import reject_resource_not_found, reject_validation_failed
 from app.models.experiment_activity_model import ExperimentActivityProblem
 from app.models.experiment_model import (
     ExperimentAttempt,
@@ -28,10 +28,45 @@ from app.models.experiment_model import (
     ExperimentVersion,
     ExperimentPublishStatus,
 )
+from app.domain.oj.problems import (
+    ProblemSortRecord,
+    build_problem_no_index,
+    format_problem_no,
+    matches_search,
+    matches_tags,
+    normalize_search_in,
+    normalize_sort_by,
+    normalize_sort_order,
+    normalize_source,
+    normalize_tag_mode,
+    normalize_year,
+    problem_no_for,
+    resolve_difficulty_bounds,
+    sort_records_with,
+)
 from app.services.experiment_problem_service import definition_service, version_service
 
 #: 学生侧题目状态。未尝试 / 尝试过（未通过）/ 已通过（存在通过的正式尝试）。
 STUDENT_PROBLEM_STATUSES = ("not_attempted", "attempted", "solved")
+
+#: 学生侧题面只有中文一种。B2 把它作为**数据**回给前端（而不是让前端写死
+#: 「中文」这两个字），多语言题面落地时只改这里。
+STATEMENT_LOCALES = ["zh"]
+STATEMENT_DEFAULT_LOCALE = "zh"
+
+
+def _422_on_error(parser, value):
+    """把域层的 ``ValueError`` 翻译成 422。
+
+    域层对非法取值**抛错不兜底**是刻意的（见 `normalize_difficulty` 的 docstring）：
+    参数填错必须让调用方知道。这里只负责翻译成 HTTP 语义。
+    """
+    try:
+        return parser(value)
+    except ValueError as exc:
+        reject_validation_failed(str(exc))
+        raise  # 不可达：reject_validation_failed 必定抛 HTTPException。仅为类型收敛。
+
 
 
 class ExperimentStudentService:
@@ -48,19 +83,54 @@ class ExperimentStudentService:
         course_id: int,
         student_id: int,
         search: Optional[str] = None,
+        search_in: Optional[str] = None,
         difficulty: Optional[str] = None,
+        difficulty_min: Optional[str] = None,
+        difficulty_max: Optional[str] = None,
         tags: Optional[list[str]] = None,
+        tag_mode: Optional[str] = None,
+        source: Optional[str] = None,
+        year: Optional[int] = None,
         status_filter: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict:
         """学生题库：已发布题目 + 全班通过率 + 我的作答状态。
 
-        标签筛选在 Python 侧做（JSON 列无法直接索引；课程目录题量级为几十，
-        内存过滤是正确取舍）。返回结构与分页元数据一并提供。
+        **处理顺序不能调换**：
+
+        ① 拉全量已发布目录 → 建题号索引 → ② 过滤 → ③ 排序 → ④ 分页 → ⑤ 序列化。
+
+        ⚠️ ①必须早于②：题号是「课程内第几题」，拿筛选后的结果编号，一筛选整列
+        题号就会平移（域层 `build_problem_no_index` + 前端 `ojTheme.test.js`
+        各有一条反向验证用例钉住这点）。
+        ⚠️ ③必须早于④：先分页再排序只能排到当前页，跨页排序会给出错误的第一名
+        —— 这正是 B1 要修的问题，别再退回服务端只分页、前端排当前页。
+
+        筛选/排序/题号三套规则全部来自 `domain/oj/problems/catalog.py`，
+        本方法只负责取数与装配。
         """
         if status_filter is not None and status_filter not in STUDENT_PROBLEM_STATUSES:
             reject_resource_not_found(f"未知状态筛选：{status_filter}")
+
+        scope = _422_on_error(normalize_search_in, search_in)
+        match_mode = _422_on_error(normalize_tag_mode, tag_mode)
+        order_key = _422_on_error(normalize_sort_by, sort_by)
+        order_dir = _422_on_error(normalize_sort_order, sort_order)
+        wanted_source = _422_on_error(normalize_source, source)
+        wanted_year = _422_on_error(normalize_year, year)
+
+        # `difficulty` 是单值旧参数；min/max 是 B1 的区间参数。两者都接受：
+        # 显式给出 min/max 时它们优先，否则单值参数当作「min = max」。
+        effective_min = difficulty_min if difficulty_min is not None else difficulty
+        effective_max = difficulty_max if difficulty_max is not None else difficulty
+        try:
+            allowed_difficulty = resolve_difficulty_bounds(effective_min, effective_max)
+        except ValueError as exc:
+            reject_validation_failed(str(exc))
+            raise
 
         definitions = session.exec(
             select(ExperimentDefinition).where(
@@ -70,20 +140,31 @@ class ExperimentStudentService:
             )
         ).all()
 
+        # ① 题号索引 —— 必须来自**未过滤**的全量目录。
+        no_index = build_problem_no_index(d.experiment_id for d in definitions)
+
         # 全班通过率：一次聚合，避免 N+1。
         stats = self._course_attempt_stats(session, course_id=course_id)
         mine = self._my_attempt_summary(session, course_id=course_id, student_id=student_id)
 
-        items: list[dict] = []
+        records: list[ProblemSortRecord] = []
+        payload_by_no: dict[str, dict] = {}
         for d in definitions:
-            if search and search.strip() and search.strip().lower() not in d.title.lower():
+            if not matches_search(
+                title=d.title,
+                description=d.description,
+                keyword=search,
+                scope=scope,
+            ):
                 continue
-            if difficulty is not None and d.difficulty != difficulty.strip().lower():
+            if allowed_difficulty is not None and str(d.difficulty or "") not in allowed_difficulty:
                 continue
-            if tags:
-                d_tags = {str(t).strip().lower() for t in (d.tags or [])}
-                if not all(str(t).strip().lower() in d_tags for t in tags):
-                    continue
+            if not matches_tags(d.tags, tags, match_mode):
+                continue
+            if wanted_source is not None and str(d.source or "").casefold() != wanted_source.casefold():
+                continue
+            if wanted_year is not None and d.year != wanted_year:
+                continue
 
             attempt_total, passed_total = stats.get(d.experiment_id, (0, 0))
             my = mine.get(d.experiment_id, {"attempted": False, "solved": False})
@@ -95,17 +176,39 @@ class ExperimentStudentService:
             if status_filter is not None and my_status != status_filter:
                 continue
 
-            items.append({
+            sequence = no_index.get(d.experiment_id, 0)
+            problem_no = format_problem_no(sequence)
+            pass_rate = round(passed_total / attempt_total, 4) if attempt_total else None
+
+            records.append(ProblemSortRecord(
+                problem_no=sequence,
+                title=d.title,
+                difficulty=d.difficulty,
+                pass_rate=pass_rate,
+                attempt_total=attempt_total,
+            ))
+            payload_by_no[problem_no] = {
                 "experiment_id": d.experiment_id,
+                # 题号由服务端给定即为权威；前端仅在同名字段缺失时降级派生。
+                "problem_no": problem_no,
+                "sort_index": sequence,
                 "title": d.title,
                 "description": d.description,
                 "difficulty": d.difficulty,
+                # tags 就是「显示算法标签」列的数据源（不另开 algorithm_tags 列，
+                # 理由见迁移 20260913_1200_oj_problem_source.py 的 docstring）。
                 "tags": list(d.tags or []),
-                "pass_rate": round(passed_total / attempt_total, 4) if attempt_total else None,
+                "source": d.source,
+                "year": d.year,
+                "pass_rate": pass_rate,
                 "attempt_total": attempt_total,
                 "my_status": my_status,
                 "my_best_score": my.get("best_score"),
-            })
+            }
+
+        # ③ 排序在**全量命中集**上做，④ 才分页。
+        ordered = sort_records_with(records, sort_by=order_key, sort_order=order_dir)
+        items = [payload_by_no[format_problem_no(record.problem_no)] for record in ordered]
 
         total = len(items)
         start = (page - 1) * page_size
@@ -128,11 +231,16 @@ class ExperimentStudentService:
         student_id: int,
         experiment_id: str,
     ) -> dict:
-        """学生题目详情：公开面（题面/限制/起始代码/公开样例）+ 我的作答摘要。
+        """学生题目详情：公开面（题面/限制/起始代码）+ 我的作答摘要。
 
-        **隐藏用例不给**（明细属于教师资产；学生侧的评测解读走 diagnosis 通道）；
-        **非隐藏用例作为「样例」返回** —— OJ 惯例（设计稿②「样例」区）：
-        学生需要靠公开样例理解输入输出格式。
+        **不含隐藏 testcase**（隐藏的不给 —— 用例明细属于教师资产；
+        学生侧的评测解读走 diagnosis 通道）。**公开样例给**：
+        `is_hidden=False` 的用例即教师标为公开的示例，按原样透出
+        输入/输出（OJ 惯例；前端样例区靠它渲染，否则恒空）。
+
+        B2（2026-09-13）补充：题号 / 来源 / 年份 / 题面语言，以及样例的稳定
+        `sample_id`（题面「运行」按钮的幂等键）。题号与列表页**同一套派生规则**
+        （未过滤的课程目录 + code-point 升序），否则会出现「列表 #007、点进去 #009」。
         """
         definition = definition_service.get_definition(
             session, course_id=course_id, experiment_id=experiment_id
@@ -165,6 +273,8 @@ class ExperimentStudentService:
             }
             # 公开样例（is_hidden=False）——设计稿②「样例」区：学生靠样例理解
             # 输入输出格式。隐藏用例绝不返回（防作弊红线）。
+            # `sample_id` 用 `case_id`：它是稳定主键，样例「运行」要拿它做幂等键；
+            # 用列表下标当 id 的话，教师调整用例顺序会让所有样例 id 平移。
             for case in session.exec(
                 select(ExperimentTestCase).where(
                     ExperimentTestCase.version_id == version.version_id,
@@ -172,6 +282,7 @@ class ExperimentStudentService:
                 )
             ).all():
                 samples.append({
+                    "sample_id": case.case_id,
                     "name": case.case_name,
                     "input": case.stdin,
                     "output": case.expected_stdout,
@@ -186,6 +297,13 @@ class ExperimentStudentService:
 
         return {
             "experiment_id": definition.experiment_id,
+            "problem_no": self._problem_no_for_course(
+                session, course_id=course_id, experiment_id=definition.experiment_id
+            ),
+            "source": definition.source,
+            "year": definition.year,
+            "statement_locales": list(STATEMENT_LOCALES),
+            "statement_default_locale": STATEMENT_DEFAULT_LOCALE,
             "title": definition.title,
             "description": definition.description,
             "difficulty": definition.difficulty,
@@ -334,6 +452,36 @@ class ExperimentStudentService:
     # ------------------------------------------------------------------
     # 内部聚合
     # ------------------------------------------------------------------
+
+    def _catalog_experiment_ids(self, session: OrmSession, *, course_id: int) -> list[str]:
+        """课程内**已发布**目录的 experiment_id 列表 —— 题号派生的唯一顺序源。
+
+        用 `experiment_id` 而不是 `created_at`：后者会被回填、会被时区归一改动，
+        历史行之间的相对顺序不可靠；前者是主键，永不变更。
+        """
+        return [
+            str(item)
+            for item in session.exec(
+                select(ExperimentDefinition.experiment_id).where(
+                    ExperimentDefinition.course_id == course_id,
+                    ExperimentDefinition.publish_status == ExperimentPublishStatus.PUBLISHED,  # type: ignore[attr-defined]
+                    ExperimentDefinition.visibility == "course_catalog",  # type: ignore[attr-defined]
+                )
+            ).all()
+        ]
+
+    def _problem_no_for_course(
+        self, session: OrmSession, *, course_id: int, experiment_id: str
+    ) -> str:
+        """单题题号。
+
+        与列表页共用 `build_problem_no_index` 的同一规则 —— 详情页自己算一套
+        「按创建时间排」是这类 bug 的经典来源（列表 #007、点进去 #009）。
+        """
+        return problem_no_for(
+            build_problem_no_index(self._catalog_experiment_ids(session, course_id=course_id)),
+            experiment_id,
+        )
 
     def _serialize_run(
         self, run: ExperimentRun, outcome_value: str, experiment_id: Optional[str]

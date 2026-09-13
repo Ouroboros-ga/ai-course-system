@@ -1808,3 +1808,79 @@ test('引用 ID 种类对齐：文本引用带 run_id，工具侧 job 号可反�
   assert.match(backend, /get_run_by_job/)
   assert.match(backend, /status\.HTTP_404_NOT_FOUND/)
 })
+
+test('OJ 教师页: /facade/courses 必须解包 items（该端点返回信封而非裸数组）', () => {
+  // 回归：`courses.value = await listFacadeCourses('building')` 拿到的是
+  // {items, next_cursor, total, has_next}，courses[0] 与 courses.length 全是 undefined
+  // → courseId 恒空 → 顶部按钮拼出 `/app/course//experiments`，点击后落到首页；
+  // 三个教师页同时显示「没有可管理的教学课程」，创建表单不可达（2026-09-13 实测）。
+  const pages = [
+    'frontend/src/app/pages/oj/OJLayout.vue',
+    'frontend/src/app/pages/oj/OJTeacherProblemsPage.vue',
+    'frontend/src/app/pages/oj/OJTeacherActivitiesPage.vue',
+    'frontend/src/app/pages/oj/OJTeacherSubmissionsPage.vue',
+  ]
+  const helper = read('frontend/src/api/facade.js')
+  // 解包只做一次：包装函数自己认 items
+  assert.match(helper, /export async function listFacadeCourseItems/)
+  assert.match(helper, /Array\.isArray\(data\?\.items\) \? data\.items : \[\]/)
+  for (const rel of pages) {
+    const src = read(rel)
+    assert.match(src, /listFacadeCourseItems/, `${rel} 未走解包包装`)
+    // 禁止直接消费信封。**不只盯 `courses.value = ...` 一种写法** ——
+    // OJLayout 当初写成 `Array.isArray(building) && building.length > 0`，
+    // 同样是「把信封当数组」（对象永远不是数组 → 教师 tab 永远不出现），
+    // 只锚 `courses.value` 的正则会漏掉它。凡 OJ 页面一律不得直接调 listFacadeCourses。
+    assert.doesNotMatch(
+      src, /\blistFacadeCourses\s*\(/,
+      `${rel} 直接消费了 /facade/courses 的信封，应改走 listFacadeCourseItems`,
+    )
+  }
+})
+
+test('活动管理: state 不得把「零活动」当空态（否则创建表单永远不可达）', () => {
+  // 回归：`state.value = activities.value.length ? 'ready' : 'empty'` 会让零活动的
+  // 新课程落进「没有可管理的教学课程」分支 —— 建不出第一个活动，形成死锁。
+  // 「有没有活动」由页面内那块 SfxEmpty（还没有活动）单独表达。
+  const src = read('frontend/src/app/pages/oj/OJTeacherActivitiesPage.vue')
+  assert.doesNotMatch(src, /state\.value\s*=\s*activities\.value\.length\s*\?/)
+  assert.match(src, /state\.value = 'ready'/)
+  // 零活动空态必须仍在，别把创建入口和说明一起删掉
+  assert.match(src, /还没有活动/)
+})
+
+test('题目管理: 出题面板跳转必须守卫空 courseId', () => {
+  // 回归：无课程时 push(`/app/course/${courseId}/experiments`) 会拼出
+  // `/app/course//experiments`，路由不匹配 → 用户被丢到首页（2026-09-13 实测）。
+  const src = read('frontend/src/app/pages/oj/OJTeacherProblemsPage.vue')
+  assert.match(src, /const coursePanelPath = computed/)
+  assert.match(src, /if \(!coursePanelPath\.value\) return/)
+  // 不得回到内联拼路径 + 无条件 push 的写法
+  assert.doesNotMatch(src, /\$router\.push\(coursePanelPath\(\)\)/)
+})
+
+test('OJ 时间显示: 一律走 formatDateTime（slice 硬切会显示 UTC，差 8 小时）', () => {
+  // 回归：`.slice(0, 16).replace('T', ' ')` 把 ISO 串的前 16 位直接展示 ——
+  // 后端给的是 UTC，教师/学生看到的提交时间与截止时间都比北京时间早 8 小时。
+  const pages = [
+    'frontend/src/app/pages/oj/OJAssignmentsPage.vue',
+    'frontend/src/app/pages/oj/OJSubmissionsPage.vue',
+    'frontend/src/app/pages/oj/OJTeacherSubmissionsPage.vue',
+  ]
+  for (const rel of pages) {
+    const src = read(rel)
+    assert.match(src, /formatDateTime/, `${rel} 未走统一时间格式化`)
+    assert.doesNotMatch(src, /\.slice\(0,\s*16\)/, `${rel} 仍在硬切时间字符串`)
+  }
+})
+
+test('OJ 活动表单: 提交前必须转 UTC ISO（datetime-local 给的是本地墙钟）', () => {
+  // 回归：后端把 naive 输入当 UTC 解释，前端发本地墙钟 → 作业窗口整体偏 8 小时
+  //（教师填 20:00，学生次日 04:00 才能交）。契约 = API 的 datetime 一律是 UTC。
+  const src = read('frontend/src/app/pages/oj/OJTeacherActivitiesPage.vue')
+  assert.match(src, /new Date\(form\.value\.start_at\)\.toISOString\(\)/)
+  assert.match(src, /new Date\(form\.value\.end_at\)\.toISOString\(\)/)
+  assert.doesNotMatch(src, /payload\.start_at = form\.value\.start_at\b/)
+  // 表单必须写明时区，否则用户会以为填的是服务器时间
+  assert.match(src, /resolvedOptions\(\)\.timeZone/)
+})

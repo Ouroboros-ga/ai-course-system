@@ -27,15 +27,41 @@ activity_service = ExperimentActivityService()
 async def list_student_problems(
     course_id: int,
     search: Optional[str] = Query(default=None, max_length=100),
+    search_in: Optional[str] = Query(
+        default=None, max_length=16,
+        description="关键词范围：title（默认）/ statement（题面正文）/ both",
+    ),
     difficulty: Optional[str] = Query(default=None, max_length=16),
+    difficulty_min: Optional[str] = Query(
+        default=None, max_length=16, description="难度区间下界（含）",
+    ),
+    difficulty_max: Optional[str] = Query(
+        default=None, max_length=16, description="难度区间上界（含）",
+    ),
     tags: Optional[str] = Query(default=None, max_length=200, description="逗号分隔标签"),
+    tag_mode: Optional[str] = Query(default=None, max_length=8, description="and（默认）/ or"),
+    source: Optional[str] = Query(default=None, max_length=64, description="题目来源，大小写不敏感"),
+    year: Optional[int] = Query(default=None, description="题目年份"),
     status: Optional[str] = Query(default=None, max_length=16),
+    sort_by: Optional[str] = Query(
+        default=None, max_length=16,
+        description="default / no / title / difficulty / pass_rate / attempt_total",
+    ),
+    sort_order: Optional[str] = Query(default=None, max_length=8, description="asc（默认）/ desc"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """学生题库列表：已发布题目 + 全班通过率 + 我的作答状态。"""
+    """学生题库列表：已发布题目 + 全班通过率 + 我的作答状态。
+
+    B1（2026-09-13）新增：`search_in` / `difficulty_min|max` / `tag_mode` /
+    `source` / `year` / `sort_by|order`。**排序在服务端的全量命中集上做，
+    再分页** —— 先分页再排序只能排到当前页，跨页排序会给出错误的第一名。
+
+    取值合法性一律由域层（`domain/oj/problems/catalog.py`）判定并转 422；
+    本路由不做重复校验，避免值域在路由与服务层分裂成两份。
+    """
     require_course_permission(session, current_user, course_id, "experiment.view")
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
     data = student_service.list_problem_bank(
@@ -43,9 +69,17 @@ async def list_student_problems(
         course_id=course_id,
         student_id=int(current_user["user_id"]),
         search=search,
+        search_in=search_in,
         difficulty=difficulty,
+        difficulty_min=difficulty_min,
+        difficulty_max=difficulty_max,
         tags=tag_list,
+        tag_mode=tag_mode,
+        source=source,
+        year=year,
         status_filter=status,
+        sort_by=sort_by,
+        sort_order=sort_order,
         page=page,
         page_size=page_size,
     )
@@ -59,7 +93,11 @@ async def get_student_problem(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """学生题目详情：公开面 + 限制 + 起始代码 + 我的作答摘要。不含任何 testcase。"""
+    """学生题目详情：公开面 + 限制 + 起始代码 + 我的作答摘要。不含任何 testcase。
+
+    B2（2026-09-13）新增返回：`problem_no` / `source` / `year` /
+    `statement_locales` / `statement_default_locale`，以及 `samples[].sample_id`。
+    """
     require_course_permission(session, current_user, course_id, "experiment.view")
     data = student_service.get_student_problem(
         session,

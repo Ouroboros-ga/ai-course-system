@@ -67,6 +67,9 @@ class DefinitionCreateRequest(BaseModel):
     # 留 `None` 而非默认 "medium"：让「没填」与「填了 medium」在服务端可区分。
     difficulty: Optional[str] = Field(default=None, max_length=16)
     tags: list[str] = Field(default_factory=list, max_length=20)
+    # B1：题目来源与年份。形状约束只做长度/范围，取值合法性由 service → 域层判定。
+    source: Optional[str] = Field(default=None, max_length=64)
+    year: Optional[int] = Field(default=None, ge=1970, le=2100)
     max_attempts: int = Field(default=3, ge=1, le=20)
     cooldown_minutes: int = Field(default=30, ge=0, le=1440)
 
@@ -77,6 +80,11 @@ class DefinitionUpdateRequest(BaseModel):
     language_whitelist: Optional[list[str]] = None
     difficulty: Optional[str] = Field(default=None, max_length=16)
     tags: Optional[list[str]] = Field(default=None, max_length=20)
+    # PATCH 语义：`None` = 别动。清空 `source` 传空串；清空 `year` 传 0
+    # （`ge=1970` 会拦掉 0，所以这里刻意不加 ge/le —— 范围校验在域层，
+    # 且 0 是「清空」哨兵，不能被路由的 ge 拦成 422）。
+    source: Optional[str] = Field(default=None, max_length=64)
+    year: Optional[int] = Field(default=None)
     max_attempts: Optional[int] = Field(default=None, ge=1, le=20)
     cooldown_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
 
@@ -147,6 +155,10 @@ def _serialize_definition(d, default_starter_code=None, student_summary=None) ->
         # SQL NULL，而 `d.tags` 会是 None；前端不该为此多写一处判空。
         "difficulty": d.difficulty,
         "tags": list(d.tags or []),
+        # B1：来源与年份。两列可空 —— 「自编题」本来就没有来源与年份，
+        # 别在这里兜成 "" / 0，前端靠 null 判断「没填」。
+        "source": d.source,
+        "year": d.year,
         # 学生工作台重置用起始代码（取默认版本；无版本时为空对象）。
         "starter_code": dict(default_starter_code or {}),
         # 学生视图专属：该生在此实验下的尝试聚合（教师视图为 None）。
@@ -385,6 +397,8 @@ async def create_definition(
         knowledge_node_ids=payload.knowledge_node_ids,
         difficulty=payload.difficulty,
         tags=payload.tags,
+        source=payload.source,
+        year=payload.year,
         max_attempts=payload.max_attempts,
         cooldown_minutes=payload.cooldown_minutes,
         created_by=user_id,
@@ -446,6 +460,8 @@ async def update_definition(
         language_whitelist=payload.language_whitelist,
         difficulty=payload.difficulty,
         tags=payload.tags,
+        source=payload.source,
+        year=payload.year,
         max_attempts=payload.max_attempts,
         cooldown_minutes=payload.cooldown_minutes,
     )

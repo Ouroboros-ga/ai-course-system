@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import L2TabsLayout from '@/app/shell/L2TabsLayout.vue'
-import { listFacadeCourses } from '@/api/facade.js'
+import { listFacadeCourseItems } from '@/api/facade.js'
 import { useCounterStore } from '@/stores/counter.js'
 
 /**
@@ -38,8 +38,8 @@ onMounted(async () => {
   // 导致「学情分析·OJ 数据看板」在演示账号下根本不可见（2026-09-12 复核发现）。
   let hasBuildingCourse = false
   try {
-    const building = await listFacadeCourses('building')
-    hasBuildingCourse = Array.isArray(building) && building.length > 0
+    const building = await listFacadeCourseItems('building')
+    hasBuildingCourse = building.length > 0
   } catch {
     hasBuildingCourse = false
   }

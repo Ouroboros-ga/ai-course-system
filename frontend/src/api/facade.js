@@ -14,6 +14,23 @@ export function listFacadeCourses(view, params = {}) {
   return request.get('/facade/courses', { params: { view, ...params } })
 }
 
+/**
+ * `GET /facade/courses` 的**条目数组**。
+ *
+ * ⚠️ 该端点返回的是 `{ items, next_cursor, total, has_next }`（游标分页协议），
+ * **不是裸数组**。直接 `courses.value = await listFacadeCourses('building')`
+ * 会把整个信封对象当数组用：`courses[0]` 与 `courses.length` 都是 undefined，
+ * 表现为「课程下拉不出现 + courseId 为空」——而 courseId 为空又会连累下游
+ * 拼出 `/app/course//experiments` 这类不存在的路径，点击后直接落到首页
+ * （2026-09-13 教师页实测）。
+ *
+ * 统一走这个包装；页面里不要再手写解包。
+ */
+export async function listFacadeCourseItems(view, params = {}) {
+  const data = await listFacadeCourses(view, params)
+  return Array.isArray(data?.items) ? data.items : []
+}
+
 export function getFacadeCourseOverview(courseId) {
   return request.get(`/facade/course/${courseId}/overview`)
 }
