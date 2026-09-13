@@ -946,12 +946,22 @@ test('DisciplineKnowledgePage.vue: 消费解包后的 data（request.js 拦截�
   assert.match(src, /results\.value = body\?\.results \?\? \[\]/)
 })
 
-test('DisciplineKnowledgePage.vue: 资料检索模式与原文查看（CR5）', () => {
+test('DisciplineKnowledgePage.vue: 单一合并检索 + 原文查看（CR5）', () => {
   const src = read('frontend/src/app/pages/discipline/DisciplineKnowledgePage.vue')
   const client = read('frontend/src/api/disciplineKnowledge.js')
   const lib = read('frontend/src/app/lib/disciplineCorpusPresentation.js')
-  // 模式切换与原文查看必须使用 SfxButton；资料模式只调 chunk 引用端点
-  assert.match(src, /switchMode\('corpus'\)/)
+  // 2026-09-13 去档位：模式按钮整体下线，每次检索固定查全部，
+  // 精编概念优先显示（后端先拼概念、前端概念区先渲染）。
+  assert.doesNotMatch(src, /switchMode/)
+  assert.doesNotMatch(src, /dk-modes/)
+  assert.match(src, /SEARCH_MODE = 'all'/)
+  assert.match(src, /searchDisciplineKnowledge\(q, topK\.value, SEARCH_MODE\)/)
+  // 概念区必须渲染在语料区之前（优先显示的第二重保证）。
+  assert.ok(
+    src.indexOf('<ul v-if="conceptResults') < src.indexOf('<ul v-if="corpusResults'),
+    '概念结果区必须在语料区之前渲染',
+  )
+  // 原文查看链路保留：资料原文块仍经 chunk 引用端点取原文
   assert.match(src, /getDisciplineCorpusChunk/)
   assert.match(src, /formatCorpusCoverage/)
   assert.match(client, /getDisciplineCorpusChunk/)
@@ -1278,6 +1288,20 @@ test('NexusPage.vue: 工具调用过程可见，且失败以真实错误码呈�
   assert.match(src, /tool_call/)
   assert.match(src, /tool_result/)
   assert.match(src, /err\?\.errorCode/)
+})
+
+test('Nexus 数据源：线上只用真实，切换开关已下掉（2026-09-13 拍板）', () => {
+  const src = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const adapter = read('frontend/src/api/nexusAdapter.js')
+  // 开关本体（行 + 菜单 + 状态位）不得回来；只读状态行保留。
+  assert.doesNotMatch(src, /dsOpen/)
+  assert.doesNotMatch(src, /setNexusDataSourceMode/)
+  assert.doesNotMatch(src, /nx-ds-menu/)
+  assert.doesNotMatch(src, /切换数据源/)
+  // 默认恒 real（含旧 localStorage demo 值一并迁移，不把老用户锁在 demo）。
+  assert.match(adapter, /export const nexusDataSourceMode = ref\('real'\)/)
+  // demo 分支代码保留（以后要回演示还能回），只是 UI 上不可达。
+  assert.match(adapter, /setNexusDataSourceMode/)
 })
 
 test('router.js + PrimaryNav.vue: Nexus AI 是课程外全局一级入口', () => {
@@ -1883,156 +1907,4 @@ test('OJ 活动表单: 提交前必须转 UTC ISO（datetime-local 给的是本�
   assert.doesNotMatch(src, /payload\.start_at = form\.value\.start_at\b/)
   // 表单必须写明时区，否则用户会以为填的是服务器时间
   assert.match(src, /resolvedOptions\(\)\.timeZone/)
-})
-
-test('NX-CT1 代码伴学：预留会话+引用声明+服务端投影链不断', () => {
-  const client = read('frontend/src/api/nexus.js')
-  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
-  const internal = read('backend/app/api/v1/endpoints/nexus_internal.py')
-  const runtime = read('nexus/src/nexus/main.py')
-  const tool = read('nexus/src/nexus/tools/submission.py')
-  // 前端：session 固定预留值，不新增 mode；只传 run_id 引用，不拼 run_context。
-  assert.match(client, /CODE_TUTOR_SESSION_ID = 'code-tutor'/)
-  assert.match(client, /body\.context\.run_ref = \{ run_id: String\(runId\)/)
-  assert.match(client, /sessionId: CODE_TUTOR_SESSION_ID/)
-  assert.doesNotMatch(client, /buildCodeTutorRequest[\s\S]{0,400}?run_context/)
-  // 后端 proxy：run_ 前缀走 OJ 投影（kind 标记），归属三元组 miss 一律 404。
-  assert.match(backend, /raw_id\.startswith\("run_"\)/)
-  assert.match(backend, /"kind": "oj_submission"/)
-  assert.match(backend, /ExperimentRun\.student_id == owner_id/)
-  // 内部端点：只读快照注册且挂载；test_summary 白名单重建；test_report 不投影。
-  assert.match(internal, /@router\.get\("\/submission"\)/)
-  assert.match(internal, /"case_name".*"passed".*"reason"/s)
-  assert.match(internal, /_SUBMISSION_ARTIFACT_TYPES = \("compile", "stdout", "stderr"\)/)
-  // Runtime：OJ 投影进提交作用域；工具无参数、只读作用域、未绑定 fail-closed。
-  assert.match(runtime, /_submission_scope_from_context/)
-  assert.match(runtime, /reset_submission\(submission_token\)/)
-  assert.match(tool, /async def read_my_submission\(\) -> dict/)
-  assert.match(tool, /current_submission\(\)/)
-  assert.match(tool, /SUBMISSION_NOT_BOUND/)
-  assert.match(tool, /\/api\/v1\/nexus-internal\/submission/)
-})
-
-test('NX-CT1 代码伴学浮窗：OJ 内挂载+门控+绑定事件链', () => {
-  const shell = read('frontend/src/app/shell/AppShell.vue')
-  const ojLayout = read('frontend/src/app/pages/oj/OJLayout.vue')
-  const panel = read('frontend/src/app/components/nexus/NexusCodeTutorFloat.vue')
-  const bench = read('frontend/src/components/codebench/CodeWorkbench.vue')
-  // R4：浮窗只挂 OJ（Layout+题目详情），不再全局挂 AppShell。
-  assert.doesNotMatch(shell, /NexusCodeTutorFloat/)
-  assert.match(ojLayout, /NexusCodeTutorFloat v-if="counter\.canUseNexus"/)
-  // 浮窗：经预留会话发送（session 封装在 nexus.js 内）；绑定只收事件声明；操作按钮走 SfxButton。
-  assert.match(panel, /streamCodeTutorMessage\(/)
-  assert.match(panel, /CODE_TUTOR_BIND_EVENT/)
-  assert.match(panel, /getExperimentRun\(cid, rid\)/)
-  // 打开懒加载服务端历史（与 Nexus 页同 thread 续接）；表头按钮不启动拖拽。
-  assert.match(panel, /getNexusSessionMessages\(CODE_TUTOR_SESSION_ID\)/)
-  assert.match(panel, /closest\?\.\('button, textarea, input, a, summary'\)/)
-  // R1：伴学正文走 Markdown（节流渲染），用户原文纯文本；绑定持久化+重验。
-  assert.match(panel, /renderContent\(text\)/)
-  assert.match(panel, /v-html="renderedBody\(m\)"/)
-  assert.match(panel, /renderCache = new WeakMap\(\)/)
-  assert.match(panel, /sfx:code-tutor:binding/)
-  assert.match(panel, /restoreBinding\(\)/)
-  // R2：clamp 保证完整在视口内；拖拽三保险收尾；边框 token 全是 1px solid 写法。
-  assert.match(panel, /const maxX = window\.innerWidth - w/)
-  assert.match(panel, /pointercancel.*onDragEnd/)
-  assert.match(panel, /blur.*onDragEnd/)
-  assert.doesNotMatch(panel, /border:\s*var\(--border-(default|strong|subtle)\)/)
-  assert.doesNotMatch(panel, /border-bottom:\s*var\(--border-(default|strong|subtle)\)/)
-  assert.match(panel, /var\(--surface-panel\)/)
-  assert.match(panel, /position: fixed/)
-  // 工作区：诊断区伴学入口仅 OJ 变体可见（课程页 variant 不挂浮窗，点了也无人收）。
-  assert.match(bench, /问代码伴学/)
-  assert.match(bench, /counter\.canUseNexus && props\.variant === 'oj'/)
-  assert.match(bench, /CODE_TUTOR_BIND_EVENT/)
-  // R3：OJ 题目页我的提交逐行 + 提交页详情头均有伴学入口（门控+引用声明）。
-  const ojDetail = read('frontend/src/app/pages/oj/OJProblemDetailPage.vue')
-  const ojSubs = read('frontend/src/app/pages/oj/OJSubmissionsPage.vue')
-  assert.match(ojDetail, /问伴学/)
-  assert.match(ojDetail, /counter\.canUseNexus/)
-  assert.match(ojDetail, /askCodeTutor\(sub\.run_id\)/)
-  assert.match(ojDetail, /CODE_TUTOR_BIND_EVENT/)
-  assert.match(ojSubs, /问代码伴学/)
-  assert.match(ojSubs, /counter\.canUseNexus/)
-  assert.match(ojSubs, /selected\.value\?\.run_id/)
-  assert.match(ojSubs, /CODE_TUTOR_BIND_EVENT/)
-  // R4：浮窗只活在 OJ 空间（Layout 覆盖列表类页面，详情页独立挂载；提交页由 Layout 覆盖）。
-  // AppShell 与其他页面一律不挂载——切出 OJ 即卸载，符合"只做在 OJ 题库"。
-  assert.match(ojDetail, /NexusCodeTutorFloat v-if="counter\.canUseNexus"/)
-  assert.doesNotMatch(ojSubs, /NexusCodeTutorFloat/)
-})
-
-test('AppShell 过渡承载层：单根 keyed 容器防多根离场卡死', () => {  // 线上实证 2026-09-13：OJ 浮窗让页面变多根 Fragment，out-in 离场挂起、
-  // 切其他二级菜单白屏。过渡必须挂真实单根；key 取一级空间，不用完整 path。
-  const shell = read('frontend/src/app/shell/AppShell.vue')
-  assert.match(shell, /<div v-if="Component" :key="viewRoute\.matched\[1\]\?\.path" class="sfx-shell-page">/)
-  assert.match(shell, /route: viewRoute/)
-  assert.match(shell, /\.sfx-shell-page \{\s*display: flex;/)
-  // 承载层不得新增滚动（L2 唯一滚动容器地位不变）与位移动画（§6.2 仅 opacity）。
-  assert.doesNotMatch(shell, /\.sfx-shell-page[^}]*overflow/)
-  assert.doesNotMatch(shell, /\.sfx-shell-page[^}]*transform/)
-})
-
-test('Facade 学情 coding 聚合：LabRecord 只能从 resource_model 导入', () => {
-  // 线上实证 2026-09-13：写错模块导致 /facade/course/{id}/analytics 全量 500。
-  // 线上实证 2026-09-13：写错模块导致 /facade/course/{id}/analytics 全量 500。
-  // 延迟 import 让启动期不爆，只有真实请求才爆——源码级锁死。
-  const facade = read('backend/app/api/v1/endpoints/facade.py')
-  assert.match(facade, /from app\.models\.resource_model import[\s\S]{0,200}?LabRecord/)
-  assert.doesNotMatch(facade, /from app\.models\.experiment_model import[^\n]*LabRecord/)
-})
-
-test('出题面板：预览结论绑定版本，新版创建即清零（锁 409 回归锁）', () => {
-  // 线上实证：旧版预览通过→建新版→锁新版一路绿灯撞服务端 409。
-  const panel = read('frontend/src/app/components/course/TeacherExperimentPanel.vue')
-  assert.match(panel, /previewForTarget/)
-  assert.match(panel, /preview\.value\.version_id !== current\.version_id/)
-  assert.match(panel, /version_id: version\.version_id/)
-  // 创建新版本成功后本地预览结论清零，不继承到新版本。
-  assert.match(panel, /preview\.value = null/)
-  // 锁定门与徽章只认同版本结论，不直接读裸 preview。
-  assert.match(panel, /previewForTarget\.value\?\.accepted === true/)
-  assert.doesNotMatch(panel, /preview\.value\?\.accepted === true/)
-})
-
-test('学情页折线图：Filler 插件已注册（fill:true 不再告警）', () => {
-  const page = read('frontend/src/app/pages/course/CourseAnalyticsPage.vue')
-  assert.match(page, /Filler, Tooltip, Legend,/)
-  assert.match(page, /LineElement, PointElement, Filler, Tooltip, Legend/)
-})
-
-test('NX-CT1-R5 题目自动关联：引用声明+服务端投影+快照有界', () => {
-  const client = read('frontend/src/api/nexus.js')
-  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
-  const runtime = read('nexus/src/nexus/main.py')
-  const panel = read('frontend/src/app/components/nexus/NexusCodeTutorFloat.vue')
-  const page = read('frontend/src/app/pages/oj/OJProblemDetailPage.vue')
-  // 前端：problem_ref 只传 experiment_id；快照 8000 截断；事件分绑定/关联两种。
-  assert.match(client, /CODE_TUTOR_PROBLEM_EVENT = 'nexus-code-tutor:problem'/)
-  assert.match(client, /problem_ref = \{ experiment_id: String\(problemRef\.experiment_id\)/)
-  assert.match(client, /code_snapshot = codeSnapshot\.slice\(0, CODE_TUTOR_SNAPSHOT_MAX\)/)
-  assert.match(client, /problem_ref\?\.experiment_id/)
-  // 后端：problem_ref 走 OJ 题目投影（已发布+本人可见），伪造 problem_context 剥离，
-  // 快照服务端二次截断；隐藏用例表碰都不碰（只查 is_hidden=False）。
-  assert.match(backend, /async def _build_problem_context/)
-  assert.match(backend, /"kind": "oj_problem"/)
-  assert.match(backend, /context\.pop\("problem_context", None\)/)
-  assert.match(backend, /_CODE_SNAPSHOT_MAX = 8000/)
-  assert.match(backend, /is_hidden == False/)
-  assert.match(backend, /ExperimentPublishStatus\.PUBLISHED/)
-  // Runtime：题目注记双路径注入（流/非流），快照标注未提交。
-  assert.match(runtime, /def _problem_context_note/)
-  assert.match(runtime, /problem_context=_server_problem_context\(request\)/)
-  // 浮窗：题目事件静默关联（不自动打开）、切题清绑定、诊断失败才自显一次。
-  assert.match(panel, /CODE_TUTOR_PROBLEM_EVENT/)
-  assert.match(panel, /onProblemEvent/)
-  assert.match(panel, /maybeShowDiagnosis\(\)/)
-  assert.match(panel, /getCodingDiagnosis\(bound\.courseId, bound\.runId\)/)
-  assert.match(panel, /diagnosisShownFor/)
-  assert.match(panel, /unbindProblem/)
-  // 题目页：挂载广播+编辑器防抖快照+提交刷新最新提交。
-  assert.match(page, /announceToTutor\(\)/)
-  assert.match(page, /CODE_TUTOR_PROBLEM_EVENT/)
-  assert.match(page, /@code-change="onWorkbenchCodeChange"/)
 })

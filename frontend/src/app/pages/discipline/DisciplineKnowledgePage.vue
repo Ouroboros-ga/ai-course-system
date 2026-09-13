@@ -2,14 +2,15 @@
 /**
  * XH-202620 学科知识库检索页（CS 垂类）。
  *
- * 双模式：精编概念（默认兼容）/ 资料检索（版本化语料原文块）。
- * 数据源：GET /api/v1/discipline-knowledge/*；资料模式只调用 chunk 引用
- * 端点取原文（固定 release_id），不拼磁盘路径。
+ * 单一合并检索（2026-09-13 去档位）：不设模式按钮，每次检索固定查全部
+ * （后端 mode='all'），精编概念优先显示 —— 后端先拼概念结果、前端概念区
+ * 渲染在语料区之前，双重保证。资料原文块经 chunk 引用端点取原文
+ * （固定 release_id），不拼磁盘路径。
  * 设计遵循 design.md：三层滚动模型（本页为 L3，根容器 height:100% + 内部滚动）、
  * 语义令牌（--color-brand / --surface-panel / --border-default 等）、SfxButton 规范。
  */
 import { computed, onMounted, ref } from 'vue'
-import { BookOpen, ChevronDown, ChevronUp, FileText, RefreshCw, Search, Sparkles } from 'lucide-vue-next'
+import { BookOpen, ChevronDown, ChevronUp, RefreshCw, Search } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import {
   getDisciplineCorpusChunk,
@@ -22,7 +23,9 @@ import { formatCorpusCoverage, safeSourceUrl } from '@/app/lib/disciplineCorpusP
 
 const query = ref('')
 const topK = ref(5)
-const mode = ref('concept') // concept | corpus | all
+// 唯一检索档：全部（后端 mode='all'）。档位按钮已下线（2026-09-13），
+// 不要加回 mode ref —— 后端仍保留三档供其他调用方，页面层只用 all。
+const SEARCH_MODE = 'all'
 const loading = ref(false)
 const error = ref('')
 const results = ref([])
@@ -71,7 +74,7 @@ async function runSearch() {
   chunkText.value = null
   chunkError.value = ''
   try {
-    const body = await searchDisciplineKnowledge(q, topK.value, mode.value)
+    const body = await searchDisciplineKnowledge(q, topK.value, SEARCH_MODE)
     results.value = body?.results ?? []
     releaseId.value = body?.release_id ?? ''
     degradedReasons.value = body?.degraded_reasons ?? []
@@ -116,17 +119,6 @@ async function toggleChunkDetail(row) {
   } finally {
     chunkLoading.value = false
   }
-}
-
-function switchMode(next) {
-  if (mode.value === next) return
-  mode.value = next
-  hasSearched.value = false
-  results.value = []
-  degradedReasons.value = []
-  releaseId.value = ''
-  expandedChunk.value = null
-  chunkText.value = null
 }
 
 async function toggleDetail(node) {
@@ -184,17 +176,6 @@ const corpusCoverageText = computed(() => {
           <RefreshCw :size="14" /> 刷新
         </SfxButton>
       </div>
-      <div class="dk-modes" role="tablist" aria-label="检索模式">
-        <SfxButton :variant="mode === 'concept' ? 'secondary' : 'tertiary'" size="sm" @click="switchMode('concept')">
-          <Sparkles :size="14" /> 精编概念
-        </SfxButton>
-        <SfxButton :variant="mode === 'corpus' ? 'secondary' : 'tertiary'" size="sm" @click="switchMode('corpus')">
-          <FileText :size="14" /> 资料检索
-        </SfxButton>
-        <SfxButton :variant="mode === 'all' ? 'secondary' : 'tertiary'" size="sm" @click="switchMode('all')">
-          <Search :size="14" /> 全部
-        </SfxButton>
-      </div>
       <form class="dk-search" @submit.prevent="runSearch">
         <div class="dk-search-input-wrap">
           <Search :size="16" class="dk-search-icon" />
@@ -221,7 +202,7 @@ const corpusCoverageText = computed(() => {
       <p v-else-if="loading" class="dk-hint"><span class="dk-spinner" /> 检索中…</p>
 
       <p v-else-if="hasSearched && results.length === 0" class="dk-hint">
-        {{ mode === 'concept' ? '未找到匹配的知识节点，请尝试其他关键词。' : '未找到匹配的语料段落，请尝试其他关键词。' }}
+        未找到匹配内容，请尝试其他关键词（检索范围：精编概念 + 语料资料）。
       </p>
 
       <p v-else-if="!hasSearched" class="dk-hint">
@@ -452,12 +433,6 @@ const corpusCoverageText = computed(() => {
 }
 
 @keyframes dk-spin { to { transform: rotate(360deg); } }
-
-.dk-modes {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-}
 
 .dk-corpus-coverage { color: var(--text-secondary); }
 

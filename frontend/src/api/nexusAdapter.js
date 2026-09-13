@@ -52,9 +52,12 @@ export const NEXUS_MODE_CONFIG = {
 }
 
 // 当前数据源模式：'real' | 'demo'
-export const nexusDataSourceMode = ref(
-  localStorage.getItem('nexus_datasource_mode') || 'demo'
-)
+//
+// 2026-09-13 拍板「线上只用真实」：恒为 real（含此前在 UI 上选过 demo 的
+// 旧 localStorage，一并迁移 —— 切换菜单已下掉，不迁移会把老用户锁在
+// 无处可逃的 demo 里）。demo 分支代码全部保留，开发者仍可用控制台
+// setNexusDataSourceMode('demo') 切回做本地调试。
+export const nexusDataSourceMode = ref('real')
 
 export function setNexusDataSourceMode(mode) {
   if (['real', 'demo'].includes(mode)) {

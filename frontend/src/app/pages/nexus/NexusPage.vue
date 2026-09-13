@@ -68,7 +68,6 @@ import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
   nexusDataSourceMode,
-  setNexusDataSourceMode,
   loadLocalSessions,
   saveLocalSessions,
   getContextOverview,
@@ -2110,7 +2109,6 @@ async function requestReproReportFor(turn, jobId) {
 // ── 3. Mode 切换与上下文 ──
 const modeDropdownOpen = ref(false)
 const pendingOpen = ref(false)
-const dsOpen = ref(false)
 const coursePickerOpen = ref(false)
 
 // 初值一律为 null：在没有真实数据之前，宁可显示"—"，也不预置一个看起来正常的数字。
@@ -2945,7 +2943,6 @@ function pushReproUnavailableTurn(name, preset) {
 function closeAllFlyouts() {
   modeDropdownOpen.value = false
   pendingOpen.value = false
-  dsOpen.value = false
   openMenuSessionId.value = ''
 }
 
@@ -3145,49 +3142,14 @@ const emptySuggestions = computed(() =>
         <div v-if="isRailExpanded" class="nx-device-status">
           <div class="nx-dv-title">本机状态</div>
 
-          <!-- 行 1：数据源（全站唯一切换入口，dev 控件不占据一级 header） -->
-          <div class="nx-ds-wrap nx-flyout">
-            <div
-              class="nx-dv-row"
-              role="button"
-              tabindex="0"
-              :aria-expanded="dsOpen"
-              title="切换数据源"
-              @click.stop="dsOpen = !dsOpen"
-              @keydown.enter.stop.prevent="dsOpen = !dsOpen"
-              @keydown.space.stop.prevent="dsOpen = !dsOpen"
-            >
-              <span class="nx-ds-dot" :class="nexusDataSourceMode" aria-hidden="true" />
-              <span class="nx-dv-label">
-                数据源：{{ nexusDataSourceMode === 'demo' ? '演示数据' : '真实' }}
-                <small>
-                  {{ nexusDataSourceMode === 'demo' ? '本地模拟 · 会话仅存本机' : '运行时已连通 · 会话仅存本机' }}
-                </small>
-              </span>
-              <span class="nx-dv-act">切换</span>
-              <ChevronDown :size="11" class="nx-ds-caret" :class="{ 'is-open': dsOpen }" />
-            </div>
-            <div v-if="dsOpen" class="nx-menu nx-ds-menu">
-              <div class="nx-menu-head">数据源</div>
-              <SfxButton
-                variant="tertiary"
-                size="sm"
-                class="nx-menu-item"
-                :class="{ 'is-current': nexusDataSourceMode === 'demo' }"
-                @click="setNexusDataSourceMode('demo'); dsOpen = false"
-              >
-                演示数据 · 本地模拟
-              </SfxButton>
-              <SfxButton
-                variant="tertiary"
-                size="sm"
-                class="nx-menu-item"
-                :class="{ 'is-current': nexusDataSourceMode === 'real' }"
-                @click="setNexusDataSourceMode('real'); dsOpen = false"
-              >
-                真实数据源 · 连接 Runtime
-              </SfxButton>
-            </div>
+          <!-- 行 1：数据源（只读状态位，2026-09-13 去开关：线上只用真实，
+               切换菜单已下掉；demo 分支代码保留，开发者可用控制台切回） -->
+          <div class="nx-dv-row is-static" title="数据源状态（只读，不可切换）">
+            <span class="nx-ds-dot" :class="nexusDataSourceMode" aria-hidden="true" />
+            <span class="nx-dv-label">
+              数据源：{{ nexusDataSourceMode === 'demo' ? '演示数据' : '真实' }}
+              <small>运行时已连通 · 会话仅存本机</small>
+            </span>
           </div>
 
           <!-- 行 2：本机资料（无数据也如实显示「仅聊天记录」，不隐藏这一层） -->
@@ -4899,12 +4861,6 @@ const emptySuggestions = computed(() =>
   gap: 2px;
 }
 
-.nx-menu-head {
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-  padding: var(--space-1) var(--space-2) 2px;
-}
-
 .nx-menu-item {
   width: 100%;
   justify-content: flex-start;
@@ -4925,14 +4881,6 @@ const emptySuggestions = computed(() =>
 .nx-menu-item.is-current {
   color: var(--ink-900);
   font-weight: 600;
-}
-
-.nx-ds-menu {
-  left: 0;
-  right: auto;
-  top: auto;
-  bottom: calc(100% + 6px);
-  min-width: 208px;
 }
 
 /* ── 侧栏底部：单一「本机状态」区（UX 评审 P0-2） ── */
