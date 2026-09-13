@@ -54,8 +54,19 @@ import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 const props = defineProps({
   // 沙箱真实支持的语言（页面已从 /sandbox/languages 取回）。
   languages: { type: Array, default: () => [] },
+  // 新题默认勾选的语言（页面取 verified_languages，即生产 Worker 验过工具链的子集）。
+  // 为空时回退到 languages[0]（旧行为），保证老调用方不炸。
+  defaultLanguages: { type: Array, default: () => [] },
   sandboxAvailable: { type: Boolean, default: false },
 })
+
+/** 新题语言默认值：已验证全集优先，只取沙箱列表里真实存在的交集。 */
+function defaultLanguageSelection() {
+  const pool = new Set(props.languages)
+  const verified = (props.defaultLanguages || []).filter((lang) => pool.has(lang))
+  if (verified.length) return verified
+  return props.languages.length ? [props.languages[0]] : []
+}
 
 const courseContext = inject('courseContext')
 const courseId = computed(() => courseContext.courseId.value)
@@ -583,8 +594,8 @@ async function primeEditor(task, preferSection) {
     applyAutoWeights()
   }
 
-  if (!selectedLanguages.value.length && props.languages.length) {
-    selectedLanguages.value = [props.languages[0]]
+  if (!selectedLanguages.value.length) {
+    selectedLanguages.value = defaultLanguageSelection()
   }
   starterLanguage.value = selectedLanguages.value[0] ?? ''
   referenceForm.value.language = selectedLanguages.value
@@ -621,7 +632,7 @@ function startNewTask() {
   section.value = 'basics'
   error.value = ''
   basicsForm.value = { title: '', description: '', max_attempts: 3, cooldown_minutes: 30 }
-  selectedLanguages.value = props.languages.length ? [props.languages[0]] : []
+  selectedLanguages.value = defaultLanguageSelection()
   selectedKnowledgeIds.value = []
   starterCode.value = {}
   referenceForm.value = { language: selectedLanguages.value[0] ?? '', source_code: '' }

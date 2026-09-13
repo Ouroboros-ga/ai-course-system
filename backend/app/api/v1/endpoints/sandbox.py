@@ -37,6 +37,7 @@ from app.domain.oj.judging.providers.judge0 import (
     SandboxResult,
     SubmissionStatus,
     ALLOWED_LANGUAGES,
+    VERIFIED_LANGUAGES,
 )
 
 router = APIRouter(tags=["G3 代码沙箱"])
@@ -177,9 +178,17 @@ async def list_allowed_languages(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """列出允许的编程语言"""
+    """列出允许的编程语言。
+
+    ``verified_languages`` 是在生产 Worker 上验过工具链的子集
+    （go/rust/ruby/php/csharp 的工具链不在定制镜像里，选了也跑不起来）。
+    各类"默认选中"只取该子集；完整 ``languages`` 照常返回供手动勾选。
+    """
     return unified_response(
         code=200,
         message="获取允许语言列表成功",
-        data={"languages": list(ALLOWED_LANGUAGES.keys())},
+        data={
+            "languages": list(ALLOWED_LANGUAGES.keys()),
+            "verified_languages": list(VERIFIED_LANGUAGES),
+        },
     )

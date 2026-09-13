@@ -18,6 +18,9 @@ const isTeacher = computed(() => Boolean(courseContext.allowed.value['course.edi
 const sandboxAvailable = ref(false)
 const sandboxLoading = ref(true)
 const languages = ref([])
+// 已验证语言（生产 Worker 有工具链的子集）：出题面板新题默认勾选。取不到时
+// 面板回退到 languages[0]（旧行为），不炸。
+const verifiedLanguages = ref([])
 
 // 实验列表
 const experiments = ref([])
@@ -42,6 +45,9 @@ async function loadSandbox() {
     ])
     sandboxAvailable.value = health?.available === true
     languages.value = Array.isArray(supported?.languages) ? supported.languages : []
+    verifiedLanguages.value = Array.isArray(supported?.verified_languages)
+      ? supported.verified_languages
+      : []
   } catch {
     sandboxAvailable.value = false
   } finally {
@@ -205,6 +211,7 @@ onBeforeUnmount(() => {
     <TeacherExperimentPanel
       v-if="isTeacher"
       :languages="languages"
+      :default-languages="verifiedLanguages"
       :sandbox-available="sandboxAvailable && !sandboxLoading"
     />
 

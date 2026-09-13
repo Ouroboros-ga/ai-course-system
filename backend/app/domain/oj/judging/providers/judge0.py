@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "ALLOWED_LANGUAGES",
+    "VERIFIED_LANGUAGES",
     "MAX_RESULT_TEXT_CHARS",
     "SandboxClient",
     "SandboxResourceLimits",
@@ -69,6 +70,19 @@ ALLOWED_LANGUAGES: dict[str, int] = {
     "ruby": 72,
     "php": 68,
 }
+
+#: 在生产 Worker 上逐个验过工具链的语言（2026-09-13 只读实测：
+#: python3/gcc/g++/node/openjdk13 存在；go/rust/ruby/php/dotnet 缺失，
+#: 定制镜像 cgv2-final 精简）。只有这里的语言才进各类"默认选中"，
+#: 避免教师开了一个跑不起来的语言、学生交上去只拿到 infra 错误。
+#: 镜像补回工具链后把对应 key 加回来即可（ALLOWED_LANGUAGES 的 ID 不用动）。
+VERIFIED_LANGUAGES: list[str] = [
+    "python3",
+    "c",
+    "cpp",
+    "java",
+    "javascript",
+]
 MAX_RESULT_TEXT_CHARS = 100_000
 
 

@@ -267,7 +267,12 @@ class CourseSandboxPolicy(SQLModel, table=True):
 
     # 语言与包
     allowed_languages: list = Field(
-        default_factory=lambda: ["python3"],
+        # 默认 = 已验证子集（2026-09-13 生产 Worker 只读实测：go/rust/ruby/
+        # php/csharp 工具链不在定制镜像里）。与
+        # ``domain/oj/judging/providers/judge0.py::VERIFIED_LANGUAGES``
+        # 同值（刻意字面量重复：models 不反向 import 判题域；
+        # 一致性由测试钉住，见 test_sandbox.py）。
+        default_factory=lambda: ["python3", "c", "cpp", "java", "javascript"],
         sa_column=Column(JSON),
         description="允许的语言列表",
     )

@@ -125,6 +125,31 @@ class TestSandboxClient:
         assert "java" in ALLOWED_LANGUAGES
         assert "javascript" in ALLOWED_LANGUAGES
 
+    def test_verified_languages_are_toolchain_proven_subset(self):
+        """已验证语言 = 生产 Worker 有工具链的子集（2026-09-13 只读实测）。
+
+        go/rust/ruby/php/csharp 的工具链不在定制镜像 cgv2-final 里：
+        它们仍在 ALLOWED_LANGUAGES（手动勾选是教师的自由），但绝不进
+        任何"默认选中"。本断言钉住"子集"关系，防以后顺手把未验证的
+        语言写进默认值。
+        """
+        from app.domain.oj.judging.providers.judge0 import VERIFIED_LANGUAGES
+
+        assert set(VERIFIED_LANGUAGES) <= set(ALLOWED_LANGUAGES)
+        assert set(VERIFIED_LANGUAGES) == {"python3", "c", "cpp", "java", "javascript"}
+        for missing in ("go", "rust", "ruby", "php", "csharp"):
+            assert missing not in VERIFIED_LANGUAGES
+
+    def test_course_policy_default_matches_verified(self):
+        """课程策略默认语言与已验证子集同值（字面量重复的一致性守卫）。
+
+        models 不反向 import 判题域，重复是刻意的；只改一边这里会红。
+        """
+        from app.domain.oj.judging.providers.judge0 import VERIFIED_LANGUAGES
+        from app.models.safety_policy_model import CourseSandboxPolicy
+
+        assert CourseSandboxPolicy(course_id=1).allowed_languages == list(VERIFIED_LANGUAGES)
+
     def test_health_check_disabled_returns_false(self):
         """沙箱未启用时健康检查返回 False"""
         client = SandboxClient()
@@ -564,6 +589,10 @@ class TestSandboxAPI:
         data = response.json()["data"]
         assert "python3" in data["languages"]
         assert "cpp" in data["languages"]
+        # 已验证子集随接口下发（出题面板新题默认勾选的数据源）。
+        from app.domain.oj.judging.providers.judge0 import VERIFIED_LANGUAGES
+
+        assert data["verified_languages"] == list(VERIFIED_LANGUAGES)
 
     def test_disallowed_language_rejected_by_api(self, client, session):
         """API 拒绝不允许的语言"""
