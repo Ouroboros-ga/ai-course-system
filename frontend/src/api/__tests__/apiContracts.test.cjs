@@ -1962,3 +1962,11 @@ test('NX-CT1 代码伴学浮窗：OJ 内挂载+门控+绑定事件链', () => {
   assert.match(ojDetail, /NexusCodeTutorFloat v-if="counter\.canUseNexus"/)
   assert.doesNotMatch(ojSubs, /NexusCodeTutorFloat/)
 })
+
+test('Facade 学情 coding 聚合：LabRecord 只能从 resource_model 导入', () => {
+  // 线上实证 2026-09-13：写错模块导致 /facade/course/{id}/analytics 全量 500。
+  // 延迟 import 让启动期不爆，只有真实请求才爆——源码级锁死。
+  const facade = read('backend/app/api/v1/endpoints/facade.py')
+  assert.match(facade, /from app\.models\.resource_model import[\s\S]{0,200}?LabRecord/)
+  assert.doesNotMatch(facade, /from app\.models\.experiment_model import[^\n]*LabRecord/)
+})

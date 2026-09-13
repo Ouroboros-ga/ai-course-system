@@ -276,7 +276,8 @@ def _coding_summary(session: Session, *, course_id: int, student_ids: list) -> d
     （仅终结化成绩）。只统计传入的学生集合（调用方已排除 analytics_excluded）。
     无数据时通过率取 None（前端显示"—"，不伪造 0%）。
     """
-    from app.models.experiment_model import ExperimentRun, LabRecord
+    from app.models.experiment_model import ExperimentRun
+    from app.models.resource_model import LabRecord
 
     non_judged = {"pending", "processing", "sandbox_unavailable"}
     run_filter = (
