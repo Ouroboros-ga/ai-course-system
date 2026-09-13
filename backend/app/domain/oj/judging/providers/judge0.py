@@ -100,17 +100,24 @@ class SubmissionStatus(str, Enum):
     SANDBOX_UNAVAILABLE = "sandbox_unavailable"
 
 
-# Judge0 status.id -> 我们的语义
+# Judge0 status.id -> 我们的语义（Judge0 上游状态表，1.13.1 同源定制镜像未改状态种子）。
+# 注意上游没有"超内存"状态 id：6 是编译错误；7-12 是各类运行时错误
+# （SIGSEGV/SIGXFSZ/SIGFPE/SIGABRT/NZEC/Other）；13/14 是内部/格式错误。
+# 此前 6/8/9 错位、10/11/12 缺失，导致编译失败显示"超内存"、Python 异常退出
+# （NZEC）显示"系统错误"——2026-09-13 线上实证后修正。
 JUDGE0_STATUS_MAP: dict[int, SubmissionStatus] = {
     1: SubmissionStatus.IN_QUEUE,
     2: SubmissionStatus.PROCESSING,
     3: SubmissionStatus.ACCEPTED,
     4: SubmissionStatus.WRONG_ANSWER,
     5: SubmissionStatus.TIME_LIMIT_EXCEEDED,
-    6: SubmissionStatus.MEMORY_LIMIT_EXCEEDED,
+    6: SubmissionStatus.COMPILATION_ERROR,
     7: SubmissionStatus.RUNTIME_ERROR,
-    8: SubmissionStatus.COMPILATION_ERROR,
-    9: SubmissionStatus.INTERNAL_ERROR,
+    8: SubmissionStatus.RUNTIME_ERROR,
+    9: SubmissionStatus.RUNTIME_ERROR,
+    10: SubmissionStatus.RUNTIME_ERROR,
+    11: SubmissionStatus.RUNTIME_ERROR,
+    12: SubmissionStatus.RUNTIME_ERROR,
     13: SubmissionStatus.INTERNAL_ERROR,
     14: SubmissionStatus.INTERNAL_ERROR,
 }
