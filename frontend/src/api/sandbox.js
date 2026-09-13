@@ -19,7 +19,7 @@ export function getSandboxHealth() {
  * GET /sandbox/languages → { languages: string[] }
  */
 export function getSandboxLanguages() {
-  return request.get('/sandbox/languages')
+  return request.get('/sandbox/languages', { skipErrorToast: true })
 }
 
 /**

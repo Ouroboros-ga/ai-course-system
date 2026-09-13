@@ -44,10 +44,13 @@ function formatDate(value) {
 }
 
 function openProblem(activity, problem) {
-  // 活动归属随路由带过去 —— 详情页 Workbench 建 attempt 时回传服务端，
-  // 榜单/算分才认得这次作答是哪次作业的（否则恒为自由练习）。
+  // 活动归属 + 课程随路由带过去 —— 详情页 Workbench 建 attempt 时回传服务端，
+  // 榜单/算分才认得这次作答是哪次作业的（否则恒为自由练习）；课程不带会串课。
   const target = `/app/oj/problems/${problem.problem_definition_id}`
-  router.push(activity?.activity_id ? `${target}?activity=${activity.activity_id}` : target)
+  const query = []
+  if (activity?.activity_id) query.push(`activity=${activity.activity_id}`)
+  if (courseId.value) query.push(`course=${courseId.value}`)
+  router.push(query.length ? `${target}?${query.join('&')}` : target)
 }
 
 async function loadCourses() {

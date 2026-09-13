@@ -221,7 +221,7 @@ onMounted(async () => {
                 >归档</span>
                 <RouterLink
                   class="oj-action"
-                  :to="`/app/oj/problems/${item.experiment_id}`"
+                  :to="`/app/oj/problems/${item.experiment_id}?course=${courseId}`"
                 >预览</RouterLink>
               </td>
             </tr>

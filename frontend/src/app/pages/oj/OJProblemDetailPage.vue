@@ -242,8 +242,10 @@ onMounted(async () => {
           <SfxEmpty
             v-else
             title="判题环境未就绪"
-            description="代码沙箱不可用或语言列表为空，稍后再试。"
-          />
+            description="代码沙箱语言列表加载失败，答题区暂不可用。"
+          >
+            <SfxButton variant="secondary" size="sm" @click="load">重试</SfxButton>
+          </SfxEmpty>
         </section>
       </div>
     </template>

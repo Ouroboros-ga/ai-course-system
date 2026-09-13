@@ -428,6 +428,28 @@ class TestAnalyticsRobustness:
         )
         assert summary["high_frequency_wrong"][0]["wrong_count"] == 1
 
+    def test_problem_stats_counts_attempts(
+        self, session, teacher_user, student_user, course,
+    ):
+        """逐题统计：教师题目管理「使用次数」列的数据源。"""
+        definition = _definition(session, course, teacher_user)
+        good = _attempt_row(
+            session, course, student_user, definition, status="finalized",
+        )
+        good.passed = True
+        session.add(good)
+        _attempt_row(session, course, student_user, definition, status="finalized")
+        session.commit()
+        summary = ExperimentAnalyticsService().get_course_summary(
+            session, course_id=course.id, trend_days=7,
+        )
+        row = {
+            item["experiment_id"]: item
+            for item in summary["problem_stats"]
+        }[definition.experiment_id]
+        assert row["attempt_total"] == 2
+        assert row["passed_total"] == 1
+
     def test_never_submitted_student_not_flagged(
         self, session, teacher_user, student_user, course,
     ):

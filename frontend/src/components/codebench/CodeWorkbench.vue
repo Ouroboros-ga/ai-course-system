@@ -17,6 +17,7 @@ import {
 import { getTask } from '@/api/tasks.js'
 import { isTerminalTaskStatus } from '@/api/experimentRunContract.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
+import { pickStarterCode } from './starterCode.js'
 
 const props = defineProps({
   experiment: { type: Object, default: null },
@@ -290,17 +291,13 @@ function handleLanguageChange(lang) {
 
 // 重置代码
 function handleReset() {
-  if (props.experiment?.starter_code) {
-    sourceCode.value = props.experiment.starter_code
-  } else {
-    sourceCode.value = ''
-  }
+  sourceCode.value = pickStarterCode(props.experiment?.starter_code, selectedLanguage.value)
 }
 
 // 复制代码
 async function handleCopy() {
   try {
-    await navigator.clipboard.writeText(sourceCode.value)
+    await navigator.clipboard.writeText(String(sourceCode.value ?? ''))
   } catch {
     // ignore
   }
@@ -364,11 +361,15 @@ const visibleTabs = computed(() => {
 // 监听实验变化
 watch(() => props.experiment, (newExp) => {
   if (newExp) {
-    if (newExp.starter_code && !sourceCode.value) {
-      sourceCode.value = newExp.starter_code
-    }
-    if (newExp.language_whitelist?.length) {
+    // 语言先纠正（题目白名单优先），再按语言取起始代码。
+    // starter_code 是 {language: code} 字典——必须经 pickStarterCode 归一，
+    // 直接赋值字典会让 .trim() 抛错、编辑器崩溃（2026-09-13 线上故障）。
+    if (newExp.language_whitelist?.length
+      && !newExp.language_whitelist.includes(selectedLanguage.value)) {
       selectedLanguage.value = newExp.language_whitelist[0]
+    }
+    if (!sourceCode.value) {
+      sourceCode.value = pickStarterCode(newExp.starter_code, selectedLanguage.value)
     }
   }
   // 重置评测状态
