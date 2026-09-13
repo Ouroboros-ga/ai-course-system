@@ -452,6 +452,10 @@ _ITEM_FIELD_BY_TOOL = {
     "plan_reproduction": "plan",
     "run_reproduction": "job",
     "write_artifact": "artifact",
+    # F6 文档作业：同一形状进产物卡（前端按 job.formats 展开多格式下载）。
+    # 不加这一行，工具结果走 600 字符兜底截断，前端 JSON.parse 失败，
+    # 各格式 artifact_id 只能由模型当文本复述（有点下载按钮）。
+    "create_document_output": "job",
     # NX-R1a：证据卡结构化条目（卡片字符串字段仍受 _ITEM_STR_MAX 截断，
     # 模型消费的 ToolMessage content 为完整 JSON，不受影响）。
     "collect_paper_evidence": "evidences",

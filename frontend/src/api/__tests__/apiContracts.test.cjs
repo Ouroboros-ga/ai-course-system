@@ -1250,6 +1250,25 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   assert.match(main, /nexus_proxy\.router, prefix="\/api\/v1\/nexus"/)
 })
 
+test('NexusPage.vue: 文档作业多格式产物卡（F6 下载按钮）', () => {
+  const src = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const runtime = read('nexus/src/nexus/main.py')
+  // Runtime 必须把文档作业 job 推进 SSE items，否则各格式 artifact_id
+  // 走 600 字符兜底截断，前端 parse 失败，只能由模型当文本复述（无下载）。
+  assert.match(runtime, /"create_document_output": "job"/)
+  // 前端把 job.formats 里成功的格式逐个挂卡（失败格式无 artifact_id，不挂）。
+  assert.match(src, /data\?\.name === 'create_document_output'/)
+  assert.match(src, /job\?\.formats/)
+  assert.match(src, /info\?\.status === 'succeeded'/)
+  assert.match(src, /artifact_type: fmt/)
+  // 四格式标签与下载后缀单点映射：word 不得再标 Markdown/下 .md。
+  assert.match(src, /word: \['Word', 'docx'\]/)
+  assert.match(src, /pdf: \['PDF', 'pdf'\]/)
+  assert.match(src, /latex: \['LaTeX', 'tex'\]/)
+  // 无 size 时不得显示 "0 B"（文档作业不带 size_bytes）。
+  assert.match(src, /v-if="a\.size_bytes"/)
+})
+
 test('nexus.js: 透传响应无 code/message 信封，故必须声明 allowFlatResponse', () => {
   const src = read('frontend/src/api/nexus.js')
   // 反代把 Runtime 的裸 JSON 原样返回；不声明该标志会被响应拦截器当成业务错误。
@@ -1293,10 +1312,11 @@ test('NexusPage.vue: 工具调用过程可见，且失败以真实错误码呈�
 test('Nexus 数据源：线上只用真实，切换开关已下掉（2026-09-13 拍板）', () => {
   const src = read('frontend/src/app/pages/nexus/NexusPage.vue')
   const adapter = read('frontend/src/api/nexusAdapter.js')
-  // 开关本体（行 + 菜单 + 状态位）不得回来；只读状态行保留。
+  // 开关本体（行 + 菜单 + 状态位）不得回来；只读状态行也不留。
   assert.doesNotMatch(src, /dsOpen/)
   assert.doesNotMatch(src, /setNexusDataSourceMode/)
   assert.doesNotMatch(src, /nx-ds-menu/)
+  assert.doesNotMatch(src, /数据源：/)
   assert.doesNotMatch(src, /切换数据源/)
   // 默认恒 real（含旧 localStorage demo 值一并迁移，不把老用户锁在 demo）。
   assert.match(adapter, /export const nexusDataSourceMode = ref\('real'\)/)

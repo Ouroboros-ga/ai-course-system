@@ -325,3 +325,37 @@ async def test_document_http_endpoints(monkeypatch):
         retried = await client.post(
             f"/api/v1/nexus/document-jobs/{job_id}/retry", headers=user)
         assert retried.status_code == 200
+
+
+class TestDocumentJobSSEItems:
+    def test_create_document_output_exposes_job_with_artifact_ids(self):
+        """F6 文档作业进 SSE items：各格式 artifact_id 不得被截断/丢弃。
+
+        回归：此前该工具不在 _ITEM_FIELD_BY_TOOL 里，结果走 600 字符兜底，
+        前端 JSON.parse 失败，各格式只能由模型当文本复述（无下载按钮）。
+        """
+        import json
+
+        from nexus.main import _structured_tool_items
+
+        job = {
+            "job_id": "docjob-test", "status": "succeeded", "title": "报告",
+            "formats": {
+                "markdown": {"status": "succeeded",
+                             "artifact_id": "ea53f44f02f0"},
+                "word": {"status": "succeeded",
+                         "artifact_id": "45fb745df895"},
+                "latex": {"status": "failed", "artifact_id": "",
+                          "detail": "x" * 600},
+            },
+        }
+        content = json.dumps({"status": "success", "job": job},
+                             ensure_ascii=False)
+        items = _structured_tool_items("create_document_output", content)
+        assert items is not None and len(items) == 1
+        formats = items[0]["formats"]
+        assert formats["markdown"]["artifact_id"] == "ea53f44f02f0"
+        assert formats["word"]["artifact_id"] == "45fb745df895"
+        assert formats["latex"]["artifact_id"] == ""
+        # 展示截断只动长文本：artifact_id 必须逐字完整。
+        assert items[0]["job_id"] == "docjob-test"
