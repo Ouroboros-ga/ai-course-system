@@ -167,7 +167,11 @@ function formatScore(score) {
         @click="toggleCase(index)"
       >
         <span class="tile-index">#{{ index + 1 }}</span>
-        <span class="tile-verdict">{{ tc.is_hidden ? '🔒' : shortVerdict(tc) }}</span>
+        <span class="tile-verdict">
+          <!-- 隐藏用例用图标而非 emoji（跨平台字形不一致，且与列表行的 Lock 同源） -->
+          <Lock v-if="tc.is_hidden" :size="13" :stroke-width="2.2" />
+          <template v-else>{{ shortVerdict(tc) }}</template>
+        </span>
         <span class="tile-meta">
           {{ formatTime(tc.time_ms) }} / {{ formatMemory(tc.memory_kb) }}
         </span>
@@ -437,6 +441,10 @@ function formatScore(score) {
 }
 
 .tile-verdict {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
   font-size: 14px;
   font-weight: 700;
   line-height: 1.4;
