@@ -173,6 +173,27 @@
 | `code-text`   | `#E6EDF3` | 代码正文    |
 | `code-muted`  | `#8B98AA` | 行号与辅助信息 |
 
+**1.6b 浅色变体（2026-09-13 新增，OJ 题目详情页专用）**
+
+参考截图（洛谷）的编辑器是浅色；OJ 作答页整页浅色，中间嵌一块深色编辑器观感突兀，
+故 OJ 的工作台（`CodeWorkbench variant='oj'`）整组换用浅色令牌，工具栏/输出/输入/页签同步变浅。
+**课程实验页（`/app/lab`）维持深色孤岛**——同一组件、两种呈现，由 `variant` 决定。
+
+容器类：`.code-surface--light`（整组覆盖上表 5 个 `--code-*` 令牌，周边 UI 跟随）；
+编辑器本体：`<CodeEditor theme="light">`（**硬编码**浅色值，自成一体，不依赖上面的类）。
+
+| Token               |        色值 | 用途      |
+| ------------------- | --------: | ------- |
+| `code-bg-light`     | `#FBFBFC` | 编辑器背景   |
+| `code-panel-light`  | `#F6F8FA` | 测试与终端面板 |
+| `code-border-light` | `#E3E6EA` | 浅色区边界   |
+| `code-text-light`   | `#24292F` | 代码正文    |
+| `code-muted-light`  | `#6B7683` | 行号与辅助信息 |
+
+语法高亮用 **One Light** 系（keyword 紫 `#A626A4` / string 绿 `#50A14F` /
+function 蓝 `#4078F2` / number·atom 土黄 `#986801` / comment 灰斜体 `#8B949E`），
+浅色底上对比度足够；不可沿用深色版的 One Dark 色值（浅底上会发灰）。
+
 ## 1.7 语义状态
 
 | 状态         | 主色          | 背景             | 必须附带           |
