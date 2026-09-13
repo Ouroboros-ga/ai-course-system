@@ -57,6 +57,10 @@ from app.domain.oj.judging.providers.judge0 import (
     sandbox_client,
 )
 from app.domain.oj.judging.verdicts import RunState, reason_for_status
+from app.domain.oj.judging.compare import (
+    compare_outputs,
+    is_expected_output_asserted,
+)
 from app.services.experiment_problem_service import (  # noqa: F401
     _require_formal_experiment_capabilities,
     definition_service,
@@ -653,7 +657,6 @@ class ExperimentRunService:
         compile_ok = True
         compile_message = ""
         first_runtime_error = ""
-        first_wrong_answer = ""
 
         for case in cases:
             session.refresh(run)
@@ -679,7 +682,11 @@ class ExperimentRunService:
                     source_code=run.source_code,
                     language=run.language,
                     stdin=case.stdin,
-                    expected_output=case.expected_stdout,
+                    # Judge0 只执行、不比对：expected 不再透传。它的严格
+                    # （逐字节）比对无 token/浮点容错（上游 #224 open），
+                    # 末尾换行/多余空格即 WA。比对归本域
+                    #（``domain/oj/judging/compare.py``），词汇与旧语义对齐。
+                    expected_output="",
                     limits=case_limits,
                 )
 
@@ -712,14 +719,20 @@ class ExperimentRunService:
                     break  # 编译失败，后续 case 跳过
 
                 passed = result.status == SubmissionStatus.ACCEPTED
+                if passed and is_expected_output_asserted(case.expected_stdout):
+                    # 执行成功但教师写了期望输出 → 本域比对说了算。
+                    # reason 取值与 REASON_BY_STATUS 的 accepted/wrong_answer
+                    # 逐字对齐（词汇唯一源仍在 verdicts，见 test 对齐断言）。
+                    passed = compare_outputs(case.expected_stdout, result.stdout)
                 if passed:
                     passed_count += 1
 
-                reason = self._outcome_to_reason(result.status)
+                if result.status == SubmissionStatus.ACCEPTED:
+                    reason = "passed" if passed else "wrong_answer"
+                else:
+                    reason = self._outcome_to_reason(result.status)
                 if result.status == SubmissionStatus.RUNTIME_ERROR and not first_runtime_error:
                     first_runtime_error = result.stderr or "运行时错误"
-                if result.status == SubmissionStatus.WRONG_ANSWER and not first_wrong_answer:
-                    first_wrong_answer = "测试未通过"
 
                 # 隐藏测试不向前端泄露详情
                 summary_entry: dict = {

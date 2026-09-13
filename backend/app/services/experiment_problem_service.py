@@ -47,6 +47,10 @@ from app.domain.oj.judging.providers.judge0 import (
     SubmissionStatus,
     sandbox_client,
 )
+from app.domain.oj.judging.compare import (
+    compare_outputs,
+    is_expected_output_asserted,
+)
 from app.domain.oj.problems.metadata import normalize_difficulty, normalize_tags
 
 
@@ -482,10 +486,16 @@ class ExperimentVersionService:
                 source_code=source_code,
                 language=language,
                 stdin=case.stdin,
-                expected_output=case.expected_stdout,
+                # 与正式评测同规则：Judge0 只执行，比对归本域
+                #（``domain/oj/judging/compare.py``）。否则教师参考解会因
+                # 末尾换行之类通不过自家验证，而学生同输出却能过 —— 双标。
+                expected_output="",
                 limits=limits,
             )
-            if result.status == SubmissionStatus.ACCEPTED:
+            if result.status == SubmissionStatus.ACCEPTED and (
+                not is_expected_output_asserted(case.expected_stdout)
+                or compare_outputs(case.expected_stdout, result.stdout)
+            ):
                 passed_count += 1
         accepted = passed_count == len(cases)
         if accepted:

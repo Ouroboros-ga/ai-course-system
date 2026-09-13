@@ -956,10 +956,22 @@ class TestExperimentRun:
         from app.services.experiment_service import sandbox_client as sandbox_singleton
 
         monkeypatch.setattr(sandbox_singleton, "health_check", lambda: True)
+
+        def _fake_correct_solution(**kwargs):
+            # 新契约：Judge0 只执行（mock 恒报"跑通"），对错由本域比对
+            # stdout 决定 —— 正确解的输出必须与用例期望一致。
+            stdin = kwargs.get("stdin", "")
+            return SandboxResult(
+                status=SubmissionStatus.ACCEPTED,
+                stdout="2\n" if stdin.endswith("3\n") else "0\n",
+                time=0.01,
+                memory=1024,
+            )
+
         monkeypatch.setattr(
             sandbox_singleton,
             "submit_code",
-            lambda **_kwargs: SandboxResult(status=SubmissionStatus.ACCEPTED, stdout="ok"),
+            _fake_correct_solution,
         )
         _run_formal_task_inline(
             task_id=submitted["task_id"], course_id=course.id, attempt_id=attempt_id,
@@ -996,10 +1008,21 @@ class TestExperimentRun:
         from app.services.experiment_service import sandbox_client as sandbox_singleton
 
         monkeypatch.setattr(sandbox_singleton, "health_check", lambda: True)
+
+        def _fake_correct_solution(**kwargs):
+            # 新契约：Judge0 只执行，对错由本域比对 stdout 决定。
+            stdin = kwargs.get("stdin", "")
+            return SandboxResult(
+                status=SubmissionStatus.ACCEPTED,
+                stdout="2\n" if stdin.endswith("3\n") else "0\n",
+                time=0.01,
+                memory=1024,
+            )
+
         monkeypatch.setattr(
             sandbox_singleton,
             "submit_code",
-            lambda **_kwargs: SandboxResult(status=SubmissionStatus.ACCEPTED, stdout="ok"),
+            _fake_correct_solution,
         )
         _run_formal_task_inline(
             task_id=submitted["task_id"], course_id=course.id, attempt_id=attempt_id,
@@ -1064,15 +1087,22 @@ class TestExperimentRun:
         from app.services.experiment_service import sandbox_client as sandbox_singleton
 
         monkeypatch.setattr(sandbox_singleton, "health_check", lambda: True)
+
+        def _fake_matching_output(**kwargs):
+            # 新契约：Judge0 只执行（不再透传 expected）。mock 按 stdin
+            # 返回对应期望输出，语义仍是"正确解"，不断言对错只验不泄露。
+            stdin = kwargs.get("stdin", "")
+            return SandboxResult(
+                status=SubmissionStatus.ACCEPTED,
+                stdout="visible_out\n" if "visible" in stdin else "secret_out\n",
+                time=0.01,
+                memory=1024,
+            )
+
         monkeypatch.setattr(
             sandbox_singleton,
             "submit_code",
-            lambda **kwargs: SandboxResult(
-                status=SubmissionStatus.ACCEPTED,
-                stdout=kwargs["expected_output"],
-                time=0.01,
-                memory=1024,
-            ),
+            _fake_matching_output,
         )
         _run_formal_task_inline(
             task_id=submitted["task_id"], course_id=course.id, attempt_id=attempt_id,
