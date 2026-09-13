@@ -1,11 +1,9 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowLeft, Check, Copy, Languages, PanelRightClose, PanelRightOpen, Sparkles,
+  ArrowLeft, Check, Copy, Languages, PanelRightClose, PanelRightOpen,
 } from 'lucide-vue-next'
-import { useCounterStore } from '@/stores/counter.js'
-import { CODE_TUTOR_BIND_EVENT, CODE_TUTOR_PROBLEM_EVENT } from '@/api/nexus.js'
 import { listExperimentCourses } from '@/api/labs.js'
 import { getOJProblem, listOJProblems, listOJSubmissions } from '@/api/oj.js'
 import { getCourseCapabilities } from '@/api/course_access.js'
@@ -15,7 +13,6 @@ import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
-import NexusCodeTutorFloat from '@/app/components/nexus/NexusCodeTutorFloat.vue'
 import CodeWorkbench from '@/components/codebench/CodeWorkbench.vue'
 import { renderContent } from '@/utils/markdownRenderer.js'
 import {
@@ -40,7 +37,6 @@ import {
  */
 const route = useRoute()
 const router = useRouter()
-const counter = useCounterStore()
 
 const experimentId = computed(() => String(route.params.experimentId || ''))
 // 活动归属：作业页带 ?activity= 进来；直达题库则为空（自由练习）。
@@ -143,12 +139,37 @@ async function load() {
     mySubmissions.value = Array.isArray(subs?.items) ? subs.items : []
     state.value = 'ready'
     await loadProblemNo()
-    // 题目关联（含最新提交与编辑器快照）：浮窗静默接收，不自动打开。
-    announceToTutor()
   } catch (caught) {
     const status = caught?.response?.status
     error.value = status === 404 ? '题目不存在或未发布' : (caught?.message || '题目加载失败')
     state.value = 'error'
+  }
+}
+
+/**
+ * 判题完成后的**轻量刷新**：只更新「我的提交/我的状态」，绝不把页面置回 loading。
+ *
+ * ⚠️ 不能用 `load()`：它先把 `state` 置为 `'loading'`，模板的
+ * `<SfxSkeleton v-if="state === 'loading'">` 会**卸载整个答题区（含 CodeWorkbench）**，
+ * 重新挂载后编辑器回到起始代码 —— 学生的代码被判题「吃掉」、刚出炉的判题结果
+ * 也一起消失（2026-09-13 家良反馈）。
+ */
+async function refreshAfterSubmit() {
+  if (!courseId.value || !experimentId.value) return
+  try {
+    const [detail, subs] = await Promise.all([
+      getOJProblem(courseId.value, experimentId.value),
+      listOJSubmissions(courseId.value, {
+        experiment_id: experimentId.value,
+        limit: 5,
+      }).catch(() => null),
+    ])
+    // problem 换新对象会触发 CodeWorkbench 的 experiment watch；
+    // 那边已改为「experiment_id 未变就不重置」，所以这里不会清状态。
+    problem.value = detail
+    mySubmissions.value = Array.isArray(subs?.items) ? subs.items : []
+  } catch {
+    // 判题已成功，刷新失败不打断学生；下次进页会重新拉
   }
 }
 
@@ -198,64 +219,6 @@ function formatOutcome(value) {
     accepted: '通过', wrong_answer: '答案错误', runtime_error: '运行错误',
     time_limit_exceeded: '超时', compile_error: '编译错误', pending: '评测中',
   }[value] || value
-}
-
-/** NX-CT1-R5：向伴学浮窗广播题目关联（静默，不自动打开）。
- * 带最新一次提交（若有）+ 编辑器当前代码快照；浮窗侧验主后绑定。 */
-function latestSubmission() {
-  const items = Array.isArray(mySubmissions.value) ? mySubmissions.value : []
-  if (!items.length) return null
-  const withTime = items.filter((s) => s.submitted_at || s.finished_at || s.created_at)
-  const pool = withTime.length ? withTime : items
-  return pool.reduce((best, cur) => {
-    const bt = Date.parse(best.submitted_at || best.finished_at || best.created_at || 0) || 0
-    const ct = Date.parse(cur.submitted_at || cur.finished_at || cur.created_at || 0) || 0
-    return ct > bt ? cur : best
-  })
-}
-
-function workbenchCode() {
-  try {
-    return String(workbenchRef.value?.getCode?.() ?? '')
-  } catch {
-    return ''
-  }
-}
-
-function announceToTutor() {
-  if (!courseId.value || !experimentId.value) return
-  const latest = latestSubmission()
-  window.dispatchEvent(new CustomEvent(CODE_TUTOR_PROBLEM_EVENT, {
-    detail: {
-      courseId: courseId.value,
-      experimentId: experimentId.value,
-      title: problem.value?.title || '',
-      runId: latest?.run_id || null,
-      codeSnapshot: workbenchCode(),
-    },
-  }))
-}
-
-let codeAnnounceTimer = null
-function onWorkbenchCodeChange() {
-  if (codeAnnounceTimer) window.clearTimeout(codeAnnounceTimer)
-  codeAnnounceTimer = window.setTimeout(() => {
-    codeAnnounceTimer = null
-    announceToTutor()
-  }, 1500)
-}
-
-onBeforeUnmount(() => {
-  if (codeAnnounceTimer) window.clearTimeout(codeAnnounceTimer)
-})
-
-/** NX-CT1：带着某次提交去问代码伴学（只发引用声明，验主在服务端）。 */
-function askCodeTutor(runId) {
-  const rid = String(runId || '')
-  if (!rid || !courseId.value) return
-  window.dispatchEvent(new CustomEvent(CODE_TUTOR_BIND_EVENT, {
-    detail: { courseId: courseId.value, runId: rid },
-  }))
 }
 
 function backToBank() {
@@ -400,14 +363,6 @@ onMounted(async () => {
                   {{ sub.passed_count }}/{{ sub.total_count }} 用例 ·
                   {{ sub.cpu_time_ms === null || sub.cpu_time_ms === undefined ? '—' : `${sub.cpu_time_ms} ms` }}
                 </span>
-                <SfxButton
-                  v-if="counter.canUseNexus"
-                  variant="tertiary"
-                  size="sm"
-                  @click="askCodeTutor(sub.run_id)"
-                >
-                  <Sparkles :size="14" /> 问伴学
-                </SfxButton>
               </div>
             </div>
           </div>
@@ -425,8 +380,7 @@ onMounted(async () => {
             :languages="languages"
             :activity-id="activityId"
             :mode="isStudent ? 'both' : 'free'"
-            @code-change="onWorkbenchCodeChange"
-            @submit-complete="load"
+            @submit-complete="refreshAfterSubmit"
           />
           <SfxEmpty
             v-else
@@ -439,8 +393,6 @@ onMounted(async () => {
       </div>
     </template>
   </div>
-  <!-- NX-CT1 代码伴学浮窗：题目详情页单独挂载（非 OJLayout 子路由） -->
-  <NexusCodeTutorFloat v-if="counter.canUseNexus" />
 </template>
 
 <style scoped>

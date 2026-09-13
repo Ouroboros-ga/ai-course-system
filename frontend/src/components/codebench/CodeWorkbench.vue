@@ -1,9 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { BookOpen, Terminal, ListChecks, Lightbulb, GripHorizontal, ChevronLeft, ChevronRight, Sparkles } from 'lucide-vue-next'
-import SfxButton from '@/app/ui/SfxButton.vue'
-import { useCounterStore } from '@/stores/counter.js'
-import { CODE_TUTOR_BIND_EVENT } from '@/api/nexus.js'
+import { BookOpen, Terminal, ListChecks, Lightbulb, GripHorizontal, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import CodeEditor from './CodeEditor.vue'
 import CodeOutput from './CodeOutput.vue'
 import CodeToolbar from './CodeToolbar.vue'
@@ -56,17 +53,6 @@ const emit = defineEmits([
   'submit-error',
   'update:problemCollapsed',
 ])
-
-const counter = useCounterStore()
-
-/** NX-CT1：带着本次正式提交去问代码伴学（只发引用声明，验主在服务端）。 */
-function askCodeTutor() {
-  const runId = formalRun.value?.run_id
-  if (!runId) return
-  window.dispatchEvent(new CustomEvent(CODE_TUTOR_BIND_EVENT, {
-    detail: { courseId: props.courseId, runId },
-  }))
-}
 
 // 状态
 const sourceCode = ref(props.initialCode || '')
@@ -190,6 +176,27 @@ function newIdempotencyKey() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
   return `experiment-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
+
+/** 正式评测的汇总卡数据（洛谷式判题结果页的右栏）。
+ *  score / 用时 / 内存 / 语言都在 run 上，test_results 只管逐用例明细。 */
+const runSummary = computed(() => {
+  if (!formalRun.value) return null
+  const run = formalRun.value
+  return {
+    outcome: run.outcome || formalOutcome.value,
+    score: run.score,
+    timeMs: run.cpu_time_ms,
+    wallTimeMs: run.wall_time_ms,
+    memoryKb: run.memory_kb,
+    language: run.language,
+    passedCount: run.passed_count,
+    totalCount: run.total_count,
+    compileMessage: run.compile_message,
+    runtimeMessage: run.runtime_message,
+    errorMessage: run.error_message,
+    submittedAt: run.finished_at || run.submitted_at,
+  }
+})
 
 function waitForPoll() {
   return new Promise((resolve) => window.setTimeout(resolve, 1000))
@@ -392,7 +399,14 @@ const visibleTabs = computed(() => {
 })
 
 // 监听实验变化
+// ⚠️ 只在**真的换了题**时才重置：父页面在判题完成后会重新拉题目详情，
+// experiment 是个 computed、每次都是新对象 —— 若按引用比较就会把刚出炉的
+// 判题结果/诊断全部清空（2026-09-13 家良反馈「判题完没反馈 + 代码被清空」）。
+let watchedExperimentId = null
 watch(() => props.experiment, (newExp) => {
+  const nextId = newExp?.experiment_id ?? null
+  if (nextId === watchedExperimentId) return
+  watchedExperimentId = nextId
   if (newExp) {
     // 语言先纠正（题目白名单优先），再按语言取起始代码。
     // starter_code 是 {language: code} 字典——必须经 pickStarterCode 归一，
@@ -599,6 +613,7 @@ defineExpose({
               :outcome="formalOutcome"
               :status="formalState === 'running' ? 'running' : (formalState === 'done' ? 'done' : 'idle')"
               :progress="formalProgress"
+              :summary="runSummary"
             />
           </div>
 
@@ -631,12 +646,6 @@ defineExpose({
                     <li v-for="(step, i) in formalExplanation.next_steps" :key="i">{{ step }}</li>
                   </ul>
                 </div>
-              </div>
-              <div v-if="formalRun?.run_id && counter.canUseNexus && props.variant === 'oj'" class="diag-ask">
-                <SfxButton variant="secondary" size="sm" @click="askCodeTutor">
-                  <Sparkles :size="14" /> 问代码伴学
-                </SfxButton>
-                <span class="diag-ask-hint">带着这次提交去问 Nexus 伴学（只读你的提交快照）</span>
               </div>
             </div>
             <div v-else class="diagnosis-empty">
@@ -1104,20 +1113,6 @@ defineExpose({
 
 .diag-steps li {
   margin: 4px 0;
-}
-
-.diag-ask {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--code-border);
-}
-
-.diag-ask-hint {
-  font-size: 12px;
-  color: var(--code-muted);
 }
 
 .diagnosis-empty {
