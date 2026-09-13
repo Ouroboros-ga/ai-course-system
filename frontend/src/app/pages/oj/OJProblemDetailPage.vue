@@ -2,8 +2,10 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowLeft, Check, Copy, Languages, PanelRightClose, PanelRightOpen,
+  ArrowLeft, Check, Copy, Languages, PanelRightClose, PanelRightOpen, Sparkles,
 } from 'lucide-vue-next'
+import { useCounterStore } from '@/stores/counter.js'
+import { CODE_TUTOR_BIND_EVENT } from '@/api/nexus.js'
 import { listExperimentCourses } from '@/api/labs.js'
 import { getOJProblem, listOJProblems, listOJSubmissions } from '@/api/oj.js'
 import { getCourseCapabilities } from '@/api/course_access.js'
@@ -37,6 +39,7 @@ import {
  */
 const route = useRoute()
 const router = useRouter()
+const counter = useCounterStore()
 
 const experimentId = computed(() => String(route.params.experimentId || ''))
 // 活动归属：作业页带 ?activity= 进来；直达题库则为空（自由练习）。
@@ -194,6 +197,15 @@ function formatOutcome(value) {
   }[value] || value
 }
 
+/** NX-CT1：带着某次提交去问代码伴学（只发引用声明，验主在服务端）。 */
+function askCodeTutor(runId) {
+  const rid = String(runId || '')
+  if (!rid || !courseId.value) return
+  window.dispatchEvent(new CustomEvent(CODE_TUTOR_BIND_EVENT, {
+    detail: { courseId: courseId.value, runId: rid },
+  }))
+}
+
 function backToBank() {
   router.push('/app/oj/bank')
 }
@@ -336,6 +348,14 @@ onMounted(async () => {
                   {{ sub.passed_count }}/{{ sub.total_count }} 用例 ·
                   {{ sub.cpu_time_ms === null || sub.cpu_time_ms === undefined ? '—' : `${sub.cpu_time_ms} ms` }}
                 </span>
+                <SfxButton
+                  v-if="counter.canUseNexus"
+                  variant="tertiary"
+                  size="sm"
+                  @click="askCodeTutor(sub.run_id)"
+                >
+                  <Sparkles :size="14" /> 问伴学
+                </SfxButton>
               </div>
             </div>
           </div>

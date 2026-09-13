@@ -1944,4 +1944,18 @@ test('NX-CT1 代码伴学浮窗：全局挂载+门控+绑定事件链', () => {
   assert.match(bench, /问代码伴学/)
   assert.match(bench, /counter\.canUseNexus/)
   assert.match(bench, /CODE_TUTOR_BIND_EVENT/)
+  // R3：OJ 题目页我的提交逐行 + 提交页详情头均有伴学入口（门控+引用声明）。
+  const ojDetail = read('frontend/src/app/pages/oj/OJProblemDetailPage.vue')
+  const ojSubs = read('frontend/src/app/pages/oj/OJSubmissionsPage.vue')
+  assert.match(ojDetail, /问伴学/)
+  assert.match(ojDetail, /counter\.canUseNexus/)
+  assert.match(ojDetail, /askCodeTutor\(sub\.run_id\)/)
+  assert.match(ojDetail, /CODE_TUTOR_BIND_EVENT/)
+  assert.match(ojSubs, /问代码伴学/)
+  assert.match(ojSubs, /counter\.canUseNexus/)
+  assert.match(ojSubs, /selected\.value\?\.run_id/)
+  assert.match(ojSubs, /CODE_TUTOR_BIND_EVENT/)
+  // 全局性：浮窗只挂 AppShell，不进任何页面组件（切页不卸载）。
+  assert.doesNotMatch(ojDetail, /NexusCodeTutorFloat/)
+  assert.doesNotMatch(ojSubs, /NexusCodeTutorFloat/)
 })
