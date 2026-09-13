@@ -8,6 +8,7 @@ import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+import { formatDateTime } from './ojTheme.js'
 
 /**
  * 活动作业（PR-12，设计稿④「待完成的任务」区）。
@@ -18,6 +19,8 @@ const router = useRouter()
 
 const courses = ref([])
 const courseId = ref('')
+/** ⚠️ 只表达「数据源层」状态（有没有课程），不要拿它表达「有没有作业」——
+ *  否则零作业的新课程会落进空态分支（活动管理页踩过的死锁同款）。 */
 const state = ref('loading')
 const error = ref('')
 const activities = ref([])
@@ -40,7 +43,8 @@ function windowTone(status) {
 }
 
 function formatDate(value) {
-  return value ? value.slice(0, 16).replace('T', ' ') : '不限'
+  // 后端给的是 UTC ISO（带 +00:00）→ 必须转本地时区；此前 slice 硬切显示的是 UTC
+  return value ? formatDateTime(value) : '不限'
 }
 
 function openProblem(activity, problem) {
@@ -56,6 +60,8 @@ function openProblem(activity, problem) {
 async function loadCourses() {
   courses.value = await listExperimentCourses()
   courseId.value = courses.value[0] ? String(courses.value[0].course_id) : ''
+  // 没有「可选课程」才是真正的空态；有没有作业由下方 activities.length 决定
+  if (!courseId.value) state.value = 'empty'
 }
 
 async function load() {
@@ -110,7 +116,12 @@ onMounted(async () => {
     <SfxSkeleton v-if="state === 'loading'" :lines="5" block />
     <SfxError v-else-if="state === 'error'" :description="error" @retry="load" />
     <SfxEmpty
-      v-else-if="state === 'empty' || !activities.length"
+      v-else-if="state === 'empty'"
+      title="没有可作答的课程"
+      description="课程启用代码沙箱实验平台后，这里的作业才会出现。"
+    />
+    <SfxEmpty
+      v-else-if="!activities.length"
       title="暂无进行中的作业"
       description="教师发布作业后，这里会出现可作答的活动。"
     />
@@ -146,7 +157,7 @@ onMounted(async () => {
             @click="activity.can_submit && openProblem(activity, problem)"
             @keyup.enter="activity.can_submit && openProblem(activity, problem)"
           >
-            {{ problem.label || problem.ordinal }}. {{ problem.max_score }} 分
+            {{ problem.title || problem.label || `第 ${problem.ordinal} 题` }} · {{ problem.max_score }} 分
           </span>
         </div>
         <p v-if="activity.window_status === 'late'" class="sfx-t-caption">

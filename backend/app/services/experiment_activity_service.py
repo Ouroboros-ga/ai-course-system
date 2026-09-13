@@ -27,7 +27,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import to_aware, utcnow_aware
+from app.core.time_utils import to_aware, to_iso, to_naive, utcnow_aware
 from app.domain.oj.activity import (
     ActivityStatus,
     MAX_PROBLEMS_PER_ACTIVITY,
@@ -51,6 +51,24 @@ from app.models.experiment_activity_model import (
 from app.models.experiment_model import ExperimentAttempt, ExperimentDefinition, ExperimentVersion
 
 logger = logging.getLogger(__name__)
+
+
+def to_db_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """把入参时间归一为 **naive-UTC** 后入库。
+
+    ⚠️ 2026-09-13 修的一个 P0：`experiment_activities.start_at / end_at / freeze_at`
+    都是 `sa.DateTime()`（**无时区**），此前直接把前端传来的 datetime 落库 ——
+    而前端 `<input type="datetime-local">` 发的是**本地墙钟字符串**（naive），
+    服务端比较窗口时又用 `to_aware()` 把 naive **当 UTC** 解释。
+    净效果是：教师填「9/13 20:00（北京）」，学生要到 9/14 04:00 才能交 ——
+    **窗口整体偏 8 小时，且界面显示的还是 20:00**（界面与行为互相矛盾）。
+
+    契约（2026-09-13 起）：**API 的 datetime 参数一律是 UTC**。
+    前端用 `new Date(local).toISOString()` 发出（带 Z）；aware 输入 → 转 UTC 后
+    剥 tzinfo；naive 输入按 UTC 解释（与 `to_aware` 既有约定一致）——
+    这样老客户端不炸，只是行为不变，而新客户端是准确的。
+    """
+    return None if value is None else to_naive(to_aware(value))
 
 
 class ExperimentActivityService:
@@ -99,8 +117,8 @@ class ExperimentActivityService:
             title=title,
             type=activity_type,
             description_md=description_md,
-            start_at=start_at,
-            end_at=end_at,
+            start_at=to_db_utc(start_at),
+            end_at=to_db_utc(end_at),
             allow_late_submit=allow_late_submit,
             max_submissions=max_submissions,
             scoring_mode=normalize_scoring_mode(scoring_mode),
@@ -158,9 +176,9 @@ class ExperimentActivityService:
             activity.end_at = None
         else:
             if start_at is not None:
-                activity.start_at = start_at
+                activity.start_at = to_db_utc(start_at)
             if end_at is not None:
-                activity.end_at = end_at
+                activity.end_at = to_db_utc(end_at)
         try:
             validate_time_window(activity.start_at, activity.end_at)
         except ValueError as exc:
@@ -283,13 +301,20 @@ class ExperimentActivityService:
                 allow_late_submit=activity.allow_late_submit,
             )
             problems = self.list_problems(session, activity_id=activity.activity_id)
+            # 题目标题：学生卡片上要能看出「这是哪道题」，只有 ordinal + 分数
+            # 等于让学生对着「1. 100 分」猜（2026-09-13 前端审计发现）。
+            titles = self._problem_titles(
+                session, definition_ids={p.problem_definition_id for p in problems}
+            )
             result.append({
                 "activity_id": activity.activity_id,
                 "title": activity.title,
                 "type": activity.type,
                 "description_md": activity.description_md,
-                "start_at": activity.start_at.isoformat() if activity.start_at else None,
-                "end_at": activity.end_at.isoformat() if activity.end_at else None,
+                # ⚠️ 用 to_iso()：带 +00:00 的 UTC 串，前端 new Date() 才能转回本地。
+                # naive isoformat 会被 JS 当本地时间解读，与窗口判定用的 UTC 差 8 小时。
+                "start_at": to_iso(activity.start_at) or None,
+                "end_at": to_iso(activity.end_at) or None,
                 "window_status": reason,
                 "can_submit": allowed,
                 "allow_late_submit": activity.allow_late_submit,
@@ -301,6 +326,7 @@ class ExperimentActivityService:
                         "ordinal": p.ordinal,
                         "problem_definition_id": p.problem_definition_id,
                         "label": p.label,
+                        "title": titles.get(p.problem_definition_id),
                         "max_score": p.max_score,
                     }
                     for p in problems
@@ -393,6 +419,23 @@ class ExperimentActivityService:
             reject_resource_not_found(f"题序 {ordinal} 不存在")
         session.delete(problem)
         session.flush()
+
+    def _problem_titles(
+        self, session: OrmSession, *, definition_ids: set[str]
+    ) -> dict[str, str]:
+        """批量取题目标题（experiment_id → title）。
+
+        一次查询，避免活动卡上每道题各打一次 N+1；取不到的题不产生键
+        （前端回退显示 label / ordinal）。
+        """
+        if not definition_ids:
+            return {}
+        rows = session.exec(
+            select(ExperimentDefinition.experiment_id, ExperimentDefinition.title).where(
+                ExperimentDefinition.experiment_id.in_(definition_ids)  # type: ignore[attr-defined]
+            )
+        ).all()
+        return {experiment_id: title for experiment_id, title in rows if title}
 
     def list_problems(
         self, session: OrmSession, *, activity_id: str

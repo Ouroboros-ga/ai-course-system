@@ -8,6 +8,7 @@ import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+import { formatDateTime } from './ojTheme.js'
 
 /**
  * 我的提交（PR-10，设计稿③）：左列提交记录，右列单条详情。
@@ -219,7 +220,7 @@ onMounted(async () => {
           <div class="sfx-t-caption sfx-t-secondary">
             {{ item.language }} · {{ item.passed_count }}/{{ item.total_count }} 用例 ·
             {{ item.cpu_time_ms === null ? '—' : `${item.cpu_time_ms} ms` }}
-            <template v-if="item.submitted_at"> · {{ item.submitted_at.slice(0, 16).replace('T', ' ') }}</template>
+            <template v-if="item.submitted_at"> · {{ formatDateTime(item.submitted_at) }}</template>
           </div>
         </div>
       </section>

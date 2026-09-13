@@ -158,6 +158,14 @@ function goHall() {
   router.push('/app/courses/hall')
 }
 
+/** 右侧品牌大卡（「开始使用 Nexus」）→ Nexus AI 全局助手。
+ *  ⚠️ 卡片文案 2026-09-13 改为「开始使用 Nexus」后，点击目标必须同步从
+ *  课程大厅换成 /app/nexus —— 否则又是一个「文案说 A、点击去 B」的断链
+ *  （教师页头部按钮踩过同款）。 */
+function goNexus() {
+  router.push('/app/nexus')
+}
+
 // 「实验室」入口暂时隐藏（2026-08-20）；恢复快捷卡片时取消注释即可
 // function goLab() {
 //   router.push('/app/lab')
@@ -234,14 +242,22 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- 右侧：品牌大卡 -->
-        <button class="sfx-home-brand-card animate-in" style="animation-delay: 0.3s" @click="goHall">
+        <!-- 右侧：Nexus 入口大卡（2026-09-13 由「探索课程大厅」改为「开始使用 Nexus」，
+             点击目标同步改为 /app/nexus） -->
+        <button class="sfx-home-brand-card animate-in" style="animation-delay: 0.3s" @click="goNexus">
           <div class="sfx-home-brand-card__text">
-            <h3>CodeNexus智码交响</h3>
+            <h3>开始使用 Nexus</h3>
             <p>
-              探索课程大厅
+              与 Nexus AI 对话
               <span class="sfx-home-brand-card__arrow" aria-hidden="true">→</span>
             </p>
+          </div>
+          <!-- 卡片底部的能力标签：文案变短后 290×330 的卡面会明显空，
+               用三条**真实能力**补位（对话 / 代码执行 / 知识溯源），不做装饰性假元素 -->
+          <div class="sfx-home-brand-card__tags" aria-hidden="true">
+            <span>对话</span>
+            <span>代码执行</span>
+            <span>知识溯源</span>
           </div>
         </button>
       </div>
@@ -875,6 +891,25 @@ onBeforeUnmount(() => {
 /* 底部文字 */
 .sfx-home-brand-card__text {
   position: relative;
+}
+
+/* 卡片底部能力标签：半透明描边 chip，弱于主文案、强于纯装饰 */
+.sfx-home-brand-card__tags {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sfx-home-brand-card__tags span {
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .sfx-home-brand-card__text h3 {

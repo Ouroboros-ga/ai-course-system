@@ -26,6 +26,7 @@ from app.models.experiment_model import (
 
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
+from app.core.time_utils import to_iso
 from app.models.database import get_session
 from app.models.experiment_activity_model import ExperimentActivityProblem
 from app.services.course_access_service import require_course_permission
@@ -86,6 +87,9 @@ class ActivityScopeSetRequest(BaseModel):
 
 
 def _serialize_activity(a) -> dict[str, Any]:
+    # ⚠️ 时间一律 `to_iso()`（带 +00:00）。此前用 `.isoformat()`，而列是
+    # `sa.DateTime()`（无时区）→ naive 值序列化出来**没有时区标记**，
+    # 前端 `new Date()` 会把它当本地时间解读，与真实的 UTC 语义差 8 小时。
     return {
         "activity_id": a.activity_id,
         "type": a.type,
@@ -94,16 +98,16 @@ def _serialize_activity(a) -> dict[str, Any]:
         "course_id": a.course_id,
         "owner_id": a.owner_id,
         "status": a.status,
-        "start_at": a.start_at.isoformat() if a.start_at else None,
-        "end_at": a.end_at.isoformat() if a.end_at else None,
+        "start_at": to_iso(a.start_at) or None,
+        "end_at": to_iso(a.end_at) or None,
         "allow_late_submit": a.allow_late_submit,
-        "freeze_at": a.freeze_at.isoformat() if a.freeze_at else None,
+        "freeze_at": to_iso(a.freeze_at) or None,
         "scoring_mode": a.scoring_mode,
         "ranking_mode": a.ranking_mode,
         "max_submissions": a.max_submissions,
-        "published_at": a.published_at.isoformat() if a.published_at else None,
-        "created_at": a.created_at.isoformat() if a.created_at else None,
-        "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+        "published_at": to_iso(a.published_at) or None,
+        "created_at": to_iso(a.created_at) or None,
+        "updated_at": to_iso(a.updated_at) or None,
     }
 
 

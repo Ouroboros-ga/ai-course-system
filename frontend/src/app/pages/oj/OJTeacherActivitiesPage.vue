@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import request from '@/utils/request.js'
-import { listFacadeCourses } from '@/api/facade.js'
+import { listFacadeCourseItems } from '@/api/facade.js'
 import {
   addOJActivityProblem, archiveOJActivity, createOJActivity,
   listOJActivities, publishOJActivity, removeOJActivityProblem, setOJActivityScopes,
@@ -15,6 +15,14 @@ import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 /**
  * 活动管理（教师，PR-08 端点的管理页；设计稿⑧的作业形态，contest 未做）。
  * 防作弊设置 / icpc 排行规则后端未实现，表单里不出现（不做假开关）。
+ *
+ * ⚠️ 两处曾经把自己锁死（2026-09-13 实测复现）：
+ * ① 课程列表必须经 `listFacadeCourseItems` 解包 —— `/facade/courses` 返回
+ *    `{items, total, ...}` 信封而不是裸数组，直接赋值会让 `courseId` 恒为空；
+ * ② `state` **只表达课程层状态**，不表达「有没有活动」。先前写成
+ *    `activities.length ? 'ready' : 'empty'`，于是零活动的新课程永远进不到
+ *    创建表单那一支 —— 形成「没有活动 → 看不到创建表单 → 永远建不出第一个活动」
+ *    的死锁。零活动的空态由下方那块 `SfxEmpty`（还没有活动）单独负责。
  */
 const courses = ref([])
 const courseId = ref('')
@@ -37,14 +45,19 @@ const scopeWholeCourse = ref(true)
 const selectedActivityId = ref('')
 const problemPick = ref('')
 
+/** 表单里写明时区 —— `<input type="datetime-local">` 给的是本地墙钟，
+ *  提交前要转成 UTC ISO（见 createActivity），不写清楚用户会以为填的是服务器时间。 */
+const timeZone = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || '本地时区' } catch { return '本地时区' }
+})()
+
 const selectedActivity = computed(() =>
   activities.value.find((a) => a.activity_id === selectedActivityId.value) || null
 )
 const detail = ref(null)
 
 async function loadCourses() {
-  const building = await listFacadeCourses('building').catch(() => [])
-  courses.value = building || []
+  courses.value = await listFacadeCourseItems('building').catch(() => [])
   courseId.value = courses.value[0] ? String(courses.value[0].course_id) : ''
   if (!courseId.value) state.value = 'empty'
 }
@@ -65,7 +78,10 @@ async function load() {
       selectedActivityId.value = activities.value[0].activity_id
     }
     await loadDetail()
-    state.value = activities.value.length ? 'ready' : 'empty'
+    // ⚠️ 不能写 `activities.length ? 'ready' : 'empty'` —— 那会让零活动的新课程
+    // 落进「没有可管理的教学课程」分支，创建表单整块消失，永远建不出第一个活动。
+    // 「有没有活动」由下方 `SfxEmpty`（还没有活动）单独表达。
+    state.value = 'ready'
   } catch (caught) {
     error.value = caught?.message || '活动加载失败'
     state.value = 'error'
@@ -96,8 +112,8 @@ async function createActivity() {
       allow_late_submit: form.value.allow_late_submit,
       max_submissions: form.value.max_submissions,
     }
-    if (form.value.start_at) payload.start_at = form.value.start_at
-    if (form.value.end_at) payload.end_at = form.value.end_at
+    if (form.value.start_at) payload.start_at = new Date(form.value.start_at).toISOString()
+    if (form.value.end_at) payload.end_at = new Date(form.value.end_at).toISOString()
     const created = await createOJActivity(courseId.value, payload)
     message.value = `活动「${created.title}」已创建（草稿）`
     form.value = { title: '', description_md: '', start_at: '', end_at: '', allow_late_submit: false, max_submissions: 0 }
@@ -242,6 +258,9 @@ onMounted(async () => {
           <label class="sfx-t-ui">截止 <input v-model="form.end_at" class="sfx-input" type="datetime-local" /></label>
           <SfxButton variant="primary" size="sm" :disabled="busy" @click="createActivity">创建</SfxButton>
         </div>
+        <p class="sfx-t-caption sfx-t-secondary oj-tz-hint">
+          时间按浏览器本地时区（{{ timeZone }}）填写，学生端会自动换算成各自时区显示。
+        </p>
       </section>
 
       <SfxEmpty v-if="!activities.length" title="还没有活动" description="用上方表单创建第一个作业。" />
@@ -368,4 +387,5 @@ onMounted(async () => {
 /* 基础样式 .sfx-input/.sfx-select 是 width:100%（base.css）——横向行里必须
    显式约束宽度，否则每个控件各占一行（2026-09-11 截图复核发现）。 */
 .oj-form-row .sfx-input, .oj-form-row .sfx-select { width: auto; flex: 0 0 auto; min-width: 150px; }
+.oj-tz-hint { margin: 0; }
 </style>

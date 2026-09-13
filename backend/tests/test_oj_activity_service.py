@@ -596,3 +596,84 @@ class TestCrossCourseIsolation:
                 session, course_id=course.id + 999, activity_id=activity.activity_id
             )
         assert exc.value.status_code == 404
+
+
+class TestTimezoneContract:
+    """2026-09-13 P0 回归：活动作答窗口曾整体偏 8 小时。
+
+    链路：前端 `<input type="datetime-local">` 发的是**本地墙钟**（naive）→
+    原样入库（列是 `sa.DateTime()`，无时区）→ 服务端比较窗口时 `to_aware()`
+    把 naive **当 UTC** 解释 → 教师填 20:00（北京），学生 04:00 才能交，
+    而界面显示的还是 20:00 —— 界面与行为互相矛盾。
+
+    契约（修后）：**API 的 datetime 参数一律是 UTC**（前端 `toISOString()`），
+    服务端入库前归一为 naive-UTC；响应用 `to_iso()`（带 +00:00）。
+    """
+
+    CST = timezone(timedelta(hours=8))
+
+    def test_aware_input_is_stored_as_naive_utc(
+        self, session, teacher_user, course, svc
+    ):
+        start = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)  # 北京 20:00
+        end = start + timedelta(hours=1)
+        activity = svc.create_activity(
+            session, course_id=course.id, owner_id=teacher_user.id,
+            title="时区契约", start_at=start, end_at=end,
+        )
+        session.refresh(activity)
+        # 列是 naive：入库后不得残留 tzinfo（否则 PG 会话时区决定落库结果，不可复现）
+        assert activity.start_at.tzinfo is None
+        assert activity.end_at.tzinfo is None
+        assert activity.start_at == datetime(2026, 9, 13, 12, 0)
+        assert activity.end_at == datetime(2026, 9, 13, 13, 0)
+
+    def test_window_opens_at_the_wall_clock_the_teacher_meant(
+        self, session, teacher_user, course, svc
+    ):
+        """关键回归：北京 20:00 那一刻必须能提交（修复前是 not_started）。"""
+        from app.core.time_utils import to_aware
+        from app.domain.oj.activity import is_submission_open
+
+        start = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)  # 北京 20:00
+        activity = svc.create_activity(
+            session, course_id=course.id, owner_id=teacher_user.id,
+            title="窗口回归", start_at=start, end_at=start + timedelta(hours=1),
+        )
+        session.refresh(activity)
+        beijing_2000 = datetime(2026, 9, 13, 20, 0, tzinfo=self.CST).astimezone(timezone.utc)
+        allowed, reason = is_submission_open(
+            beijing_2000,
+            start_at=to_aware(activity.start_at),
+            end_at=to_aware(activity.end_at),
+            allow_late_submit=False,
+        )
+        assert allowed is True, reason
+        assert reason == "open"
+
+    def test_naive_input_is_still_interpreted_as_utc(
+        self, session, teacher_user, course, svc
+    ):
+        """兼容性钉子：naive 输入按 UTC 解释（`to_aware` 既有约定），不得改成"按本地"。"""
+        activity = svc.create_activity(
+            session, course_id=course.id, owner_id=teacher_user.id,
+            title="naive 输入", start_at=datetime(2026, 9, 13, 12, 0),
+        )
+        session.refresh(activity)
+        assert activity.start_at == datetime(2026, 9, 13, 12, 0)
+
+    def test_serializer_emits_utc_offset(self, session, teacher_user, course, svc):
+        """响应必须带 +00:00，否则前端 `new Date()` 把它当本地时间又差 8 小时。"""
+        from app.api.v1.endpoints.experiment_activities import _serialize_activity
+        from app.core.time_utils import to_iso
+
+        start = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)
+        activity = svc.create_activity(
+            session, course_id=course.id, owner_id=teacher_user.id,
+            title="序列化", start_at=start, end_at=start + timedelta(hours=1),
+        )
+        data = _serialize_activity(activity)
+        for key in ("start_at", "end_at"):
+            assert data[key] is not None and data[key].endswith("+00:00"), key
+        # 与 to_iso 的输出一致 —— 别再造第三种序列化
+        assert data["start_at"] == to_iso(activity.start_at)
