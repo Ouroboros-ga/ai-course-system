@@ -271,6 +271,9 @@ function formatScore(score) {
   background: var(--code-panel);
   color: var(--code-text);
   font-size: 13px;
+  /* 兜底：横幅/输出块/卡片网格加起来超出面板固定高度时**整体滚动**，
+     任何内容都不会被 overflow:hidden 无声裁掉（2026-09-13 家良反馈「显示不全」） */
+  overflow-y: auto;
 }
 
 .testcases-header {
@@ -459,9 +462,29 @@ function formatScore(score) {
 }
 
 .message-block {
-  flex-shrink: 0;
+  /* ⚠️ 不能 flex-shrink:0：外层 .wb-tab-content 是 overflow:hidden，
+     输出块一旦超出面板固定高度就会被**无声裁掉**（2026-09-13 家良反馈
+     「运行输出显示不全」）。改为可收缩 + 内部滚动。 */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   padding: 10px 16px;
   border-bottom: 1px solid var(--code-border);
+}
+
+.message-block .detail-label {
+  flex-shrink: 0;
+}
+
+.message-block .detail-pre {
+  flex: 1 1 auto;
+  /* 输出区最小可用高度：面板再矮也至少能看 6~7 行，超长内部滚动 */
+  min-height: 132px;
+  /* 覆盖 .detail-pre 的 220px 上限：高度由面板剩余空间决定，超长内部滚动 */
+  max-height: none;
+  overflow: auto;
 }
 
 .testcases-list {
