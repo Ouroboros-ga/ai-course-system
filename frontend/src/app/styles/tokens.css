@@ -72,6 +72,16 @@
   --code-text: #E6EDF3;
   --code-muted: #8B98AA;
 
+  /* ── 1.6b 代码工作区（浅色变体，OJ 题目详情页用，对齐洛谷观感）──
+     默认仍是上面的深色孤岛；只有容器挂了 .code-surface--light 才生效，
+     工具栏/输出/输入/页签用到的 --code-* 会整组跟着变浅。
+     （编辑器本体的浅色配色在 CodeEditor.vue 内部自成一体，不依赖这组变量。） */
+  --code-bg-light: #FBFBFC;
+  --code-panel-light: #F6F8FA;
+  --code-border-light: #E3E6EA;
+  --code-text-light: #24292F;
+  --code-muted-light: #6B7683;
+
   /* ── 2 字体 ── */
   --font-sans: Inter, "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-serif: "Source Han Serif SC", "Noto Serif SC", serif;

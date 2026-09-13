@@ -452,6 +452,9 @@ defineExpose({
     :class="{
       'is-problem-collapsed': problemCollapsed && !hideProblemPanel,
       'is-single-column': hideProblemPanel,
+      // OJ 详情页用浅色工作台（洛谷观感）：把 --code-* 令牌整组换成浅色，
+      // 工具栏/输出/输入/页签跟着一起浅，避免「编辑器浅了、周边还是深的」。
+      'code-surface--light': variant === 'oj',
     }"
   >
     <!-- 左侧：题目描述（可收缩，参考 SfxLocalRail 设计）。
@@ -525,6 +528,7 @@ defineExpose({
           v-model="sourceCode"
           :language="selectedLanguage"
           :readonly="freeRunState === 'running' || formalState === 'running'"
+          :theme="variant === 'oj' ? 'light' : 'dark'"
           @run-shortcut="handleFreeRun"
         />
       </div>
@@ -658,6 +662,17 @@ defineExpose({
   border-radius: var(--radius-lg);
   overflow: hidden;
   transition: grid-template-columns var(--duration-normal) var(--ease-out);
+}
+
+/* 浅色工作台（OJ 题目详情页，variant='oj'）：
+   整组换掉 --code-* 令牌，工具栏/输出/输入/页签跟着变浅 ——
+   若只把 CodeEditor 的 theme 换浅而周边不动，就是半吊子的「浅块嵌深框」。 */
+.code-workbench.code-surface--light {
+  --code-bg: var(--code-bg-light);
+  --code-panel: var(--code-panel-light);
+  --code-border: var(--code-border-light);
+  --code-text: var(--code-text-light);
+  --code-muted: var(--code-muted-light);
 }
 
 .code-workbench.is-problem-collapsed {
