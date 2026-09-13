@@ -5,7 +5,7 @@ import {
   Chart as ChartJS,
   BarController, BarElement, CategoryScale, LinearScale,
   ArcElement, DoughnutController, PieController,
-  LineController, LineElement, PointElement, Tooltip, Legend,
+  LineController, LineElement, PointElement, Filler, Tooltip, Legend,
 } from 'chart.js'
 import { getLearningAnalytics, getStudentLearningAnalytics } from '@/api/facade.js'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
@@ -16,7 +16,7 @@ import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 ChartJS.register(
   BarController, BarElement, CategoryScale, LinearScale,
   ArcElement, DoughnutController, PieController,
-  LineController, LineElement, PointElement, Tooltip, Legend,
+  LineController, LineElement, PointElement, Filler, Tooltip, Legend,
 )
 
 const { courseId } = inject('courseContext')

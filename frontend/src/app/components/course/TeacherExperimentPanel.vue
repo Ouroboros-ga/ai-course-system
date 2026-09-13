@@ -374,8 +374,17 @@ const nextVersionNumber = computed(() => versions.value
 
 const activeVersion = computed(() => versions.value.find((version) => version.is_active === true) ?? null)
 const previewVerified = computed(() => Boolean(targetVersion.value?.reference_preview_verified_at)
-  || preview.value?.accepted === true)
+  || previewForTarget.value?.accepted === true)
 const targetLocked = computed(() => Boolean(targetVersion.value?.is_locked))
+
+/** 本次预览结果只属于跑它的那个版本：切版本/建新版后旧结果不得再点亮锁定。
+ * 服务端锁定只认 verified_at；本地 accepted 是未写回前的乐观显示，必须同版本才算数，
+ * 否则"旧版通过→建新版→锁新版"会一路绿灯撞上服务端 409（线上实证）。 */
+const previewForTarget = computed(() => {
+  const current = targetVersion.value
+  if (!current || !preview.value || preview.value.version_id !== current.version_id) return null
+  return preview.value
+})
 
 function cleanStarterCode() {
   const out = {}
@@ -463,7 +472,7 @@ const checklist = computed(() => {
       key: 'preview',
       label: '参考解预览全量通过',
       detail: previewVerified.value
-        ? `已通过${preview.value ? ` ${preview.value.passed_count}/${preview.value.total_count}` : ''}`
+        ? `已通过${previewForTarget.value ? ` ${previewForTarget.value.passed_count}/${previewForTarget.value.total_count}` : ''}`
         : '未通过，锁定的前提条件',
       state: previewVerified.value ? 'done' : (version ? 'ready' : 'blocked'),
       action: { label: '运行参考解预览', section: 'publish' },
@@ -744,6 +753,8 @@ async function createVersion() {
     )
     await loadVersions()
     testsForm.value.label = `v${nextVersionNumber.value}`
+    // 新版本用新身份：旧版本的本地预览结论不得继承，否则锁按钮会被误点亮。
+    preview.value = null
     // 新版本用的就是当前内容，所以基线重置后再创建同内容版本会被拦住。
     loadedSnapshot.value = snapshot()
     if (version?.version_id) {
@@ -765,7 +776,7 @@ async function runReferencePreview() {
   busyAction.value = 'preview'
   error.value = ''
   try {
-    preview.value = await previewExperimentReferenceSolution(
+    const result = await previewExperimentReferenceSolution(
       courseId.value,
       version.version_id,
       {
@@ -773,6 +784,10 @@ async function runReferencePreview() {
         source_code: referenceForm.value.source_code,
       },
     )
+    // 预览结果与版本绑定存放：目标版本一切换就失效，不带到新版本上。
+    preview.value = result && typeof result === 'object'
+      ? { ...result, version_id: version.version_id }
+      : result
     if (preview.value?.accepted) await loadVersions()
   } catch (requestError) {
     preview.value = null
@@ -1477,8 +1492,8 @@ onMounted(async () => {
           <div class="preview-block">
             <div class="preview-block__head">
               <h4 class="sfx-t-ui">参考解预览</h4>
-              <SfxBadge v-if="preview" :tone="preview.accepted ? 'green' : 'red'">
-                {{ preview.passed_count }} / {{ preview.total_count }} 通过
+              <SfxBadge v-if="previewForTarget" :tone="previewForTarget.accepted ? 'green' : 'red'">
+                {{ previewForTarget.passed_count }} / {{ previewForTarget.total_count }} 通过
               </SfxBadge>
               <SfxBadge v-else-if="previewVerified" tone="green">已通过</SfxBadge>
               <SfxBadge v-else tone="amber">未运行</SfxBadge>

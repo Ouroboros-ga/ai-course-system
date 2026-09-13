@@ -1970,3 +1970,22 @@ test('Facade 学情 coding 聚合：LabRecord 只能从 resource_model 导入', 
   assert.match(facade, /from app\.models\.resource_model import[\s\S]{0,200}?LabRecord/)
   assert.doesNotMatch(facade, /from app\.models\.experiment_model import[^\n]*LabRecord/)
 })
+
+test('出题面板：预览结论绑定版本，新版创建即清零（锁 409 回归锁）', () => {
+  // 线上实证：旧版预览通过→建新版→锁新版一路绿灯撞服务端 409。
+  const panel = read('frontend/src/app/components/course/TeacherExperimentPanel.vue')
+  assert.match(panel, /previewForTarget/)
+  assert.match(panel, /preview\.value\.version_id !== current\.version_id/)
+  assert.match(panel, /version_id: version\.version_id/)
+  // 创建新版本成功后本地预览结论清零，不继承到新版本。
+  assert.match(panel, /preview\.value = null/)
+  // 锁定门与徽章只认同版本结论，不直接读裸 preview。
+  assert.match(panel, /previewForTarget\.value\?\.accepted === true/)
+  assert.doesNotMatch(panel, /preview\.value\?\.accepted === true/)
+})
+
+test('学情页折线图：Filler 插件已注册（fill:true 不再告警）', () => {
+  const page = read('frontend/src/app/pages/course/CourseAnalyticsPage.vue')
+  assert.match(page, /Filler, Tooltip, Legend,/)
+  assert.match(page, /LineElement, PointElement, Filler, Tooltip, Legend/)
+})
