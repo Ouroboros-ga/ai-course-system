@@ -2083,3 +2083,37 @@ test('NX-CT1-R5 题目自动关联：引用声明+服务端投影+快照有界',
   assert.doesNotMatch(panel, /is-sub/)
   assert.doesNotMatch(panel, /function unbind\(\)/)
 })
+
+test('Judge0 状态映射：按上游状态表，编译/运行/信号类不得错位', () => {
+  // 线上实证 2026-09-13：旧表把 6 判成超内存、8 判成编译错误、9/10/11/12
+  // 判成系统错误（Python NZEC 报"系统错误"、编译失败报"超内存"）。
+  // 上游 Judge0 没有超内存状态 id：6=编译错误，7-12=运行错误，13/14=内部错误。
+  const provider = read('backend/app/domain/oj/judging/providers/judge0.py')
+  assert.match(provider, /6: SubmissionStatus\.COMPILATION_ERROR/)
+  assert.match(provider, /7: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /8: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /9: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /10: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /11: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /12: SubmissionStatus\.RUNTIME_ERROR/)
+  assert.match(provider, /13: SubmissionStatus\.INTERNAL_ERROR/)
+  assert.doesNotMatch(provider, /6: SubmissionStatus\.MEMORY_LIMIT_EXCEEDED/)
+  assert.doesNotMatch(provider, /8: SubmissionStatus\.COMPILATION_ERROR/)
+})
+
+test('Nexus SYSTEM_PROMPT：来源宣告节制句在位', () => {
+  // 用户定稿要求：命中预设直接推进，不重复宣告来源；丢了这句"已命中预设"会每轮复读。
+  const agent = read('nexus/src/nexus/agent.py')
+  assert.match(agent, /来源只在首次相关时提一次/)
+})
+
+test('Nexus 审批卡：过期预检+错误码人话（过期连点不再裸409）', () => {
+  // 线上实证：15 分钟 TTL 过期后点批准，decide 409 APPROVAL_EXPIRED，
+  // 旧文案只有"批准失败请重试"→用户连点→继续 409。
+  const nx = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  assert.match(nx, /function isApprovalExpired\(item\)/)
+  assert.match(nx, /expiresAt \?\? .*expires_at|expires_at \?\? .*expiresAt/)
+  assert.match(nx, /APPROVAL_EXPIRED/)
+  assert.match(nx, /APPROVAL_STATE_CONFLICT/)
+  assert.match(nx, /重新提案/)
+})
