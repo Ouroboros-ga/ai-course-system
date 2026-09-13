@@ -13,6 +13,7 @@ import { Send, Sparkles, Square, Unlink, Wrench, X } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import { showToast } from '@/utils/toast.js'
+import { renderContent } from '@/utils/markdownRenderer.js'
 import {
   CODE_TUTOR_BIND_EVENT,
   CODE_TUTOR_SESSION_ID,
@@ -23,9 +24,9 @@ import { getExperimentRun } from '@/api/experiments.js'
 
 const POS_KEY = 'sfx:code-tutor:pos'
 const OPEN_KEY = 'sfx:code-tutor:open'
+const BIND_KEY = 'sfx:code-tutor:binding'
 const WIN_W = 680
 const WIN_H = 600
-const MIN_VISIBLE = 48
 
 const route = useRoute()
 
@@ -42,6 +43,29 @@ const aborter = ref(null)
 const fabRef = ref(null)
 const inputRef = ref(null)
 const listRef = ref(null)
+const liveMsg = ref(null) // 流式追加中的 assistant 消息（节流渲染用）
+
+/* Markdown 节流渲染（抄 NexusPage renderedAnswer 防"冻住—突进"）：
+ * renderContent 跑全量解析，流式消息 200ms 重解析一次，其余命中缓存；
+ * 用户原文保持纯文本回显（忠实原文 + 不解析用户输入里的 markdown 符号）。 */
+const renderCache = new WeakMap()
+function renderedBody(m) {
+  const text = m.text || ''
+  const cached = renderCache.get(m)
+  if (cached && cached.len === text.length) return cached.html
+  const isLive = streaming.value && m === liveMsg.value
+  const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+  if (!isLive || now - (cached?.at || 0) >= 200) {
+    try {
+      const html = renderContent(text)
+      renderCache.set(m, { html, len: text.length, at: now })
+      return html
+    } catch {
+      return cached?.html || ''
+    }
+  }
+  return cached?.html || ''
+}
 
 function routeCourseId() {
   const raw = route.params?.courseId
@@ -57,11 +81,15 @@ function defaultPos() {
 }
 
 function clampPos(p) {
+  // 窗口能完整放下时必须完整在视口内（杜绝"半截卡在屏幕外像乱飘"）；
+  // 视口比窗口还小时贴边（右/下对齐，保证表头可抓）。
   const w = Math.min(WIN_W, window.innerWidth - 32)
   const h = Math.min(WIN_H, window.innerHeight - 32)
+  const maxX = window.innerWidth - w
+  const maxY = window.innerHeight - h
   return {
-    x: Math.min(Math.max(p.x, MIN_VISIBLE - w), window.innerWidth - MIN_VISIBLE),
-    y: Math.min(Math.max(p.y, 0), window.innerHeight - MIN_VISIBLE),
+    x: maxX >= 0 ? Math.min(Math.max(p.x, 0), maxX) : Math.min(Math.max(p.x, maxX), 0),
+    y: maxY >= 0 ? Math.min(Math.max(p.y, 0), maxY) : 0,
   }
 }
 
@@ -118,6 +146,9 @@ async function loadHistory() {
 }
 
 // ---- 拖拽（表头手柄，pointer 事件； released-motion 下仍可用，属用户直接操纵） ----
+// 收尾必须三保险：pointerup（once）+ pointercancel（触摸被接管/手势打断）+
+// window blur（Alt+Tab 等把松开动作落在窗口外）。任一缺席都会留下"幽灵拖拽"——
+// 此后每次鼠标移动都瞬移窗口，看起来就是"乱飘"。
 let drag = null
 function onDragStart(event) {
   if (event.button !== undefined && event.button !== 0) return
@@ -126,37 +157,69 @@ function onDragStart(event) {
   drag = { dx: event.clientX - pos.value.x, dy: event.clientY - pos.value.y }
   window.addEventListener('pointermove', onDragMove)
   window.addEventListener('pointerup', onDragEnd, { once: true })
+  window.addEventListener('pointercancel', onDragEnd, { once: true })
+  window.addEventListener('blur', onDragEnd, { once: true })
 }
 function onDragMove(event) {
   if (!drag) return
   pos.value = clampPos({ x: event.clientX - drag.dx, y: event.clientY - drag.dy })
 }
 function onDragEnd() {
+  if (!drag) return
   drag = null
   window.removeEventListener('pointermove', onDragMove)
+  window.removeEventListener('pointerup', onDragEnd)
+  window.removeEventListener('pointercancel', onDragEnd)
+  window.removeEventListener('blur', onDragEnd)
   persist()
 }
 
 // ---- 绑定：只接受事件声明 + 服务端验主（getExperimentRun 404 即拒收） ----
-async function bindSubmission({ courseId, runId }) {
+// 绑定落 localStorage：刷新/跨路由不丢；每次恢复都重新验主，失效静默解绑。
+async function verifyBinding(courseId, runId) {
   const cid = Number(courseId)
   const rid = String(runId || '').slice(0, 64)
-  if (!Number.isInteger(cid) || cid <= 0 || !rid) return
-  verifying.value = true
+  if (!Number.isInteger(cid) || cid <= 0 || !rid) return null
   try {
     const data = await getExperimentRun(cid, rid)
     const run = data?.data ?? data ?? {}
-    binding.value = {
+    if (!run || run.run_id == null) return null
+    return {
       courseId: cid,
       runId: rid,
       outcome: run.outcome ?? run.status ?? 'unknown',
       passed: run.passed_count ?? null,
       total: run.total_count ?? null,
     }
+  } catch {
+    return null
+  }
+}
+
+function persistBinding() {
+  try {
+    if (binding.value) {
+      localStorage.setItem(BIND_KEY, JSON.stringify({
+        courseId: binding.value.courseId, runId: binding.value.runId,
+      }))
+    } else {
+      localStorage.removeItem(BIND_KEY)
+    }
+  } catch { /* 持久化失败不影响使用 */ }
+}
+
+async function bindSubmission({ courseId, runId }) {
+  verifying.value = true
+  try {
+    const next = await verifyBinding(courseId, runId)
+    if (!next) {
+      showToast('绑定失败：找不到该提交或无权访问', 'error')
+      return
+    }
+    binding.value = next
+    persistBinding()
     if (!open.value) toggle(true)
     showToast('已绑定本次提交，伴学可见判题摘要', 'success')
-  } catch {
-    showToast('绑定失败：找不到该提交或无权访问', 'error')
   } finally {
     verifying.value = false
   }
@@ -164,10 +227,23 @@ async function bindSubmission({ courseId, runId }) {
 
 function unbind() {
   binding.value = null
+  persistBinding()
 }
 
 function onBindEvent(event) {
   bindSubmission(event.detail || {})
+}
+
+/** 恢复上次绑定：静默重验，失效（删课/无权）则静默解绑，不打扰用户。 */
+async function restoreBinding() {
+  let saved = null
+  try {
+    saved = JSON.parse(localStorage.getItem(BIND_KEY) || 'null')
+  } catch { saved = null }
+  if (!saved?.runId) return
+  const next = await verifyBinding(saved.courseId, saved.runId)
+  binding.value = next
+  persistBinding()
 }
 
 function outcomeText(o) {
@@ -195,6 +271,7 @@ function stopStream() {
   aborter.value = null
   streaming.value = false
   thinking.value = false
+  liveMsg.value = null
 }
 
 async function send() {
@@ -206,6 +283,7 @@ async function send() {
   messages.value.push({ role: 'assistant', text: '', toolNote: '' })
   streaming.value = true
   thinking.value = true
+  liveMsg.value = messages.value[messages.value.length - 1]
   const ctrl = new AbortController()
   aborter.value = ctrl
   await nextTick()
@@ -254,6 +332,7 @@ async function send() {
   } finally {
     streaming.value = false
     thinking.value = false
+    liveMsg.value = null
     aborter.value = null
     scrollBottom()
   }
@@ -277,12 +356,14 @@ watch(draft, () => nextTick(autoGrow))
 
 onMounted(() => {
   restore()
+  restoreBinding()
   window.addEventListener(CODE_TUTOR_BIND_EVENT, onBindEvent)
   window.addEventListener('resize', onResize)
 })
 onBeforeUnmount(() => {
   window.removeEventListener(CODE_TUTOR_BIND_EVENT, onBindEvent)
   window.removeEventListener('resize', onResize)
+  onDragEnd()
   stopStream()
 })
 function onResize() {
@@ -366,7 +447,13 @@ function onResize() {
           <p v-if="m.toolNote" class="ct-tool-note">
             <Wrench :size="13" aria-hidden="true" /> {{ m.toolNote }}
           </p>
-          <p class="ct-msg-text">{{ m.text || (m.role === 'assistant' ? '…' : '') }}</p>
+          <!-- 伴学正文走 Markdown（DOMPurify 已消毒）；用户原文纯文本回显 -->
+          <div
+            v-if="m.role === 'assistant'"
+            class="ct-markdown-body"
+            v-html="renderedBody(m)"
+          />
+          <p v-else class="ct-msg-text">{{ m.text }}</p>
           <details v-if="m.reasoning" class="ct-reasoning">
             <summary>思考过程</summary>
             <p>{{ m.reasoning }}</p>
@@ -452,7 +539,7 @@ function onResize() {
   min-width: min(360px, calc(100vw - 32px));
   min-height: 420px;
   background: var(--surface-panel);
-  border: var(--border-default);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-md);
   display: flex;
@@ -466,7 +553,7 @@ function onResize() {
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border-bottom: var(--border-default);
+  border-bottom: 1px solid var(--border-default);
   cursor: move;
   touch-action: none;
   user-select: none;
@@ -584,6 +671,74 @@ function onResize() {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* 伴学 Markdown 体（规则抄 NexusPage .nx-markdown-body，收敛到本组件令牌） */
+.ct-markdown-body {
+  font-size: 16px;
+  line-height: 28px;
+  color: var(--text-primary);
+  min-width: 0;
+  word-break: break-word;
+}
+.ct-markdown-body :deep(h1),
+.ct-markdown-body :deep(h2),
+.ct-markdown-body :deep(h3) {
+  color: var(--ink-900);
+  line-height: 1.4;
+  margin: 0.8em 0 0.4em;
+}
+.ct-markdown-body :deep(h1) { font-size: 18px; }
+.ct-markdown-body :deep(h2),
+.ct-markdown-body :deep(h3) { font-size: 16px; }
+.ct-markdown-body :deep(p) { margin: 0.5em 0; }
+.ct-markdown-body :deep(ul),
+.ct-markdown-body :deep(ol) {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+.ct-markdown-body :deep(ul) { list-style: disc; }
+.ct-markdown-body :deep(ol) { list-style: decimal; }
+.ct-markdown-body :deep(code) {
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  background: var(--surface-cool);
+  border: 1px solid var(--border-subtle, #EDF0F3);
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
+}
+.ct-markdown-body :deep(pre) {
+  background: var(--code-bg);
+  color: var(--code-text);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  overflow-x: auto;
+}
+.ct-markdown-body :deep(pre code) {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+}
+.ct-markdown-body :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  margin: 0.6em 0;
+}
+.ct-markdown-body :deep(th),
+.ct-markdown-body :deep(td) {
+  border: 1px solid var(--border-default);
+  padding: 6px 10px;
+  text-align: left;
+}
+.ct-markdown-body :deep(th) { background: var(--surface-cool); }
+.ct-markdown-body :deep(a) { color: var(--color-focus); }
+.ct-markdown-body :deep(blockquote) {
+  margin: 0.5em 0;
+  padding: var(--space-2) var(--space-4);
+  border-left: 3px solid var(--color-focus);
+  background: var(--surface-cool);
+  color: var(--text-secondary);
+}
 .ct-tool-note {
   display: flex;
   align-items: center;
@@ -638,7 +793,7 @@ function onResize() {
   min-height: 44px;
   max-height: 132px;
   resize: none;
-  border: var(--border-default);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   padding: 10px var(--space-3);
   font-size: 14px;

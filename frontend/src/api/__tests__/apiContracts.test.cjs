@@ -1926,6 +1926,18 @@ test('NX-CT1 代码伴学浮窗：全局挂载+门控+绑定事件链', () => {
   // 打开懒加载服务端历史（与 Nexus 页同 thread 续接）；表头按钮不启动拖拽。
   assert.match(panel, /getNexusSessionMessages\(CODE_TUTOR_SESSION_ID\)/)
   assert.match(panel, /closest\?\.\('button, textarea, input, a, summary'\)/)
+  // R1：伴学正文走 Markdown（节流渲染），用户原文纯文本；绑定持久化+重验。
+  assert.match(panel, /renderContent\(text\)/)
+  assert.match(panel, /v-html="renderedBody\(m\)"/)
+  assert.match(panel, /renderCache = new WeakMap\(\)/)
+  assert.match(panel, /sfx:code-tutor:binding/)
+  assert.match(panel, /restoreBinding\(\)/)
+  // R2：clamp 保证完整在视口内；拖拽三保险收尾；边框 token 全是 1px solid 写法。
+  assert.match(panel, /const maxX = window\.innerWidth - w/)
+  assert.match(panel, /pointercancel.*onDragEnd/)
+  assert.match(panel, /blur.*onDragEnd/)
+  assert.doesNotMatch(panel, /border:\s*var\(--border-(default|strong|subtle)\)/)
+  assert.doesNotMatch(panel, /border-bottom:\s*var\(--border-(default|strong|subtle)\)/)
   assert.match(panel, /var\(--surface-panel\)/)
   assert.match(panel, /position: fixed/)
   // 工作区：诊断区有带门控的伴学入口，只发引用声明。
