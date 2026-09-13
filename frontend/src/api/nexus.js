@@ -711,3 +711,55 @@ export async function streamNexusMessage({
     reader.releaseLock()
   }
 }
+
+// ---------------------------------------------------------------------------
+// NX-CT1 代码伴学会话：每学生的常驻 Nexus 会话壳（预留 session_id）。
+// 不新增 mode（沿用 general 白名单）；绑定哪次提交只传 run_id 引用声明，
+// 详情一律由后端投影（伪造 run_context 会被 proxy 剥离）。
+// ---------------------------------------------------------------------------
+
+/** 代码伴学预留会话 ID：同一用户在所有页面共享这一个 Nexus 会话。 */
+export const CODE_TUTOR_SESSION_ID = 'code-tutor'
+
+/** 代码伴学绑定事件：提交页/工作区派发，本浮窗监听（detail: {courseId, runId}）。 */
+export const CODE_TUTOR_BIND_EVENT = 'nexus-code-tutor:bind'
+
+/**
+ * 纯构造：代码伴学请求体（可单测；发送走 streamCodeTutorMessage）。
+ * runId 为空 = 未绑定对话（服务端工具 fail-closed 指引，不阻断发送）。
+ */
+export function buildCodeTutorRequest({ message, courseId = null, runId = null }) {
+  const body = { message, session_id: CODE_TUTOR_SESSION_ID }
+  if (courseId != null || runId) {
+    body.context = {}
+    if (courseId != null) body.context.course_id = courseId
+    if (runId) body.context.run_ref = { run_id: String(runId).slice(0, 64) }
+  }
+  return body
+}
+
+/**
+ * 代码伴学流式对话：session 固定为预留值，其余与 streamNexusMessage 同语义。
+ * @param {object} options
+ * @param {string} options.message
+ * @param {number} [options.courseId]
+ * @param {string} [options.runId] 绑定的 ExperimentRun.run_id（仅引用声明）
+ * @param {(evt: {event: string, data: object}) => void} options.onEvent
+ * @param {AbortSignal} [options.signal]
+ */
+export async function streamCodeTutorMessage({
+  message,
+  courseId = null,
+  runId = null,
+  onEvent,
+  signal,
+}) {
+  return streamNexusMessage({
+    message,
+    sessionId: CODE_TUTOR_SESSION_ID,
+    courseId,
+    runRef: runId ? { run_id: runId } : null,
+    onEvent,
+    signal,
+  })
+}

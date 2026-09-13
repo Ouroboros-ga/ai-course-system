@@ -1808,3 +1808,49 @@ test('引用 ID 种类对齐：文本引用带 run_id，工具侧 job 号可反�
   assert.match(backend, /get_run_by_job/)
   assert.match(backend, /status\.HTTP_404_NOT_FOUND/)
 })
+
+test('NX-CT1 代码伴学：预留会话+引用声明+服务端投影链不断', () => {
+  const client = read('frontend/src/api/nexus.js')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const internal = read('backend/app/api/v1/endpoints/nexus_internal.py')
+  const runtime = read('nexus/src/nexus/main.py')
+  const tool = read('nexus/src/nexus/tools/submission.py')
+  // 前端：session 固定预留值，不新增 mode；只传 run_id 引用，不拼 run_context。
+  assert.match(client, /CODE_TUTOR_SESSION_ID = 'code-tutor'/)
+  assert.match(client, /body\.context\.run_ref = \{ run_id: String\(runId\)/)
+  assert.match(client, /sessionId: CODE_TUTOR_SESSION_ID/)
+  assert.doesNotMatch(client, /buildCodeTutorRequest[\s\S]{0,400}?run_context/)
+  // 后端 proxy：run_ 前缀走 OJ 投影（kind 标记），归属三元组 miss 一律 404。
+  assert.match(backend, /raw_id\.startswith\("run_"\)/)
+  assert.match(backend, /"kind": "oj_submission"/)
+  assert.match(backend, /ExperimentRun\.student_id == owner_id/)
+  // 内部端点：只读快照注册且挂载；test_summary 白名单重建；test_report 不投影。
+  assert.match(internal, /@router\.get\("\/submission"\)/)
+  assert.match(internal, /"case_name".*"passed".*"reason"/s)
+  assert.match(internal, /_SUBMISSION_ARTIFACT_TYPES = \("compile", "stdout", "stderr"\)/)
+  // Runtime：OJ 投影进提交作用域；工具无参数、只读作用域、未绑定 fail-closed。
+  assert.match(runtime, /_submission_scope_from_context/)
+  assert.match(runtime, /reset_submission\(submission_token\)/)
+  assert.match(tool, /async def read_my_submission\(\) -> dict/)
+  assert.match(tool, /current_submission\(\)/)
+  assert.match(tool, /SUBMISSION_NOT_BOUND/)
+  assert.match(tool, /\/api\/v1\/nexus-internal\/submission/)
+})
+
+test('NX-CT1 代码伴学浮窗：全局挂载+门控+绑定事件链', () => {
+  const shell = read('frontend/src/app/shell/AppShell.vue')
+  const panel = read('frontend/src/app/components/nexus/NexusCodeTutorFloat.vue')
+  const bench = read('frontend/src/components/codebench/CodeWorkbench.vue')
+  // AppShell 全局 fixed 层挂载，显隐只看平台门控（后端真强制）。
+  assert.match(shell, /NexusCodeTutorFloat v-if="counter\.canUseNexus"/)
+  // 浮窗：经预留会话发送（session 封装在 nexus.js 内）；绑定只收事件声明；操作按钮走 SfxButton。
+  assert.match(panel, /streamCodeTutorMessage\(/)
+  assert.match(panel, /CODE_TUTOR_BIND_EVENT/)
+  assert.match(panel, /getExperimentRun\(cid, rid\)/)
+  assert.match(panel, /var\(--surface-panel\)/)
+  assert.match(panel, /position: fixed/)
+  // 工作区：诊断区有带门控的伴学入口，只发引用声明。
+  assert.match(bench, /问代码伴学/)
+  assert.match(bench, /counter\.canUseNexus/)
+  assert.match(bench, /CODE_TUTOR_BIND_EVENT/)
+})

@@ -19,7 +19,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.exceptions import unified_response
@@ -757,3 +757,131 @@ async def nexus_internal_run_note_create(
         raise HTTPException(
             status_code=code_status.get(error.code, 422), detail=error.code) from error
     return unified_response(code=200, message="note added", data=note)
+
+
+# ---------------------------------------------------------------------------
+# 代码伴学：本人提交快照（只读、有界；用例输入/期望输出永不读取）。
+# 链路：Nexus `read_my_submission` 工具 → 本端点 → 结构化快照。
+# 红线：只返回归属三元组（run_id + course_id + student_id）命中的行；
+# test_summary 逐项白名单重建（仅 case_name/passed/reason），隐藏测试的
+# 输入输出即使未来写入该列也过不了本层；用例表（stdin/expected）碰都不碰；
+# test_report 产物不投影（可能含逐用例细节），只取 compile/stdout/stderr。
+# ---------------------------------------------------------------------------
+
+_SUBMISSION_SOURCE_MAX = 8000
+_SUBMISSION_MSG_MAX = 2000
+_SUBMISSION_ARTIFACT_MAX = 4000
+_SUBMISSION_SUMMARY_MAX_ITEMS = 50
+# 可投影的产物类型白名单：编译输出与程序自身输出；测试报告排除在外。
+_SUBMISSION_ARTIFACT_TYPES = ("compile", "stdout", "stderr")
+
+
+def _bounded_text(text: Any, limit: int) -> tuple[str, bool]:
+    body = str(text or "")
+    if len(body) <= limit:
+        return body, False
+    return body[:limit], True
+
+
+def _safe_test_summary(raw: Any) -> tuple[list[dict[str, Any]], bool]:
+    """test_summary 白名单重建：只留三键，多余键一律丢弃。"""
+    items = raw if isinstance(raw, list) else []
+    safe: list[dict[str, Any]] = []
+    for item in items[:_SUBMISSION_SUMMARY_MAX_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        safe.append(
+            {
+                "case_name": str(item.get("case_name") or "")[:80],
+                "passed": bool(item.get("passed")),
+                "reason": str(item.get("reason") or "")[:200],
+            }
+        )
+    return safe, len(items) > _SUBMISSION_SUMMARY_MAX_ITEMS
+
+
+@router.get("/submission")
+async def nexus_internal_submission(
+    course_id: int = Query(..., ge=1),
+    run_id: str = Query(..., min_length=1, max_length=64),
+    authorization: str | None = Header(default=None),
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    session: Session = Depends(get_session),
+):
+    """代码伴学会话的本人提交快照（只读；404 不区分归属）。"""
+    from app.models.experiment_model import ExperimentRun, ExperimentRunArtifact
+
+    _require_service_token(authorization)
+    user_id = _require_user_identity(x_nexus_user_id)
+    if not _course_allowed(session, user_id, course_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=_ERROR_FORBIDDEN,
+        )
+    run = session.exec(
+        select(ExperimentRun).where(
+            ExperimentRun.run_id == run_id,
+            ExperimentRun.course_id == course_id,
+            ExperimentRun.student_id == user_id,
+        )
+    ).first()
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="NEXUS_INTERNAL_SUBMISSION_NOT_FOUND",
+        )
+    outcome = getattr(run.outcome, "value", run.outcome)
+    source, source_truncated = _bounded_text(run.source_code, _SUBMISSION_SOURCE_MAX)
+    compile_message, compile_truncated = _bounded_text(
+        run.compile_message, _SUBMISSION_MSG_MAX)
+    runtime_message, runtime_truncated = _bounded_text(
+        run.runtime_message, _SUBMISSION_MSG_MAX)
+    summary, summary_truncated = _safe_test_summary(run.test_summary)
+    artifacts: dict[str, Any] = {}
+    rows = session.exec(
+        select(ExperimentRunArtifact).where(
+            ExperimentRunArtifact.run_id == run.run_id,
+            ExperimentRunArtifact.course_id == course_id,
+            ExperimentRunArtifact.artifact_type.in_(_SUBMISSION_ARTIFACT_TYPES),
+        ).order_by(ExperimentRunArtifact.id)
+    ).all()
+    for row in rows:
+        # 同类型取最后一行（最新写入覆盖）；超限只留尾部并标记。
+        text, truncated = _bounded_text(row.content, _SUBMISSION_ARTIFACT_MAX)
+        artifacts[row.artifact_type] = {"text": text, "truncated": truncated}
+    return unified_response(
+        code=200,
+        message="本人提交快照读取完成",
+        data={
+            "authority": "oj_submission",
+            "is_supplementary": True,
+            "course_id": course_id,
+            "submission": {
+                "run_id": run.run_id,
+                "language": run.language or "",
+                "outcome": str(outcome),
+                "run_state": run.run_state or "",
+                "source_code": source,
+                "source_truncated": source_truncated,
+                "compile_ok": bool(run.compile_ok),
+                "compile_message": compile_message,
+                "compile_truncated": compile_truncated,
+                "runtime_message": runtime_message,
+                "runtime_truncated": runtime_truncated,
+                "passed_count": int(run.passed_count or 0),
+                "total_count": int(run.total_count or 0),
+                "score": float(run.score) if run.score is not None else None,
+                "error_code": run.error_code or "",
+                "test_summary": summary,
+                "test_summary_truncated": summary_truncated,
+                "artifacts": artifacts,
+                "resource_usage": {
+                    "cpu_time_ms": run.cpu_time_ms,
+                    "wall_time_ms": run.wall_time_ms,
+                    "memory_kb": run.memory_kb,
+                },
+                "submitted_at": run.submitted_at.isoformat() if run.submitted_at else None,
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            },
+        },
+    )

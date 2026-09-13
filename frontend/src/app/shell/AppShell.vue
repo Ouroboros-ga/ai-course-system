@@ -2,6 +2,7 @@
 import { nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import PrimaryNav from './PrimaryNav.vue'
+import NexusCodeTutorFloat from '@/app/components/nexus/NexusCodeTutorFloat.vue'
 import { getMyInfo } from '@/api/user.js'
 import { useCounterStore } from '@/stores/counter.js'
 
@@ -44,6 +45,8 @@ watch(() => route.path, () => {
         </Transition>
       </router-view>
     </main>
+    <!-- NX-CT1 代码伴学浮窗：全局 fixed 层，不进页面滚动容器；门控只做显隐，后端真强制 -->
+    <NexusCodeTutorFloat v-if="counter.canUseNexus" />
   </div>
 </template>
 

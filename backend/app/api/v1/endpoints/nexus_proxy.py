@@ -368,10 +368,62 @@ def _resolve_run_ref(session, current_user: dict, session_id: str, run_ref: Any)
     return run, step_id
 
 
+async def _build_oj_run_context(
+    session, current_user: dict, run_id: str
+) -> dict[str, Any]:
+    """代码伴学提交投影：归属三元组（run_id + course_id + 本人）命中才投影。
+
+    不存在/非本人一律 404（不区分）；只给摘要行，源码与产物尾部由 Nexus
+    `read_my_submission` 工具经内部端点按需拉取，不进这段前缀注记。
+    """
+    from sqlmodel import select
+
+    from app.models.experiment_model import ExperimentRun
+
+    try:
+        owner_id = int(_artifact_user_id(current_user))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RUN_NOT_FOUND")
+    run = session.exec(
+        select(ExperimentRun).where(
+            ExperimentRun.run_id == run_id[:64],
+            ExperimentRun.student_id == owner_id,
+        )
+    ).first()
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RUN_NOT_FOUND")
+    outcome = getattr(run.outcome, "value", run.outcome)
+    detail = (
+        f"判题 {outcome} · 通过 {int(run.passed_count or 0)}/{int(run.total_count or 0)}"
+        f" · 编译{'通过' if run.compile_ok else '失败'}"
+        + (f" · {run.error_code}" if run.error_code else "")
+    )[:200]
+    return {
+        "kind": "oj_submission",
+        "run_id": run.run_id,
+        "display_title": f"代码提交 {run.run_id[:12]}",
+        "status": str(outcome),
+        "detail": detail,
+        "course_id": run.course_id,
+        "submission_ref": {"course_id": run.course_id, "run_id": run.run_id},
+        "stale": False,
+        "observed_at": run.finished_at.isoformat() if run.finished_at else None,
+    }
+
+
 async def _build_run_context(
     session, current_user: dict, session_id: str, run_ref: Any
 ) -> dict[str, Any]:
-    """生成注入聊天上下文的运行快照白名单投影（有界、脱敏、无凭据/路径）。"""
+    """生成注入聊天上下文的运行快照白名单投影（有界、脱敏、无凭据/路径）。
+
+    ``run_`` 前缀的 OJ 提交走代码伴学投影（归属三元组校验，无 nexus 会话
+    绑定要求——绑定本身就是"本人最新提交"的声明）；其余走复现运行管道。
+    """
+    raw_id = ""
+    if isinstance(run_ref, dict):
+        raw_id = str(run_ref.get("run_id") or "").strip()
+    if raw_id.startswith("run_"):
+        return await _build_oj_run_context(session, current_user, raw_id)
     run, step_id = _resolve_run_ref(session, current_user, session_id, run_ref)
     if _run_provider(run) == "autonomous":
         return await _build_autonomous_run_context(
