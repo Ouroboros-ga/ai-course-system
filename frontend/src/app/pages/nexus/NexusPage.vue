@@ -1731,11 +1731,28 @@ function formatBytes(n) {
   return `${size} B`
 }
 
+/** 产物卡呈现单点：类型标签 + 下载后缀（与后端 ARTIFACT_TYPES 同口径）。
+ * 未知类型不伪造 Markdown 标签/后缀，诚实显示原文 + 通用后缀。 */
+const ARTIFACT_FILE = {
+  markdown: ['Markdown', 'md'],
+  word: ['Word', 'docx'],
+  latex: ['LaTeX', 'tex'],
+  pdf: ['PDF', 'pdf'],
+}
+
+function artifactLabel(artifact) {
+  return (ARTIFACT_FILE[artifact?.artifact_type] || [])[0] || artifact?.artifact_type || '文件'
+}
+
+function artifactIcon(artifact) {
+  return artifact?.artifact_type === 'latex' ? FileCode : FileText
+}
+
 async function downloadArtifact(artifact) {
   if (!artifact?.artifact_id) return
   try {
     const blob = await downloadNexusArtifact(artifact.artifact_id)
-    const ext = artifact.artifact_type === 'latex' ? 'tex' : 'md'
+    const ext = (ARTIFACT_FILE[artifact.artifact_type] || [])[1] || 'bin'
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -2749,6 +2766,28 @@ function handleEvent(turn, { event, data }, session = null) {  if (event === 'pl
         persistSessions()
       }
     }
+
+    // F6 文档作业成功 → turn.artifacts（多格式逐个挂卡，可下载）。
+    // 不挂这里的话，各格式 artifact_id 只能由模型当文本复述（有点下载按钮）。
+    if (data?.name === 'create_document_output' && data?.status !== 'error') {
+      const job = Array.isArray(data?.items) && data.items[0] ? data.items[0] : null
+      const formats = job?.formats && typeof job.formats === 'object' ? job.formats : null
+      if (formats) {
+        const known = []
+        for (const [fmt, info] of Object.entries(formats)) {
+          const artifactId = info?.artifact_id
+          if (info?.status === 'succeeded' && artifactId) {
+            known.push({ artifact_id: artifactId, artifact_type: fmt, title: job.title || '文档' })
+          }
+        }
+        const existing = new Set((turn.artifacts || []).map((a) => a?.artifact_id))
+        const fresh = known.filter((a) => a.artifact_id && !existing.has(a.artifact_id))
+        if (fresh.length) {
+          turn.artifacts = [...(turn.artifacts || []), ...fresh]
+          persistSessions()
+        }
+      }
+    }
   } else if (event === 'error') {
     // M1-B3（D5）：流内错误以稳定错误码呈现，不再停在"进行中"。
     // 服务端保证 done/error 互斥；本分支后流即关闭，runTurn 的 finally 复位状态。
@@ -3170,15 +3209,8 @@ const emptySuggestions = computed(() =>
         <div v-if="isRailExpanded" class="nx-device-status">
           <div class="nx-dv-title">本机状态</div>
 
-          <!-- 行 1：数据源（只读状态位，2026-09-13 去开关：线上只用真实，
-               切换菜单已下掉；demo 分支代码保留，开发者可用控制台切回） -->
-          <div class="nx-dv-row is-static" title="数据源状态（只读，不可切换）">
-            <span class="nx-ds-dot" :class="nexusDataSourceMode" aria-hidden="true" />
-            <span class="nx-dv-label">
-              数据源：{{ nexusDataSourceMode === 'demo' ? '演示数据' : '真实' }}
-              <small>运行时已连通 · 会话仅存本机</small>
-            </span>
-          </div>
+          <!-- 行 1（数据源行）已删：2026-09-13 先下掉切换菜单，后连只读行一起去掉。
+               数据源恒为真实（见 nexusAdapter），本机资料行不受影响。 -->
 
           <!-- 行 2：本机资料（无数据也如实显示「仅聊天记录」，不隐藏这一层） -->
           <div
@@ -3962,7 +3994,7 @@ const emptySuggestions = computed(() =>
                 v-html="renderedAnswer(turn)"
               />
 
-              <!-- M3 产物卡：write_artifact 真实写入后的可下载文件 -->
+              <!-- M3/F6 产物卡：真实写入后的可下载文件（markdown/word/latex/pdf） -->
               <div v-if="turn.artifacts?.length" class="nx-artifact-list">
                 <div
                   v-for="a in turn.artifacts"
@@ -3970,14 +4002,14 @@ const emptySuggestions = computed(() =>
                   class="nx-artifact-card"
                 >
                   <component
-                    :is="a.artifact_type === 'latex' ? FileCode : FileText"
+                    :is="artifactIcon(a)"
                     :size="15"
                     class="nx-art-icon"
                   />
                   <div class="nx-art-meta">
                     <div class="nx-art-title">{{ a.title }}</div>
                     <div class="nx-art-sub">
-                      {{ a.artifact_type === 'latex' ? 'LaTeX' : 'Markdown' }} · {{ formatBytes(a.size_bytes) }}
+                      {{ artifactLabel(a) }}<template v-if="a.size_bytes"> · {{ formatBytes(a.size_bytes) }}</template>
                     </div>
                   </div>
                   <SfxButton variant="secondary" size="sm" @click="downloadArtifact(a)">
@@ -5049,21 +5081,6 @@ const emptySuggestions = computed(() =>
   font-size: 10px;
   line-height: 1.5;
   color: var(--text-muted);
-}
-
-.nx-ds-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
-  flex-shrink: 0;
-}
-
-.nx-ds-dot.demo {
-  background: var(--amber-500);
-}
-
-.nx-ds-dot.real {
-  background: var(--green-500);
 }
 
 .nx-ds-caret {
