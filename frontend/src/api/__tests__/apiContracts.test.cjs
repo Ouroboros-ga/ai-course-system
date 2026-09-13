@@ -1963,7 +1963,20 @@ test('NX-CT1 代码伴学浮窗：OJ 内挂载+门控+绑定事件链', () => {
   assert.doesNotMatch(ojSubs, /NexusCodeTutorFloat/)
 })
 
+test('AppShell 过渡承载层：单根 keyed 容器防多根离场卡死', () => {
+  // 线上实证 2026-09-13：OJ 浮窗让页面变多根 Fragment，out-in 离场挂起、
+  // 切其他二级菜单白屏。过渡必须挂真实单根；key 取一级空间，不用完整 path。
+  const shell = read('frontend/src/app/shell/AppShell.vue')
+  assert.match(shell, /<div v-if="Component" :key="viewRoute\.matched\[1\]\?\.path" class="sfx-shell-page">/)
+  assert.match(shell, /route: viewRoute/)
+  assert.match(shell, /\.sfx-shell-page \{\s*display: flex;/)
+  // 承载层不得新增滚动（L2 唯一滚动容器地位不变）与位移动画（§6.2 仅 opacity）。
+  assert.doesNotMatch(shell, /\.sfx-shell-page[^}]*overflow/)
+  assert.doesNotMatch(shell, /\.sfx-shell-page[^}]*transform/)
+})
+
 test('Facade 学情 coding 聚合：LabRecord 只能从 resource_model 导入', () => {
+  // 线上实证 2026-09-13：写错模块导致 /facade/course/{id}/analytics 全量 500。
   // 线上实证 2026-09-13：写错模块导致 /facade/course/{id}/analytics 全量 500。
   // 延迟 import 让启动期不爆，只有真实请求才爆——源码级锁死。
   const facade = read('backend/app/api/v1/endpoints/facade.py')

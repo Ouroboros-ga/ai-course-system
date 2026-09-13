@@ -529,6 +529,10 @@ font-family:
 
 `key` 只应在需要强制重挂载的最内层 `<router-view>` 上使用（如 [BuildLayout.vue](./frontend/src/app/pages/course/build/BuildLayout.vue) 内部的 step 切换），中间层 `<router-view>` 必须保持无 key。
 
+### AppShell 多根页面边界（2026-09-13）
+
+页面带并列浮窗时会渲染多根节点（Fragment，如 OJ 空间的代码伴学浮窗）。把这种组件直接放进 `Transition mode="out-in"` 会导致离场永远完不成，切页后仅剩导航、主区白屏。`AppShell.vue` 因此用 `.sfx-shell-page` 实体容器承接过渡，再在容器内渲染页面；容器 key 取 `viewRoute.matched[1]?.path`（一级空间路由记录），不用完整 `route.path`，避免 OJ 二级标签切换时销毁整个布局。容器维持 flex 填充 + `min-height: 0`，不新增滚动层。
+
 ## 6.5 可选升级：交叉淡入淡出
 
 如未来需要进一步消除"空白感"，可将 8 处 `<Transition>` 改为非 `out-in` 模式（交叉淡入淡出），并在父容器添加 `position: relative`，新组件 `position: absolute` 叠加渲染。**当前 240ms 总感知已足够流畅，非必要不升级**。

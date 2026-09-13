@@ -38,9 +38,15 @@ watch(() => route.path, () => {
   <div class="sfx sfx-shell">
     <PrimaryNav />
     <main ref="mainRef" class="sfx-shell-main">
-      <router-view v-slot="{ Component }">
+      <router-view v-slot="{ Component, route: viewRoute }">
         <Transition name="sfx-page" mode="out-in">
-          <component :is="Component" />
+          <!-- 页面可能带并列浮窗而形成多根 Fragment；过渡必须挂在真实单根元素上，
+            否则 out-in 离场永远完不成、切页白屏（2026-09-13 线上实证：OJ 浮窗）。
+            key 只取一级空间（matched[1]），保留空间内部切换时的布局实例；
+            不用完整 route.path，避免 OJ 二级标签切换时销毁整个布局。 -->
+          <div v-if="Component" :key="viewRoute.matched[1]?.path" class="sfx-shell-page">
+            <component :is="Component" />
+          </div>
         </Transition>
       </router-view>
     </main>
@@ -72,5 +78,14 @@ watch(() => route.path, () => {
      加载骨架屏）时滚动条消失、内容区宽度回弹造成的横向抖动/闪烁。
      与 BuildLayout.vue、NexusPage.vue 的处理保持一致。 */
   scrollbar-gutter: stable;
+}
+
+/* L2 过渡承载层：给 Transition 提供真实单根，不新增滚动层（overflow 不动），
+   不改变三层滚动模型；仅 flex 填充 + min-height: 0 承接页面高度链。 */
+.sfx-shell-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 </style>
