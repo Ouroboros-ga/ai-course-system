@@ -14,6 +14,15 @@ import { getNexusHealth, streamNexusMessage } from '@/api/nexus.js'
 import { listFacadeCourses } from '@/api/facade.js'
 import { listBuildMaterials } from '@/api/course_build.js'
 import { getDisciplineKnowledgeOverview } from '@/api/disciplineKnowledge.js'
+import {
+  createNexusSessionIdentity,
+  isNexusAuthTokenStorageChange,
+  isNexusSessionIdentityCurrent,
+  loadNexusSessions,
+  saveNexusSessions,
+} from '@/app/pages/nexus/sessionStorageIsolation.js'
+
+export { createNexusSessionIdentity, isNexusAuthTokenStorageChange, isNexusSessionIdentityCurrent }
 
 export const NEXUS_MODES = {
   GENERAL: 'nexus_general',
@@ -67,8 +76,6 @@ export function setNexusDataSourceMode(mode) {
 }
 
 // ── 本地 Demo 模拟会话库 ──
-const DEMO_SESSIONS_KEY = 'nexus_demo_sessions_v1'
-
 const DEFAULT_DEMO_SESSIONS = [
   {
     id: 'demo-s1',
@@ -176,28 +183,22 @@ const DEFAULT_DEMO_SESSIONS = [
   },
 ]
 
-export function loadLocalSessions() {
+export function loadLocalSessions(identity) {
   try {
-    const raw = localStorage.getItem(DEMO_SESSIONS_KEY)
-    if (!raw) {
-      localStorage.setItem(DEMO_SESSIONS_KEY, JSON.stringify(DEFAULT_DEMO_SESSIONS))
-      return DEFAULT_DEMO_SESSIONS
-    }
-    const sessions = JSON.parse(raw)
-    // 清理历史脏数据：_runsRestored 恢复标记曾被误持久化（应只存在于页面内存），
-    // 残留会让刷新后的 runs 恢复被永久跳过（2026-09-06 线上验收发现）。
-    for (const s of Array.isArray(sessions) ? sessions : []) {
-      if (s && typeof s === 'object' && '_runsRestored' in s) delete s._runsRestored
-    }
-    return sessions
+    return loadNexusSessions({
+      storage: localStorage,
+      identity,
+      // 线上真实模式只恢复本人缓存/服务端历史，不再凭空注入 Demo 对话。
+      demoSeed: nexusDataSourceMode.value === 'demo' ? DEFAULT_DEMO_SESSIONS : [],
+    })
   } catch {
-    return DEFAULT_DEMO_SESSIONS
+    return nexusDataSourceMode.value === 'demo' ? DEFAULT_DEMO_SESSIONS : []
   }
 }
 
-export function saveLocalSessions(sessions) {
+export function saveLocalSessions(sessions, identity) {
   try {
-    localStorage.setItem(DEMO_SESSIONS_KEY, JSON.stringify(sessions))
+    saveNexusSessions(sessions, { storage: localStorage, identity })
   } catch (e) {
     console.warn('saveLocalSessions error', e)
   }

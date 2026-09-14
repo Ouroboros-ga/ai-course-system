@@ -62,11 +62,15 @@ import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
+import { getMyInfo } from '@/api/user.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
 import { getNexusHealth, getNexusSessionMessages, getNexusPlan, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, requestNexusRunReport, requestNexusRunFormats, requestNexusRunCleanVerify, requestNexusRunResume, cancelNexusRunOperation, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, cancelNexusRun, getNexusRunDetail, getNexusSessionExecutionMode, saveNexusSessionExecutionMode, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns, renameNexusRun, listNexusRunNotes, createNexusRunNote, listNexusReproPresets, listNexusApprovals, requestNexusRunCancelGrant, createNexusProposal, requestNexusProposalApproval, listNexusCompares, getNexusCompare, linkNexusCompareRun, cancelNexusCompare } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
+  createNexusSessionIdentity,
+  isNexusAuthTokenStorageChange,
+  isNexusSessionIdentityCurrent,
   nexusDataSourceMode,
   loadLocalSessions,
   saveLocalSessions,
@@ -101,6 +105,35 @@ import {
 
 // ── 0. 使用权限（转型决策 D10：platform.nexus.use 显式授予）──
 const counter = useCounterStore()
+// 必须等本人接口返回后再冻结身份；localStorage/Pinia 的启动缓存本身不能作为
+// teacherDEMO 迁移资格。页面生命周期内保持不变，换号后的旧响应会被丢弃。
+let localSessionIdentity = createNexusSessionIdentity('', '')
+let nexusPageActive = true
+
+async function hydrateLocalSessionIdentity() {
+  const authToken = localStorage.getItem('token') || ''
+  if (!authToken) return
+  try {
+    const data = await getMyInfo()
+    if (!nexusPageActive || (localStorage.getItem('token') || '') !== authToken) return
+    counter.userData.username = data.username || null
+    counter.userData.id = data.user_id || null
+    counter.userData.role = data.role || 'user'
+    counter.setPlatformPermissions(data.platform_permissions)
+    localSessionIdentity = createNexusSessionIdentity(data.user_id, data.username, authToken)
+  } catch {
+    // 身份刷新失败时 fail-closed：远端 API 仍可自行返回 401/错误，但不读写任何
+    // 用户本地会话缓存，也绝不接管旧共享键。
+    localSessionIdentity = createNexusSessionIdentity('', '')
+  }
+}
+
+function isLocalSessionIdentityCurrent() {
+  return isNexusSessionIdentityCurrent(localSessionIdentity, {
+    userId: counter.userData?.id,
+    authToken: localStorage.getItem('token') || '',
+  })
+}
 
 // ── 1. 响应式与三栏折叠状态 ──
 const railCollapsed = ref(localStorage.getItem('nexus_rail_collapsed') === 'true')
@@ -146,7 +179,8 @@ const activeMode = computed({
 })
 
 function persistSessions() {
-  saveLocalSessions(sessions.value)
+  if (!isLocalSessionIdentityCurrent()) return
+  saveLocalSessions(sessions.value, localSessionIdentity)
 }
 
 // ── 2b. v6：同一个研究会话的两个视图（研究对话 ／ 实验工作台）──
@@ -984,7 +1018,7 @@ function scrollToApprovalInStream() {
 }
 
 function initSessions() {
-  sessions.value = loadLocalSessions()
+  sessions.value = loadLocalSessions(localSessionIdentity)
   if (sessions.value.length > 0) {
     activeSessionId.value = sessions.value[0].id
   } else {
@@ -1018,6 +1052,7 @@ async function refreshRemoteSessions() {
   // M3：服务器产物列表（best-effort，失败保留旧值）
   try {
     const res = await listNexusArtifacts()
+    if (!isLocalSessionIdentityCurrent()) return
     remoteArtifacts.value = Array.isArray(res?.items) ? res.items : []
   } catch {
     /* 保留旧列表 */
@@ -1028,6 +1063,7 @@ async function refreshRemoteSessions() {
   } catch {
     return
   }
+  if (!isLocalSessionIdentityCurrent()) return
   const remoteSessions = Array.isArray(remote?.sessions) ? remote.sessions : []
   const byId = new Map(sessions.value.map((s) => [s.id, s]))
   for (const rs of remoteSessions) {
@@ -1071,8 +1107,13 @@ async function loadRemoteHistory(session) {
   try {
     res = await getNexusSessionMessages(session.id)
   } catch (err) {
+    if (!isLocalSessionIdentityCurrent()) return
     session.historyLoaded = false
     showToast(err?.message || '历史消息加载失败', 'error')
+    return
+  }
+  if (!isLocalSessionIdentityCurrent()) {
+    session.historyLoaded = false
     return
   }
   const messages = Array.isArray(res?.messages) ? res.messages : []
@@ -3034,18 +3075,36 @@ function handleKeydown(e) {
   }
 }
 
-onMounted(() => {
+function handleAuthTokenStorageChange(event) {
+  if (!isNexusAuthTokenStorageChange(localSessionIdentity, event)) return
+  // localStorage 的 storage 事件只来自其他标签页。先隐藏并中止旧账号状态，
+  // 再重载以由路由守卫和 /user/me 按新 token 重新建立页面身份。
+  nexusPageActive = false
+  sessions.value = []
+  activeSessionId.value = ''
+  remoteArtifacts.value = []
+  if (abortController) abortController.abort()
+  stopAllReproPolling()
+  window.location.reload()
+}
+
+onMounted(async () => {
+  await hydrateLocalSessionIdentity()
+  if (!nexusPageActive) return
   initSessions()
   loadContextData()
   checkHealth()
   window.addEventListener('resize', updateDimensions)
   window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('storage', handleAuthTokenStorageChange)
   document.addEventListener('click', handleDocClick)
 })
 
 onBeforeUnmount(() => {
+  nexusPageActive = false
   window.removeEventListener('resize', updateDimensions)
   window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('storage', handleAuthTokenStorageChange)
   document.removeEventListener('click', handleDocClick)
   if (elapsedTimer) clearInterval(elapsedTimer)
   if (abortController) abortController.abort()
